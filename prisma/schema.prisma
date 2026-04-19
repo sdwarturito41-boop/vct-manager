@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  team      Team?
+}
+
+model Team {
+  id             String   @id @default(cuid())
+  name           String
+  tag            String
+  region         Region
+  logoUrl        String?
+  budget         Int      @default(1000000)
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id])
+  players        Player[]
+  skillAim        Int      @default(0)
+  skillUtility    Int      @default(0)
+  skillTeamplay   Int      @default(0)
+  lastTrainedWeek Int      @default(0)
+  wins           Int      @default(0)
+  losses         Int      @default(0)
+  champPts       Int      @default(0)
+  prestige       Int      @default(50)
+  createdAt      DateTime @default(now())
+  matchesAsTeam1 Match[]  @relation("Team1")
+  matchesAsTeam2 Match[]  @relation("Team2")
+}
+
+model Player {
+  id            String     @id @default(cuid())
+  ign           String
+  firstName     String
+  lastName      String
+  nationality   String
+  age           Int
+  role          Role
+  imageUrl      String?
+  currentTeam   String?
+  region        Region
+  tier          PlayerTier @default(VCT)
+  salary        Int
+  acs           Float
+  kd            Float
+  adr           Float
+  kast          Float
+  hs            Float
+  pandascoreId  String?    @unique
+  isActive      Boolean    @default(true)
+  isRetired     Boolean    @default(false)
+  teamId        String?
+  team          Team?      @relation(fields: [teamId], references: [id])
+  createdAt     DateTime   @default(now())
+}
+
+model Match {
+  id        String      @id @default(cuid())
+  stageId   String
+  day       Int
+  week      Int
+  season    Int         @default(1)
+  format    MatchFormat
+  team1Id   String
+  team2Id   String
+  team1     Team        @relation("Team1", fields: [team1Id], references: [id])
+  team2     Team        @relation("Team2", fields: [team2Id], references: [id])
+  winnerId  String?
+  score     Json?
+  maps      Json?
+  isPlayed  Boolean     @default(false)
+  playedAt  DateTime?
+}
+
+model Season {
+  id            String   @id @default(cuid())
+  number        Int      @default(1)
+  year          Int      @default(2026)
+  currentStage  String   @default("KICKOFF")
+  currentDay    Int      @default(1)
+  currentWeek   Int      @default(1)
+  masters1City  String   @default("Santiago")
+  masters2City  String   @default("London")
+  championsCity String   @default("Shanghai")
+  isActive      Boolean  @default(true)
+  startedAt     DateTime @default(now())
+}
+
+model VctTeamTemplate {
+  id       String @id @default(cuid())
+  name     String
+  tag      String
+  region   Region
+  logoUrl  String?
+  budget   Int
+  prestige Int
+}
+
+enum Region {
+  EMEA
+  Americas
+  Pacific
+  China
+}
+
+enum Role {
+  IGL
+  Duelist
+  Initiator
+  Sentinel
+  Controller
+}
+
+enum MatchFormat {
+  BO1
+  BO3
+  BO5
+}
+
+enum PlayerTier {
+  VCT
+  VCL
+}
+
+model MapPool {
+  id        String   @id @default(cuid())
+  season    Int
+  patchId   String
+  maps      Json     // string[] of map names in the active pool
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model PlayerAgentPool {
+  id        String @id @default(cuid())
+  playerId  String
+  agentName String
+  mapName   String
+  stars     Int    @default(1) // 0-5 mastery
+
+  @@unique([playerId, agentName, mapName])
+}
