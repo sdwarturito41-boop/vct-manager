@@ -13,8 +13,10 @@ import { coachRouter } from "./coach";
 import { playstyleRouter } from "./playstyle";
 import { patchRouter } from "./patch";
 import { messageRouter } from "./message";
+import { saveRouter } from "./save";
 
 export const appRouter = router({
+  save: saveRouter,
   team: teamRouter,
   player: playerRouter,
   match: matchRouter,

@@ -1846,3 +1846,66 @@ export async function rollOffSeason(
     matchesScheduled: totalScheduled,
   };
 }
+
+// ─────────────────────────────────────────────────────────────
+// MULTI-SAVE BOOTSTRAP (stub)
+// ─────────────────────────────────────────────────────────────
+// Minimal save world initializer. Creates Save's initial Season, clones AI teams
+// from VctTeamTemplate, creates the user's team. Players/schedule/sponsors are
+// TODO — they'll need to be populated by follow-up work that scopes everything
+// by saveId. For now this is enough to let a new save exist without crashes.
+export async function initializeSaveWorld(
+  prisma: PrismaClient,
+  saveId: string,
+  input: { teamName: string; teamTag: string; region: Region },
+): Promise<void> {
+  // 1. Season
+  await prisma.season.create({
+    data: {
+      saveId,
+      number: 1,
+      year: 2026,
+      currentStage: "KICKOFF",
+      currentDay: 1,
+      currentWeek: 1,
+    },
+  });
+
+  // 2. Player's team (linked to the Save owner — pulled via the save relation)
+  const save = await prisma.save.findUnique({ where: { id: saveId } });
+  if (!save) throw new Error("Save not found");
+
+  await prisma.team.create({
+    data: {
+      saveId,
+      userId: save.userId,
+      isPlayerTeam: true,
+      name: input.teamName,
+      tag: input.teamTag,
+      region: input.region,
+    },
+  });
+
+  // 3. Clone AI teams from VctTeamTemplate (all regions)
+  const templates = await prisma.vctTeamTemplate.findMany();
+  for (const t of templates) {
+    // Skip if it matches the user's chosen team name (avoid duplicate)
+    if (t.name === input.teamName) continue;
+    await prisma.team.create({
+      data: {
+        saveId,
+        isPlayerTeam: false,
+        name: t.name,
+        tag: t.tag,
+        region: t.region,
+        logoUrl: t.logoUrl,
+        budget: t.budget,
+        prestige: t.prestige,
+      },
+    });
+  }
+
+  // TODO: seed players per AI team, build Kickoff bracket, seed sponsors,
+  // create initial MetaPatch + MapPool. See initializeSeasonForTeam for the
+  // reference logic — needs to be refactored to take saveId.
+}

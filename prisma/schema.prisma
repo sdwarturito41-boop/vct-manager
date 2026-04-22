@@ -8,24 +8,53 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ───────────────────────── Auth ─────────────────────────
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
   password  String
   name      String?
   createdAt DateTime @default(now())
-  team      Team?
+  save      Save?
+  team      Team?    // backward-compat: routers still use user.team relation
+}
+
+// ───────────────── Save = one career per user ─────────────────
+model Save {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  // All world-state tables are scoped by saveId; cascade-delete on save removal.
+  teams         Team[]
+  matches       Match[]
+  seasons       Season[]
+  coaches       Coach[]
+  mapPools      MapPool[]
+  metaPatches   MetaPatch[]
+  scrims        Scrim[]
+  messages      Message[]
+  sponsors      Sponsor[]
+  injuries      Injury[]
+  transferOffers TransferOffer[]
+  trainingSessions TrainingSession[]
+  playerAgentPools PlayerAgentPool[]
 }
 
 model Team {
   id             String   @id @default(cuid())
+  saveId         String?
+  save           Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  // Backward-compat: legacy routers query the user's team via `userId`. Kept as
+  // optional unique FK so existing code keeps working until fully migrated to saveId.
+  userId         String?  @unique
+  user           User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  isPlayerTeam   Boolean  @default(false)  // exactly one per save (user's team)
   name           String
   tag            String
   region         Region
   logoUrl        String?
   budget         Int      @default(1000000)
-  userId         String   @unique
-  user           User     @relation(fields: [userId], references: [id])
   players        Player[]
   skillAim         Int       @default(0)
   skillUtility     Int       @default(0)
@@ -37,7 +66,7 @@ model Team {
   prestige        Int       @default(50)
   playstyle       Playstyle @default(Balanced)
   coachId         String?
-  coach           Coach?    @relation(fields: [coachId], references: [id])
+  coach           Coach?    @relation(fields: [coachId], references: [id], onDelete: SetNull)
   sponsors        Sponsor[]
   incomingTransferOffers TransferOffer[] @relation("OffersToTeam")
   outgoingTransferOffers TransferOffer[] @relation("OffersFromTeam")
@@ -46,6 +75,10 @@ model Team {
   createdAt       DateTime  @default(now())
   matchesAsTeam1  Match[]   @relation("Team1")
   matchesAsTeam2  Match[]   @relation("Team2")
+  scrims          Scrim[]
+
+  @@index([saveId])
+  @@index([saveId, isPlayerTeam])
 }
 
 model Player {
@@ -67,109 +100,127 @@ model Player {
   adr           Float
   kast          Float
   hs            Float
-  mapFactors    Json       @default("{}")  // { "Bind": 1.10, "Haven": 0.88, ... } per map
-  joinedWeek    Int        @default(0)    // game week when player joined the team (for synergy calc)
-  pandascoreId  String?    @unique
+  mapFactors    Json       @default("{}")
+  joinedWeek    Int        @default(0)
+  pandascoreId  String?
   isActive      Boolean    @default(true)
   isRetired     Boolean    @default(false)
   teamId        String?
-  team          Team?      @relation(fields: [teamId], references: [id])
-  // Contract fields
-  contractEndSeason Int       @default(1)     // last season of contract
-  contractEndWeek   Int       @default(52)    // last week of contract within that season
-  buyoutClause      Int       @default(0)     // buyout price in $ (0 = no clause)
+  team          Team?      @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  contractEndSeason Int       @default(1)
+  contractEndWeek   Int       @default(52)
+  buyoutClause      Int       @default(0)
   incomingOffers    TransferOffer[]
   trainingSessions  TrainingSession[]
   injuries          Injury[]
   createdAt     DateTime   @default(now())
+
+  @@index([teamId])
+  @@index([pandascoreId])
 }
 
-// ── Coach adjoint ──
 model Coach {
   id           String  @id @default(cuid())
+  saveId       String?
+  save         Save?   @relation(fields: [saveId], references: [id], onDelete: Cascade)
   name         String
   nationality  String
   age          Int
   salary       Int
-  // Stats 0-100
-  utilityBoost Int     @default(50) // team skill boost
-  trainingEff  Int     @default(50) // mastery gain boost
-  scoutingSkill Int    @default(50) // better scouting
+  utilityBoost Int     @default(50)
+  trainingEff  Int     @default(50)
+  scoutingSkill Int    @default(50)
   imageUrl     String?
   contractEndSeason Int @default(1)
   contractEndWeek   Int @default(52)
   teams        Team[]
+
+  @@index([saveId])
 }
 
-// ── Sponsors ──
 model Sponsor {
   id              String   @id @default(cuid())
+  saveId          String?
+  save            Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
   teamId          String
   team            Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   name            String
   tier            SponsorTier
   weeklyPayment   Int
-  winBonus        Int      @default(0)    // per match win
-  champPtsBonus   Int      @default(0)    // per championship point earned
+  winBonus        Int      @default(0)
+  champPtsBonus   Int      @default(0)
   contractEndSeason Int
   contractEndWeek   Int
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now())
+
+  @@index([saveId])
+  @@index([teamId])
 }
 
-// ── Transfer offers (contract/buyout negotiations) ──
 model TransferOffer {
   id             String   @id @default(cuid())
+  saveId         String?
+  save           Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
   playerId       String
   player         Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  fromTeamId     String   // team making the offer
+  fromTeamId     String
   fromTeam       Team     @relation("OffersFromTeam", fields: [fromTeamId], references: [id], onDelete: Cascade)
-  toTeamId       String?  // team receiving the offer (null if FA signing)
+  toTeamId       String?
   toTeam         Team?    @relation("OffersToTeam", fields: [toTeamId], references: [id], onDelete: Cascade)
   offerType      OfferType
-  transferFee    Int      @default(0)   // for buyouts
-  proposedSalary Int                    // salary offered to player
-  contractLengthWeeks Int  @default(52) // duration in weeks
+  transferFee    Int      @default(0)
+  proposedSalary Int
+  contractLengthWeeks Int  @default(52)
   status         OfferStatus @default(PENDING)
   week           Int
   season         Int
   createdAt      DateTime @default(now())
+
+  @@index([saveId])
 }
 
-// ── Training sessions ──
 model TrainingSession {
   id        String        @id @default(cuid())
+  saveId    String?
+  save      Save?         @relation(fields: [saveId], references: [id], onDelete: Cascade)
   teamId    String
   team      Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
   playerId  String
   player    Player        @relation(fields: [playerId], references: [id], onDelete: Cascade)
   focus     TrainingFocus
-  agentName String?       // for AGENT_MASTERY focus
-  mapName   String?       // for MAP_FACTOR or AGENT_MASTERY focus
+  agentName String?
+  mapName   String?
   week      Int
   season    Int
   createdAt DateTime      @default(now())
+
+  @@index([saveId])
 }
 
-// ── Messages / Inbox / Random events ──
 model Message {
   id             String   @id @default(cuid())
+  saveId         String?
+  save           Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
   teamId         String
   team           Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   category       MessageCategory
-  fromName       String   // "Sliggy", "Boaster", "Riot HQ", "Team Owner"
-  fromRole       String   // "Coach", "Player", "Board", "Sponsor", "Press", "Riot"
+  fromName       String
+  fromRole       String
   subject        String
-  body           String   // multi-line markdown-ish OK
-  eventType      String?  // "player_unhappy" | "injury" | "poach_offer" | "sponsor_bonus" | ...
-  eventData      Json?    // { playerId, amount, agentName, ... } — context for resolution
+  body           String   @db.Text
+  eventType      String?
+  eventData      Json?
   isRead         Boolean  @default(false)
   requiresAction Boolean  @default(false)
   actionResolved Boolean  @default(false)
-  actionResult   String?  // "accepted" | "rejected" | "ignored"
+  actionResult   String?
   week           Int
   season         Int
   createdAt      DateTime @default(now())
+
+  @@index([saveId])
+  @@index([teamId])
 }
 
 enum MessageCategory {
@@ -183,34 +234,42 @@ enum MessageCategory {
   MEDIA
 }
 
-// ── Injuries ──
 model Injury {
   id           String   @id @default(cuid())
+  saveId       String?
+  save         Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
   playerId     String
   player       Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
   startWeek    Int
   startSeason  Int
   endWeek      Int
   endSeason    Int
-  severity     String   // "minor" | "moderate" | "severe"
+  severity     String
   description  String
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
+
+  @@index([saveId])
 }
 
-// ── Meta patches (agent buffs/nerfs per stage) ──
 model MetaPatch {
   id        String   @id @default(cuid())
+  saveId    String?
+  save      Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
   season    Int
-  stage     String   // KICKOFF, MASTERS_1, STAGE_1, etc.
-  buffs     Json     @default("[]")  // string[] of buffed agent names
-  nerfs     Json     @default("[]")  // string[] of nerfed agent names
+  stage     String
+  buffs     Json
+  nerfs     Json
   notes     String?
   createdAt DateTime @default(now())
+
+  @@index([saveId])
 }
 
 model Match {
   id        String      @id @default(cuid())
+  saveId    String?
+  save      Save?       @relation(fields: [saveId], references: [id], onDelete: Cascade)
   stageId   String
   day       Int
   week      Int
@@ -218,17 +277,23 @@ model Match {
   format    MatchFormat
   team1Id   String
   team2Id   String
-  team1     Team        @relation("Team1", fields: [team1Id], references: [id])
-  team2     Team        @relation("Team2", fields: [team2Id], references: [id])
+  team1     Team        @relation("Team1", fields: [team1Id], references: [id], onDelete: Cascade)
+  team2     Team        @relation("Team2", fields: [team2Id], references: [id], onDelete: Cascade)
   winnerId  String?
   score     Json?
   maps      Json?
   isPlayed  Boolean     @default(false)
   playedAt  DateTime?
+
+  @@index([saveId])
+  @@index([saveId, stageId])
+  @@index([saveId, isPlayed])
 }
 
 model Season {
   id            String   @id @default(cuid())
+  saveId        String?  @unique
+  save          Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
   number        Int      @default(1)
   year          Int      @default(2026)
   currentStage  String   @default("KICKOFF")
@@ -241,6 +306,7 @@ model Season {
   startedAt     DateTime @default(now())
 }
 
+// Preset templates — GLOBAL (not scoped by save). Used to clone AI teams when a new save is created.
 model VctTeamTemplate {
   id       String @id @default(cuid())
   name     String
@@ -324,27 +390,37 @@ enum TrainingFocus {
 
 model MapPool {
   id        String   @id @default(cuid())
+  saveId    String?
+  save      Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
   season    Int
   patchId   String
-  maps      Json     // string[] of map names in the active pool
+  maps      Json
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+
+  @@index([saveId])
 }
 
 model PlayerAgentPool {
   id              String @id @default(cuid())
+  saveId          String?
+  save            Save?  @relation(fields: [saveId], references: [id], onDelete: Cascade)
   playerId        String
   agentName       String
   mapName         String
-  stars           Float  @default(1) // 0.0-5.0 mastery (finer progression)
-  lastPlayedMatch Int    @default(0) // match counter for passive decay
+  stars           Float  @default(1)
+  lastPlayedMatch Int    @default(0)
 
   @@unique([playerId, agentName, mapName])
+  @@index([saveId])
 }
 
 model Scrim {
   id           String   @id @default(cuid())
+  saveId       String?
+  save         Save?    @relation(fields: [saveId], references: [id], onDelete: Cascade)
   teamId       String
+  team         Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   opponentId   String
   mapName      String
   season       Int
@@ -352,7 +428,9 @@ model Scrim {
   fakeComp     Boolean  @default(false)
   accepted     Boolean  @default(false)
   refused      Boolean  @default(false)
-  result       Json?    // { score1, score2, myComp: string[], oppComp: string[] }
-  reliability  Float    @default(1.0) // decays 0.25 per patch
+  result       Json?
+  reliability  Float    @default(1.0)
   createdAt    DateTime @default(now())
+
+  @@index([saveId])
 }

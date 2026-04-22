@@ -77,9 +77,11 @@ export const teamRouter = router({
           data: { teamId: team.id },
         });
         const ghostUserId = existingAiTeam.userId;
-        // Delete the AI team then its ghost user
+        // Delete the AI team then its ghost user (if any — userId is now nullable)
         await ctx.prisma.team.delete({ where: { id: existingAiTeam.id } });
-        await ctx.prisma.user.delete({ where: { id: ghostUserId } }).catch(() => {});
+        if (ghostUserId) {
+          await ctx.prisma.user.delete({ where: { id: ghostUserId } }).catch(() => {});
+        }
       } else {
         // Fallback: assign by currentTeam name for orphan players
         await ctx.prisma.player.updateMany({
