@@ -34,6 +34,16 @@ export const saveRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      // Verify the logged-in user still exists in the DB (stale cookie after
+      // DB reset would otherwise fail on the Save FK constraint).
+      const user = await ctx.prisma.user.findUnique({ where: { id: ctx.userId } });
+      if (!user) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Your session is stale — please log out and log in again.",
+        });
+      }
+
       const existing = await ctx.prisma.save.findUnique({ where: { userId: ctx.userId } });
       if (existing) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "You already have a save. Delete it first." });
