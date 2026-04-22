@@ -1902,14 +1902,13 @@ export async function initializeSaveWorld(
     },
   });
 
-  // 3. Clone AI teams from VctTeamTemplate (every region, every team except user's)
+  // 3. Clone AI teams from VctTeamTemplate (bulk insert for speed).
+  //    createMany doesn't return IDs — so we bulk-create then re-query to map name→id.
   const templates = await prisma.vctTeamTemplate.findMany();
-  const savedTeamByName = new Map<string, string>();
-  savedTeamByName.set(input.teamName, userTeam.id);
-  for (const t of templates) {
-    if (t.name === input.teamName) continue;
-    const team = await prisma.team.create({
-      data: {
+  const aiTemplates = templates.filter((t) => t.name !== input.teamName);
+  if (aiTemplates.length > 0) {
+    await prisma.team.createMany({
+      data: aiTemplates.map((t) => ({
         saveId,
         isPlayerTeam: false,
         name: t.name,
@@ -1918,10 +1917,15 @@ export async function initializeSaveWorld(
         logoUrl: t.logoUrl,
         budget: t.budget,
         prestige: t.prestige,
-      },
+      })),
     });
-    savedTeamByName.set(t.name, team.id);
   }
+  const allSaveTeams = await prisma.team.findMany({
+    where: { saveId },
+    select: { id: true, name: true },
+  });
+  const savedTeamByName = new Map<string, string>();
+  for (const t of allSaveTeams) savedTeamByName.set(t.name, t.id);
 
   // 4. Clone players from the global "template" pool (seeded by pandascore).
   //    Template players have teamId=null (unassigned) and `currentTeam` set to
@@ -1935,11 +1939,11 @@ export async function initializeSaveWorld(
       isRetired: false,
     },
   });
-  for (const p of globalPlayers) {
-    const teamId = p.currentTeam ? savedTeamByName.get(p.currentTeam) : null;
-    if (!teamId) continue; // player's team isn't part of any save template, skip
-    await prisma.player.create({
-      data: {
+  const playerCloneData = globalPlayers
+    .map((p) => {
+      const teamId = p.currentTeam ? savedTeamByName.get(p.currentTeam) : null;
+      if (!teamId) return null;
+      return {
         ign: p.ign,
         firstName: p.firstName,
         lastName: p.lastName,
@@ -1962,8 +1966,11 @@ export async function initializeSaveWorld(
         contractEndSeason: p.contractEndSeason,
         contractEndWeek: p.contractEndWeek,
         buyoutClause: p.buyoutClause,
-      },
-    });
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  if (playerCloneData.length > 0) {
+    await prisma.player.createMany({ data: playerCloneData });
   }
 
   // 5. Kickoff bracket — schedule R1 matches per region using the KICKOFF_SEEDS
