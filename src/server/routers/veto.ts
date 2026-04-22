@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../trpc";
 import { getActiveMapPool } from "@/constants/maps";
+import { AGENT_META, getSynergyFactor, MAP_FACTOR } from "@/constants/meta";
 
 export const vetoRouter = router({
   // Get veto state for a match
@@ -11,8 +12,28 @@ export const vetoRouter = router({
       const match = await ctx.prisma.match.findUnique({
         where: { id: input.matchId },
         include: {
-          team1: { select: { id: true, name: true, tag: true, logoUrl: true } },
-          team2: { select: { id: true, name: true, tag: true, logoUrl: true } },
+          team1: {
+            select: {
+              id: true, name: true, tag: true, logoUrl: true,
+              players: {
+                where: { isActive: true },
+                select: { id: true, ign: true, role: true, imageUrl: true, acs: true },
+                orderBy: { acs: "desc" },
+                take: 5,
+              },
+            },
+          },
+          team2: {
+            select: {
+              id: true, name: true, tag: true, logoUrl: true,
+              players: {
+                where: { isActive: true },
+                select: { id: true, ign: true, role: true, imageUrl: true, acs: true },
+                orderBy: { acs: "desc" },
+                take: 5,
+              },
+            },
+          },
         },
       });
       if (!match) throw new TRPCError({ code: "NOT_FOUND" });
@@ -94,5 +115,48 @@ export const vetoRouter = router({
       });
 
       return { maps: finalMaps, actions: input.actions };
+    }),
+
+  mapWinProbabilities: protectedProcedure
+    .input(z.object({ matchId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const match = await ctx.prisma.match.findUnique({
+        where: { id: input.matchId },
+        include: {
+          team1: { include: { players: { where: { isActive: true }, select: { id: true, acs: true, kd: true, adr: true, kast: true, mapFactors: true } } } },
+          team2: { include: { players: { where: { isActive: true }, select: { id: true, acs: true, kd: true, adr: true, kast: true, mapFactors: true } } } },
+        },
+      });
+      if (!match) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const userTeam = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+      if (!userTeam) throw new TRPCError({ code: "NOT_FOUND" });
+      const isTeam1 = match.team1Id === userTeam.id;
+
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const mapPool = getActiveMapPool(season?.currentStage ?? "KICKOFF");
+
+      function teamMapScore(players: Array<{ acs: number; kast: number; adr: number; kd: number; mapFactors: unknown }>, mapName: string): number {
+        if (players.length === 0) return 50;
+        let total = 0;
+        for (const p of players.slice(0, 5)) {
+          const base = p.acs * 0.35 + p.kast * 0.25 + p.adr * 0.20 + p.kd * 0.20;
+          const factors = (p.mapFactors ?? {}) as Record<string, number>;
+          const mf = factors[mapName] ?? 0.80;
+          total += base * mf;
+        }
+        return total / Math.min(players.length, 5);
+      }
+
+      const probabilities: Record<string, number> = {};
+      for (const mapName of mapPool) {
+        const s1 = teamMapScore(match.team1.players, mapName);
+        const s2 = teamMapScore(match.team2.players, mapName);
+        const total = s1 + s2;
+        const prob1 = total > 0 ? Math.round((s1 / total) * 100) : 50;
+        probabilities[mapName] = isTeam1 ? prob1 : 100 - prob1;
+      }
+
+      return probabilities;
     }),
 });

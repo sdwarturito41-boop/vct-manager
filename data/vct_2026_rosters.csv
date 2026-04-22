@@ -1,0 +1,240 @@
+region,team,player,role,agent_1,agent_2,agent_3
+Americas,100 Thieves,Asuna,Duelist,neon,sage,kayo
+Americas,100 Thieves,Timotino,Duelist,phoenix,raze,jett
+Americas,100 Thieves,bang,Controller,omen,harbor,
+Americas,100 Thieves,Cryocells,Controller,viper,cypher,
+Americas,100 Thieves,vora,Initiator,sova,fade,
+Americas,Cloud9,OXY,Duelist,neon,,
+Americas,Cloud9,penny,Controller,viper,chamber,vyse
+Americas,Cloud9,v1c,Controller,omen,astra,
+Americas,Cloud9,Zellsis,Sentinel,killjoy,tejo,vyse
+Americas,Cloud9,Xeppaa,Initiator,skye,sova,
+Americas,ENVY,keznit,Duelist,neon,waylay,raze
+Americas,ENVY,Eggsterr,Controller,omen,phoenix,veto
+Americas,ENVY,Rossy,Controller,viper,astra,tejo
+Americas,ENVY,Demon1,Sentinel,chamber,astra,jett
+Americas,ENVY,P0PPIN,Initiator,sova,skye,fade
+Americas,Evil Geniuses,dgzin,Duelist,neon,,
+Americas,Evil Geniuses,Okeanos,Controller,omen,waylay,kayo
+Americas,Evil Geniuses,supamen,Controller,viper,astra,
+Americas,Evil Geniuses,bao,Sentinel,killjoy,vyse,harbor
+Americas,Evil Geniuses,C0M,Initiator,sova,fade,
+Americas,FURIA,alym,Duelist,neon,waylay,
+Americas,FURIA,koalanoob,Controller,omen,yoru,phoenix
+Americas,FURIA,nerve,Controller,viper,astra,tejo
+Americas,FURIA,artzin,Sentinel,killjoy,omen,vyse
+Americas,FURIA,eeiu,Initiator,sova,fade,
+Americas,G2 Esports,BABYBAY,Duelist,waylay,vyse,chamber
+Americas,G2 Esports,jawgemo,Duelist,neon,phoenix,raze
+Americas,G2 Esports,leaf,Controller,viper,astra,yoru
+Americas,G2 Esports,valyn,Controller,astra,harbor,brimstone
+Americas,G2 Esports,trent,Initiator,fade,sova,skye
+Americas,KRÜ Esports,Dantedeu5,Duelist,neon,,
+Americas,KRÜ Esports,Less,Controller,viper,,
+Americas,KRÜ Esports,saadhak,Controller,omen,,
+Americas,KRÜ Esports,silentzz,Sentinel,vyse,chamber,
+Americas,KRÜ Esports,mwzera,Initiator,fade,sova,
+Americas,LEVIATÁN,Sato,Duelist,phoenix,neon,
+Americas,LEVIATÁN,spike,Duelist,neon,omen,
+Americas,LEVIATÁN,kiNgg,Controller,viper,astra,
+Americas,LEVIATÁN,Neon,Sentinel,chamber,brimstone,omen
+Americas,LEVIATÁN,blowz,Initiator,sova,skye,fade
+Americas,LOUD,Virtyy,Duelist,neon,raze,jett
+Americas,LOUD,Darker,Controller,astra,viper,vyse
+Americas,LOUD,lukxo,Controller,viper,chamber,vyse
+Americas,LOUD,cauanzin,Initiator,sova,fade,skye
+Americas,LOUD,erde,Flex,,,
+Americas,MIBR,aspas,Duelist,raze,jett,
+Americas,MIBR,zekken,Duelist,neon,phoenix,
+Americas,MIBR,Mazino,Controller,astra,omen,
+Americas,MIBR,tex,Sentinel,vyse,,
+Americas,MIBR,Verno,Initiator,fade,,
+Americas,NRG,mada,Duelist,waylay,neon,yoru
+Americas,NRG,keiko,Controller,omen,killjoy,jett
+Americas,NRG,skuba,Controller,viper,astra,killjoy
+Americas,NRG,brawk,Initiator,sova,vyse,brimstone
+Americas,NRG,Ethan,Initiator,tejo,skye,fade
+Americas,Sentinels,Jerrwin,Duelist,waylay,jett,neon
+Americas,Sentinels,cortezia,Controller,viper,killjoy,veto
+Americas,Sentinels,johnqt,Controller,viper,sage,harbor
+Americas,Sentinels,Reduxx,Controller,omen,iso,
+Americas,Sentinels,JonahP,Initiator,sova,skye,fade
+EMEA,BBL Esports,Lar0k,Duelist,neon,raze,jett
+EMEA,BBL Esports,lovers rock,Duelist,yoru,jett,waylay
+EMEA,BBL Esports,Loita,Controller,omen,astra,viper
+EMEA,BBL Esports,Crewen,Sentinel,cypher,viper,vyse
+EMEA,BBL Esports,Rosé,Initiator,sova,fade,skye
+EMEA,FNATIC,Alfajer,Duelist,raze,killjoy,waylay
+EMEA,FNATIC,kaajak,Duelist,neon,waylay,
+EMEA,FNATIC,Boaster,Controller,harbor,astra,omen
+EMEA,FNATIC,Veqaj,Controller,viper,kayo,
+EMEA,FNATIC,crashies,Initiator,skye,sova,fade
+EMEA,FUT Esports,s0pp,Duelist,neon,yoru,jett
+EMEA,FUT Esports,xeus,Duelist,yoru,waylay,raze
+EMEA,FUT Esports,sociablEE,Controller,omen,brimstone,fade
+EMEA,FUT Esports,yetujey,Controller,viper,cypher,killjoy
+EMEA,FUT Esports,KROSTALY,Initiator,fade,sova,skye
+EMEA,Gentle Mates,bipo,Duelist,neon,waylay,raze
+EMEA,Gentle Mates,marteen,Duelist,yoru,phoenix,veto
+EMEA,Gentle Mates,GLYPH,Controller,astra,omen,brimstone
+EMEA,Gentle Mates,Minny,Sentinel,cypher,viper,kayo
+EMEA,Gentle Mates,starxo,Initiator,fade,sova,skye
+EMEA,GIANTX,ara,Duelist,neon,waylay,raze
+EMEA,GIANTX,westside,Duelist,yoru,phoenix,waylay
+EMEA,GIANTX,Flickless,Controller,viper,cypher,fade
+EMEA,GIANTX,grubinho,Controller,omen,astra,brimstone
+EMEA,GIANTX,Cloud,Initiator,sova,fade,skye
+EMEA,Karmine Corp,LewN,Duelist,yoru,waylay,jett
+EMEA,Karmine Corp,Avez,Controller,omen,raze,tejo
+EMEA,Karmine Corp,dos9,Controller,astra,omen,neon
+EMEA,Karmine Corp,SUYGETSU,Sentinel,vyse,viper,cypher
+EMEA,Karmine Corp,N4RRATE,Initiator,fade,veto,
+EMEA,Natus Vincere,ExiT,Duelist,waylay,yoru,
+EMEA,Natus Vincere,hiro,Controller,viper,cypher,tejo
+EMEA,Natus Vincere,Ruxic,Controller,omen,astra,brimstone
+EMEA,Natus Vincere,Filu,Sentinel,chamber,yoru,neon
+EMEA,Natus Vincere,chloric,Initiator,fade,sova,skye
+EMEA,PCIFIC Esports,cNed,Duelist,neon,waylay,jett
+EMEA,PCIFIC Esports,seven,Duelist,raze,kayo,neon
+EMEA,PCIFIC Esports,al0rante,Controller,viper,veto,
+EMEA,PCIFIC Esports,qpert,Controller,astra,omen,
+EMEA,PCIFIC Esports,NINJA,Initiator,fade,sova,
+EMEA,Team Heretics,koshmaras,Duelist,yoru,neon,chamber
+EMEA,Team Heretics,Wo0t,Duelist,neon,raze,phoenix
+EMEA,Team Heretics,benjyfishy,Controller,harbor,viper,cypher
+EMEA,Team Heretics,Boo,Controller,astra,omen,brimstone
+EMEA,Team Heretics,RieNs,Initiator,skye,fade,sova
+EMEA,Team Liquid,kamo,Duelist,phoenix,waylay,yoru
+EMEA,Team Liquid,MiniBoo,Duelist,neon,,
+EMEA,Team Liquid,nAts,Controller,viper,killjoy,astra
+EMEA,Team Liquid,wayne,Controller,omen,astra,harbor
+EMEA,Team Liquid,purp0,Initiator,skye,sova,fade
+EMEA,Team Vitality,Derke,Duelist,neon,jett,phoenix
+EMEA,Team Vitality,Jamppi,Duelist,yoru,fade,kayo
+EMEA,Team Vitality,Chronicle,Controller,viper,chamber,killjoy
+EMEA,Team Vitality,PROFEK,Controller,omen,astra,brimstone
+EMEA,Team Vitality,Sayonara,Initiator,sova,viper,raze
+EMEA,ULF Esports,s0pp,Duelist,neon,yoru,jett
+EMEA,ULF Esports,audaz,Controller,astra,omen,brimstone
+EMEA,ULF Esports,echo,Controller,viper,chamber,cypher
+EMEA,ULF Esports,Favian,Controller,viper,raze,waylay
+EMEA,ULF Esports,nekky,Initiator,sova,fade,skye
+Pacific,DetonatioN FocusMe,Meiy,Duelist,waylay,neon,raze
+Pacific,DetonatioN FocusMe,yatsuka,Controller,astra,skye,fade
+Pacific,DetonatioN FocusMe,Caedye,Sentinel,killjoy,viper,waylay
+Pacific,DetonatioN FocusMe,Akame,Initiator,sova,neon,viper
+Pacific,DetonatioN FocusMe,SSeeS,Initiator,tejo,brimstone,omen
+Pacific,FULL SENSE,JitBoyS,Duelist,neon,cypher,
+Pacific,FULL SENSE,primmie,Duelist,waylay,phoenix,
+Pacific,FULL SENSE,Crws,Controller,brimstone,deadlock,omen
+Pacific,FULL SENSE,Leviathan,Sentinel,cypher,omen,vyse
+Pacific,FULL SENSE,Killua,Initiator,skye,fade,
+Pacific,Gen.G,ZynX,Duelist,neon,yoru,killjoy
+Pacific,Gen.G,Ash,Controller,omen,astra,brimstone
+Pacific,Gen.G,Foxy9,Controller,brimstone,omen,
+Pacific,Gen.G,Karon,Controller,viper,phoenix,cypher
+Pacific,Gen.G,Lakia,Initiator,fade,breach,sova
+Pacific,Global Esports,UdoTan,Duelist,raze,waylay,neon
+Pacific,Global Esports,Autumn,Controller,brimstone,veto,omen
+Pacific,Global Esports,PatMen,Controller,viper,fade,skye
+Pacific,Global Esports,xavi8k,Controller,omen,astra,kayo
+Pacific,Global Esports,Kr1stal,Sentinel,deadlock,fade,
+Pacific,Kiwoom DRX,free1ng,Duelist,neon,tejo,
+Pacific,Kiwoom DRX,HYUNMIN,Duelist,waylay,raze,phoenix
+Pacific,Kiwoom DRX,MaKo,Controller,brimstone,omen,astra
+Pacific,Kiwoom DRX,yong,Sentinel,cypher,viper,chamber
+Pacific,Kiwoom DRX,Hermes,Flex,,,
+Pacific,Nongshim RedForce,Dambi,Duelist,neon,waylay,phoenix
+Pacific,Nongshim RedForce,Francis,Duelist,yoru,breach,waylay
+Pacific,Nongshim RedForce,Ivy,Controller,viper,cypher,killjoy
+Pacific,Nongshim RedForce,Rb,Controller,omen,brimstone,astra
+Pacific,Nongshim RedForce,Xross,Initiator,fade,sova,tejo
+Pacific,Paper Rex,Jinggg,Duelist,raze,omen,phoenix
+Pacific,Paper Rex,something,Duelist,yoru,jett,neon
+Pacific,Paper Rex,d4v41,Controller,viper,vyse,chamber
+Pacific,Paper Rex,f0rsakeN,Controller,omen,viper,astra
+Pacific,Paper Rex,invy,Initiator,fade,sova,skye
+Pacific,Rex Regum Qeon,Jemkin,Duelist,waylay,killjoy,chamber
+Pacific,Rex Regum Qeon,Monyet,Duelist,neon,,
+Pacific,Rex Regum Qeon,crazyguy,Controller,omen,brimstone,kayo
+Pacific,Rex Regum Qeon,xffero,Controller,viper,astra,veto
+Pacific,Rex Regum Qeon,Kushy,Initiator,skye,sova,
+Pacific,T1,BuZz,Duelist,neon,jett,yoru
+Pacific,T1,Munchkin,Controller,astra,omen,viper
+Pacific,T1,iZu,Sentinel,chamber,yoru,cypher
+Pacific,T1,Meteor,Sentinel,killjoy,viper,astra
+Pacific,T1,stax,Initiator,skye,sova,fade
+Pacific,Team Secret,Rimuru,Duelist,neon,jett,
+Pacific,Team Secret,kellyS,Controller,viper,skye,chamber
+Pacific,Team Secret,Sylvan,Controller,astra,omen,brimstone
+Pacific,Team Secret,BerserX,Sentinel,cypher,vyse,killjoy
+Pacific,Team Secret,JessieVash,Initiator,skye,tejo,fade
+Pacific,VARREL,Klaus,Duelist,neon,tejo,waylay
+Pacific,VARREL,Zexy,Duelist,jett,raze,phoenix
+Pacific,VARREL,C1ndeR,Controller,astra,omen,
+Pacific,VARREL,oonzmlp,Sentinel,chamber,deadlock,viper
+Pacific,VARREL,XuNa,Initiator,skye,fade,sova
+Pacific,ZETA DIVISION,Absol,Duelist,neon,,
+Pacific,ZETA DIVISION,eKo,Duelist,waylay,phoenix,
+Pacific,ZETA DIVISION,SugarZ3ro,Controller,omen,brimstone,astra
+Pacific,ZETA DIVISION,SyouTa,Controller,viper,cypher,veto
+Pacific,ZETA DIVISION,Xdll,Initiator,skye,breach,fade
+China,All Gamers,f4ngeer,Duelist,waylay,yoru,chamber
+China,All Gamers,Youze,Duelist,neon,jett,waylay
+China,All Gamers,K1ra,Controller,viper,cypher,raze
+China,All Gamers,Septem7,Controller,astra,omen,gekko
+China,All Gamers,Shr1mp,Initiator,skye,fade,sova
+China,Bilibili Gaming,whzy,Duelist,waylay,chamber,phoenix
+China,Bilibili Gaming,yilai,Duelist,neon,killjoy,waylay
+China,Bilibili Gaming,nephh,Controller,omen,astra,brimstone
+China,Bilibili Gaming,rushia,Controller,viper,cypher,killjoy
+China,Dragon Ranger Gaming,Akeman,Duelist,waylay,jett,neon
+China,Dragon Ranger Gaming,Life,Duelist,neon,,
+China,Dragon Ranger Gaming,Flex1n,Controller,omen,astra,miks
+China,Dragon Ranger Gaming,vo0kashu,Sentinel,cypher,omen,viper
+China,Dragon Ranger Gaming,Nicc,Initiator,skye,sova,
+China,EDward Gaming,Jieni7,Duelist,neon,omen,kayo
+China,EDward Gaming,Smoggy,Duelist,phoenix,omen,brimstone
+China,EDward Gaming,ZmjjKK,Duelist,waylay,chamber,raze
+China,EDward Gaming,CHICHOO,Sentinel,cypher,viper,omen
+China,EDward Gaming,nobody,Initiator,sova,fade,skye
+China,FunPlus Phoenix,Ben1Ley,Duelist,waylay,astra,omen
+China,FunPlus Phoenix,Setrod,Duelist,neon,waylay,
+China,FunPlus Phoenix,AAAAY,Controller,viper,killjoy,sage
+China,FunPlus Phoenix,BerLIN,Controller,omen,astra,skye
+China,FunPlus Phoenix,KovaQ,Initiator,fade,tejo,skye
+China,JDG Esports,Yuicaw,Duelist,waylay,killjoy,chamber
+China,JDG Esports,zhe,Duelist,neon,viper,yoru
+China,JDG Esports,jkuro,Controller,omen,cypher,astra
+China,JDG Esports,stew,Controller,omen,raze,neon
+China,JDG Esports,coconut,Initiator,sova,skye,fade
+China,Nova Esports,Ezeir,Controller,omen,brimstone,astra
+China,Nova Esports,GREEN,Controller,viper,waylay,yoru
+China,Nova Esports,OBONE,Controller,viper,,
+China,Nova Esports,GuanG,Sentinel,cypher,jett,killjoy
+China,Nova Esports,qiutiaN,Initiator,sova,fade,viper
+China,Titan Esports Club,Dynamite,Duelist,neon,yoru,killjoy
+China,Titan Esports Club,Spitfires,Duelist,waylay,,
+China,Titan Esports Club,Coco,Controller,viper,brimstone,killjoy
+China,Titan Esports Club,Haodong,Controller,omen,cypher,astra
+China,Titan Esports Club,lucas,Initiator,skye,sova,fade
+China,Trace Esports,Kai,Duelist,neon,jett,raze
+China,Trace Esports,Xlele,Duelist,waylay,omen,phoenix
+China,Trace Esports,Abo,Controller,viper,killjoy,cypher
+China,Trace Esports,Viva,Initiator,fade,skye,sova
+China,Trace Esports,LuoK1ng,Flex,,,
+China,TYLOO,Erv,Duelist,waylay,omen,kayo
+China,TYLOO,slowly,Duelist,yoru,brimstone,astra
+China,TYLOO,splash,Duelist,neon,jett,waylay
+China,TYLOO,Scales,Controller,viper,killjoy,cypher
+China,TYLOO,sword9,Initiator,sova,skye,fade
+China,Wolves Esports,glacier,Duelist,waylay,neon,jett
+China,Wolves Esports,jowa,Controller,omen,raze,breach
+China,Wolves Esports,Spring,Controller,viper,astra,brimstone
+China,Wolves Esports,yosemite,Sentinel,killjoy,cypher,brimstone
+China,Wolves Esports,SiuFatBB,Initiator,fade,skye,sova
+China,Xi Lai Gaming,NoMan,Duelist,waylay,killjoy,tejo
+China,Xi Lai Gaming,Rarga,Duelist,neon,yoru,chamber
+China,Xi Lai Gaming,happywei,Controller,viper,astra,veto
+China,Xi Lai Gaming,Lysoar,Controller,omen,brimstone,sage
+China,Xi Lai Gaming,WsLeo,Initiator,skye,sova,

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { KICKOFF_SEEDS } from "@/server/schedule/generate";
 import type { Region } from "@/generated/prisma/client";
+import { D } from "@/constants/design";
 
 interface BMatch {
   id: string;
@@ -83,9 +84,8 @@ export function BracketView({ matches, userTeamId, region, isUserRegion, teamNam
     };
   });
 
-  // ── Build Semi slots — map by which QF teams feed into each semi ──
+  // ── Build Semi slots ──
   const semiDb = byRound.get("KICKOFF_UB_SF") ?? [];
-  // Collect all team names that played in QF top half (positions 0+1) and bottom half (2+3)
   const qfDb = byRound.get("KICKOFF_UB_QF") ?? [];
   const topQfTeams = new Set<string>();
   const botQfTeams = new Set<string>();
@@ -128,54 +128,71 @@ export function BracketView({ matches, userTeamId, region, isUserRegion, teamNam
     : { match: null, t1: null, t2: null, label: "", format: "BO5", isFinal: true };
 
   return (
-    <div className="rounded-lg border border-[var(--val-gray)] bg-[var(--val-surface)] p-5 overflow-x-auto">
-      {/* Header */}
-      <div className="mb-5 flex items-center gap-3">
-        <h2 className="text-lg font-black uppercase tracking-[0.15em] text-[var(--val-white)]">{region}</h2>
-        {isUserRegion && (
-          <span className="rounded border border-[var(--val-red)]/30 bg-[var(--val-red)]/10 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--val-red)]">
-            Your Region
+    <div className="flex flex-col">
+      {/* Region header */}
+      <div
+        className="flex items-center justify-between px-10 py-5"
+        style={{ borderBottom: `1px solid ${D.border}` }}
+      >
+        <div className="flex items-center gap-3">
+          <span
+            className="text-[22px] font-medium uppercase tracking-[0.05em]"
+            style={{ color: D.textPrimary }}
+          >
+            {region}
           </span>
-        )}
+          {isUserRegion && (
+            <span
+              className="rounded-full px-3 py-1 text-[10px] font-medium uppercase tracking-[0.25em]"
+              style={{
+                background: "rgba(255,70,85,0.12)",
+                color: D.red,
+                border: `1px solid rgba(255,70,85,0.3)`,
+              }}
+            >
+              Your Region
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* ── Upper Bracket Tree ── */}
-      <SectionHeader label="UPPER BRACKET" color="var(--val-green)" sub="Winner → Masters Seed #1" />
-
-      <UpperBracketGrid
-        r1={r1Slots}
-        r2={r2Slots}
-        semi={semiSlots}
-        final_={finalSlot}
-        userTeamId={userTeamId}
-      />
-
-      {/* ── Middle + Lower ── */}
-      <div className="mt-4 flex items-center gap-2 mb-2">
-        <div className="h-px flex-1 bg-[var(--val-gray)]/20" />
-        <span className="text-[9px] uppercase tracking-widest text-[var(--val-white)]/15">losers drop down</span>
-        <div className="h-px flex-1 bg-[var(--val-gray)]/20" />
+      {/* Upper Bracket */}
+      <div className="px-10 py-6" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+        <SectionHeader label="Upper Bracket" color={D.green} sub="Winner → Masters Seed #1" />
+        <div className="mt-4">
+          <UpperBracketGrid
+            r1={r1Slots}
+            r2={r2Slots}
+            semi={semiSlots}
+            final_={finalSlot}
+            userTeamId={userTeamId}
+          />
+        </div>
       </div>
 
-      <GenericBracketGrid
-        label="MIDDLE" color="var(--val-gold)" sub="1 defeat → Masters Seed #2"
-        rounds={["KICKOFF_MID_R1","KICKOFF_MID_R2","KICKOFF_MID_QF","KICKOFF_MID_SF","KICKOFF_MID_FINAL"]}
-        roundLabels={["Mid R1","Mid R2","Mid QF","Mid SF","Mid Final · BO5"]}
-        byRound={byRound} userTeamId={userTeamId}
-      />
-
-      <div className="my-2 flex items-center gap-2">
-        <div className="h-px flex-1 bg-[var(--val-gray)]/20" />
-        <span className="text-[9px] uppercase tracking-widest text-[var(--val-white)]/15">losers drop down</span>
-        <div className="h-px flex-1 bg-[var(--val-gray)]/20" />
+      {/* Middle bracket */}
+      <div className="px-10 py-6" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+        <SectionHeader label="Middle" color={D.gold} sub="1 defeat → Masters Seed #2" />
+        <div className="mt-4">
+          <GenericBracketGrid
+            rounds={["KICKOFF_MID_R1","KICKOFF_MID_R2","KICKOFF_MID_QF","KICKOFF_MID_SF","KICKOFF_MID_FINAL"]}
+            roundLabels={["Mid R1","Mid R2","Mid QF","Mid SF","Mid Final · BO5"]}
+            byRound={byRound} userTeamId={userTeamId}
+          />
+        </div>
       </div>
 
-      <GenericBracketGrid
-        label="LOWER" color="var(--val-red)" sub="2 defeats · Loser eliminated → Masters Seed #3"
-        rounds={["KICKOFF_LB_R1","KICKOFF_LB_R2","KICKOFF_LB_R3","KICKOFF_LB_QF","KICKOFF_LB_SF","KICKOFF_LB_FINAL"]}
-        roundLabels={["LB R1","LB R2","LB R3","LB QF","LB SF","LB Final · BO5"]}
-        byRound={byRound} userTeamId={userTeamId}
-      />
+      {/* Lower bracket */}
+      <div className="px-10 py-6" style={{ borderBottom: `1px solid ${D.border}` }}>
+        <SectionHeader label="Lower" color={D.red} sub="2 defeats — loser eliminated → Masters Seed #3" />
+        <div className="mt-4">
+          <GenericBracketGrid
+            rounds={["KICKOFF_LB_R1","KICKOFF_LB_R2","KICKOFF_LB_R3","KICKOFF_LB_QF","KICKOFF_LB_SF","KICKOFF_LB_FINAL"]}
+            roundLabels={["LB R1","LB R2","LB R3","LB QF","LB SF","LB Final · BO5"]}
+            byRound={byRound} userTeamId={userTeamId}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -184,31 +201,26 @@ export function BracketView({ matches, userTeamId, region, isUserRegion, teamNam
 
 const SLOT_H = 64; // height of one match card
 const SLOT_GAP = 12; // gap between cards in same round
+const LINE_COLOR = "rgba(255,255,255,0.1)";
 
 function UpperBracketGrid({ r1, r2, semi, final_, userTeamId }: {
   r1: SlotData[]; r2: SlotData[]; semi: SlotData[]; final_: SlotData; userTeamId: string;
 }) {
-  // R1: 4 slots, each SLOT_H tall, gap between them
-  // R2: 4 slots, same positions as R1
-  // Semi: 2 slots, centered between pairs of R2
-  // Final: 1 slot, centered between semis
   const colW = 210;
   const connW = 40;
   const totalW = colW * 4 + connW * 3;
   const r1TotalH = SLOT_H * 4 + SLOT_GAP * 3;
 
-  // Y positions for each slot
   const r1Y = Array.from({ length: 4 }, (_, i) => i * (SLOT_H + SLOT_GAP));
-  const r2Y = r1Y; // same positions — 1:1 with R1
+  const r2Y = r1Y;
   const semiY = [0, 1].map((i) => (r2Y[i * 2] + r2Y[i * 2 + 1] + SLOT_H) / 2 - SLOT_H / 2);
   const finalY = (semiY[0] + semiY[1] + SLOT_H) / 2 - SLOT_H / 2;
 
-  const headerH = 20;
+  const headerH = 24;
   const totalH = r1TotalH + headerH;
 
-  // Column X positions
   const x1 = 0;
-  const x1r = x1 + colW; // right edge of R1
+  const x1r = x1 + colW;
   const x2 = x1r + connW;
   const x2r = x2 + colW;
   const x3 = x2r + connW;
@@ -218,15 +230,12 @@ function UpperBracketGrid({ r1, r2, semi, final_, userTeamId }: {
   return (
     <div className="overflow-x-auto">
       <div className="relative" style={{ width: totalW, height: totalH, minWidth: totalW }}>
-        {/* SVG lines layer */}
         <svg className="absolute inset-0 pointer-events-none" width={totalW} height={totalH}>
-          {/* R1→R2: straight horizontal lines */}
           {r1Y.map((y, i) => {
             const cy = headerH + y + SLOT_H / 2;
-            return <line key={`r1r2-${i}`} x1={x1r} y1={cy} x2={x2} y2={cy} stroke="#383844" strokeWidth="1" />;
+            return <line key={`r1r2-${i}`} x1={x1r} y1={cy} x2={x2} y2={cy} stroke={LINE_COLOR} strokeWidth="1" />;
           })}
 
-          {/* R2→Semi: merge pairs */}
           {[0, 1].map((pair) => {
             const top = headerH + r2Y[pair * 2] + SLOT_H / 2;
             const bot = headerH + r2Y[pair * 2 + 1] + SLOT_H / 2;
@@ -234,15 +243,14 @@ function UpperBracketGrid({ r1, r2, semi, final_, userTeamId }: {
             const jx = x2r + connW / 2;
             return (
               <g key={`r2semi-${pair}`}>
-                <line x1={x2r} y1={top} x2={jx} y2={top} stroke="#383844" strokeWidth="1" />
-                <line x1={x2r} y1={bot} x2={jx} y2={bot} stroke="#383844" strokeWidth="1" />
-                <line x1={jx} y1={top} x2={jx} y2={bot} stroke="#383844" strokeWidth="1" />
-                <line x1={jx} y1={mid} x2={x3} y2={mid} stroke="#383844" strokeWidth="1" />
+                <line x1={x2r} y1={top} x2={jx} y2={top} stroke={LINE_COLOR} strokeWidth="1" />
+                <line x1={x2r} y1={bot} x2={jx} y2={bot} stroke={LINE_COLOR} strokeWidth="1" />
+                <line x1={jx} y1={top} x2={jx} y2={bot} stroke={LINE_COLOR} strokeWidth="1" />
+                <line x1={jx} y1={mid} x2={x3} y2={mid} stroke={LINE_COLOR} strokeWidth="1" />
               </g>
             );
           })}
 
-          {/* Semi→Final: merge */}
           {(() => {
             const top = headerH + semiY[0] + SLOT_H / 2;
             const bot = headerH + semiY[1] + SLOT_H / 2;
@@ -250,43 +258,38 @@ function UpperBracketGrid({ r1, r2, semi, final_, userTeamId }: {
             const jx = x3r + connW / 2;
             return (
               <g>
-                <line x1={x3r} y1={top} x2={jx} y2={top} stroke="#383844" strokeWidth="1" />
-                <line x1={x3r} y1={bot} x2={jx} y2={bot} stroke="#383844" strokeWidth="1" />
-                <line x1={jx} y1={top} x2={jx} y2={bot} stroke="#383844" strokeWidth="1" />
-                <line x1={jx} y1={mid} x2={x4} y2={mid} stroke="#383844" strokeWidth="1" />
+                <line x1={x3r} y1={top} x2={jx} y2={top} stroke={LINE_COLOR} strokeWidth="1" />
+                <line x1={x3r} y1={bot} x2={jx} y2={bot} stroke={LINE_COLOR} strokeWidth="1" />
+                <line x1={jx} y1={top} x2={jx} y2={bot} stroke={LINE_COLOR} strokeWidth="1" />
+                <line x1={jx} y1={mid} x2={x4} y2={mid} stroke={LINE_COLOR} strokeWidth="1" />
               </g>
             );
           })()}
         </svg>
 
-        {/* Column headers */}
         <Header x={x1} text="Round 1" />
         <Header x={x2} text="Round 2" />
         <Header x={x3} text="Semifinal" />
         <Header x={x4} text="Final · BO5" />
 
-        {/* R1 cards */}
         {r1.map((slot, i) => (
           <div key={`r1-${i}`} className="absolute" style={{ left: x1, top: headerH + r1Y[i], width: colW }}>
             <MatchCard slot={slot} userTeamId={userTeamId} />
           </div>
         ))}
 
-        {/* R2 cards */}
         {r2.map((slot, i) => (
           <div key={`r2-${i}`} className="absolute" style={{ left: x2, top: headerH + r2Y[i], width: colW }}>
             <MatchCard slot={slot} userTeamId={userTeamId} />
           </div>
         ))}
 
-        {/* Semi cards */}
         {semi.map((slot, i) => (
           <div key={`semi-${i}`} className="absolute" style={{ left: x3, top: headerH + semiY[i], width: colW }}>
             <MatchCard slot={slot} userTeamId={userTeamId} />
           </div>
         ))}
 
-        {/* Final card */}
         <div className="absolute" style={{ left: x4, top: headerH + finalY, width: colW }}>
           <MatchCard slot={final_} userTeamId={userTeamId} isFinal />
         </div>
@@ -297,7 +300,10 @@ function UpperBracketGrid({ r1, r2, semi, final_, userTeamId }: {
 
 function Header({ x, text }: { x: number; text: string }) {
   return (
-    <div className="absolute text-[9px] font-semibold uppercase tracking-[0.15em] text-[var(--val-white)]/25" style={{ left: x, top: 0 }}>
+    <div
+      className="absolute text-[10px] font-medium uppercase tracking-[0.3em]"
+      style={{ left: x, top: 0, color: D.textSubtle }}
+    >
       {text}
     </div>
   );
@@ -305,8 +311,7 @@ function Header({ x, text }: { x: number; text: string }) {
 
 // ── Generic bracket grid for Middle/Lower ──
 
-function GenericBracketGrid({ label, color, sub, rounds, roundLabels, byRound, userTeamId }: {
-  label: string; color: string; sub: string;
+function GenericBracketGrid({ rounds, roundLabels, byRound, userTeamId }: {
   rounds: string[]; roundLabels: string[];
   byRound: Map<string, BMatch[]>; userTeamId: string;
 }) {
@@ -329,7 +334,6 @@ function GenericBracketGrid({ label, color, sub, rounds, roundLabels, byRound, u
   const totalH = headerH + contentH;
   const totalW = colW * rounds.length + connW * Math.max(0, rounds.length - 1);
 
-  // Pre-compute Y center of each card per round (accounting for vertical centering)
   const cardCenters: number[][] = roundSlots.map((slots) => {
     const n = Math.max(slots.length, 1);
     const roundH = n * (SLOT_H + SLOT_GAP) - SLOT_GAP;
@@ -338,14 +342,8 @@ function GenericBracketGrid({ label, color, sub, rounds, roundLabels, byRound, u
   });
 
   return (
-    <div className="rounded border bg-[var(--val-bg)] p-4 overflow-x-auto" style={{ borderColor: `color-mix(in srgb, ${color} 15%, transparent)` }}>
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-xs font-black uppercase tracking-[0.15em]" style={{ color }}>{label}</span>
-        <span className="text-[10px] text-[var(--val-white)]/20">{sub}</span>
-      </div>
-
+    <div className="overflow-x-auto">
       <div className="relative" style={{ width: totalW, height: totalH, minWidth: totalW }}>
-        {/* SVG lines */}
         <svg className="absolute inset-0 pointer-events-none" width={totalW} height={totalH}>
           {rounds.map((_, colIdx) => {
             if (colIdx >= rounds.length - 1) return null;
@@ -353,17 +351,16 @@ function GenericBracketGrid({ label, color, sub, rounds, roundLabels, byRound, u
             const next = cardCenters[colIdx + 1];
             if (!cur.length || !next.length) return null;
 
-            const xRight = colW * (colIdx + 1) + connW * colIdx; // right edge of current col
-            const xLeft = colW * (colIdx + 1) + connW * (colIdx + 1); // left edge of next col
+            const xRight = colW * (colIdx + 1) + connW * colIdx;
+            const xLeft = colW * (colIdx + 1) + connW * (colIdx + 1);
             const xMid = (xRight + xLeft) / 2;
 
             if (cur.length === next.length) {
               return cur.map((cy, i) => (
-                <line key={`s-${colIdx}-${i}`} x1={xRight} y1={cy} x2={xLeft} y2={next[i]} stroke="#383844" strokeWidth="1" />
+                <line key={`s-${colIdx}-${i}`} x1={xRight} y1={cy} x2={xLeft} y2={next[i]} stroke={LINE_COLOR} strokeWidth="1" />
               ));
             }
 
-            // Merge: pairs of current → one in next
             return next.map((nextY, ni) => {
               const i1 = ni * 2;
               const i2 = ni * 2 + 1;
@@ -371,17 +368,16 @@ function GenericBracketGrid({ label, color, sub, rounds, roundLabels, byRound, u
               const y2 = i2 < cur.length ? cur[i2] : y1;
               return (
                 <g key={`m-${colIdx}-${ni}`}>
-                  <line x1={xRight} y1={y1} x2={xMid} y2={y1} stroke="#383844" strokeWidth="1" />
-                  {y2 !== y1 && <line x1={xRight} y1={y2} x2={xMid} y2={y2} stroke="#383844" strokeWidth="1" />}
-                  {y2 !== y1 && <line x1={xMid} y1={y1} x2={xMid} y2={y2} stroke="#383844" strokeWidth="1" />}
-                  <line x1={xMid} y1={nextY} x2={xLeft} y2={nextY} stroke="#383844" strokeWidth="1" />
+                  <line x1={xRight} y1={y1} x2={xMid} y2={y1} stroke={LINE_COLOR} strokeWidth="1" />
+                  {y2 !== y1 && <line x1={xRight} y1={y2} x2={xMid} y2={y2} stroke={LINE_COLOR} strokeWidth="1" />}
+                  {y2 !== y1 && <line x1={xMid} y1={y1} x2={xMid} y2={y2} stroke={LINE_COLOR} strokeWidth="1" />}
+                  <line x1={xMid} y1={nextY} x2={xLeft} y2={nextY} stroke={LINE_COLOR} strokeWidth="1" />
                 </g>
               );
             });
           })}
         </svg>
 
-        {/* Cards */}
         {rounds.map((roundId, colIdx) => {
           const x = colW * colIdx + connW * colIdx;
           const slots = roundSlots[colIdx];
@@ -392,7 +388,10 @@ function GenericBracketGrid({ label, color, sub, rounds, roundLabels, byRound, u
 
           return (
             <div key={roundId}>
-              <div className="absolute text-[9px] font-semibold uppercase tracking-[0.15em] text-[var(--val-white)]/25" style={{ left: x, top: 0 }}>
+              <div
+                className="absolute text-[10px] font-medium uppercase tracking-[0.3em]"
+                style={{ left: x, top: 0, color: D.textSubtle }}
+              >
                 {roundLabels[colIdx]}
               </div>
               {slots.length > 0 ? slots.map((slot, i) => (
@@ -401,8 +400,16 @@ function GenericBracketGrid({ label, color, sub, rounds, roundLabels, byRound, u
                 </div>
               )) : (
                 <div className="absolute" style={{ left: x, top: headerH + yOff, width: colW }}>
-                  <div className="rounded border border-dashed border-[var(--val-gray)]/20 p-3 text-center" style={{ height: SLOT_H }}>
-                    <span className="text-[10px] text-[var(--val-white)]/10">TBD</span>
+                  <div
+                    className="rounded p-3 text-center"
+                    style={{
+                      height: SLOT_H,
+                      border: `1px dashed ${D.borderFaint}`,
+                    }}
+                  >
+                    <span className="text-[10px]" style={{ color: D.textFaint }}>
+                      TBD
+                    </span>
                   </div>
                 </div>
               )}
@@ -418,9 +425,19 @@ function GenericBracketGrid({ label, color, sub, rounds, roundLabels, byRound, u
 
 function SectionHeader({ label, color, sub }: { label: string; color: string; sub: string }) {
   return (
-    <div className="mb-3 flex items-center gap-2">
-      <span className="text-xs font-black uppercase tracking-[0.15em]" style={{ color }}>{label}</span>
-      <span className="text-[10px] text-[var(--val-white)]/20">{sub}</span>
+    <div className="flex items-center gap-3">
+      <span
+        className="text-[11px] font-medium uppercase tracking-[0.3em]"
+        style={{ color }}
+      >
+        {label}
+      </span>
+      <span
+        className="text-[10px] uppercase tracking-[0.2em]"
+        style={{ color: D.textSubtle }}
+      >
+        {sub}
+      </span>
     </div>
   );
 }
@@ -435,21 +452,41 @@ function MatchCard({ slot, userTeamId, isFinal }: { slot: SlotData; userTeamId: 
 
   if (isTbd) {
     return (
-      <div className={`rounded border border-dashed border-[var(--val-gray)]/20 bg-[var(--val-bg)] ${isFinal ? "border-2 border-[var(--val-gold)]/20" : ""}`}>
-        <div className="px-2.5 py-2 text-[10px] text-[var(--val-white)]/15">TBD</div>
-        <div className="border-t border-dashed border-[var(--val-gray)]/10" />
-        <div className="px-2.5 py-2 text-[10px] text-[var(--val-white)]/15">TBD</div>
+      <div
+        className="rounded"
+        style={{
+          background: D.card,
+          border: `1px dashed ${D.borderFaint}`,
+        }}
+      >
+        <div className="px-2.5 py-2 text-[10px]" style={{ color: D.textFaint }}>
+          TBD
+        </div>
+        <div style={{ borderTop: `1px dashed ${D.borderFaint}` }} />
+        <div className="px-2.5 py-2 text-[10px]" style={{ color: D.textFaint }}>
+          TBD
+        </div>
       </div>
     );
   }
 
+  const borderColor = isUser
+    ? "rgba(255,70,85,0.45)"
+    : isFinal
+      ? "rgba(198,155,58,0.35)"
+      : D.border;
+  const bgColor = isUser
+    ? "rgba(255,70,85,0.06)"
+    : D.surface;
+
   const inner = (
-    <div className={`rounded ${isFinal ? "border-2" : "border"} ${
-      isUser ? "border-[var(--val-red)]/50 bg-[var(--val-red)]/5" :
-      isFinal ? "border-[var(--val-gold)]/30 bg-[var(--val-surface)]" :
-      "border-[var(--val-gray)] bg-[var(--val-surface)]"
-    } ${match?.isPlayed ? "cursor-pointer hover:border-[var(--val-white)]/30" : ""}`}>
-      {/* Team 1 */}
+    <div
+      className="rounded transition-colors"
+      style={{
+        background: bgColor,
+        border: `1px solid ${borderColor}`,
+      }}
+    >
       <TeamRow
         name={t1?.name ?? "TBD"}
         logo={t1?.logo ?? null}
@@ -458,8 +495,7 @@ function MatchCard({ slot, userTeamId, isFinal }: { slot: SlotData; userTeamId: 
         lost={t2Won && match?.isPlayed}
         isTbd={!t1}
       />
-      <div className="border-t border-[var(--val-gray)]/20" />
-      {/* Team 2 */}
+      <div style={{ borderTop: `1px solid ${D.borderFaint}` }} />
       <TeamRow
         name={t2?.name ?? "TBD"}
         logo={t2?.logo ?? null}
@@ -479,19 +515,34 @@ function TeamRow({ name, logo, score, won, lost, isTbd }: {
   name: string; logo: string | null; score: number | null; won: boolean; lost?: boolean; isTbd: boolean;
 }) {
   return (
-    <div className={`flex items-center justify-between px-2.5 py-1.5 ${lost ? "opacity-30" : ""}`}>
+    <div
+      className="flex items-center justify-between px-2.5 py-1.5"
+      style={{ opacity: lost ? 0.35 : 1 }}
+    >
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {logo ? (
           <img src={logo} alt="" className="h-4 w-4 shrink-0 object-contain" />
         ) : (
-          <div className={`h-4 w-4 shrink-0 rounded ${isTbd ? "bg-[var(--val-gray)]/15" : "bg-[var(--val-gray)]/30"}`} />
+          <div
+            className="h-4 w-4 shrink-0 rounded"
+            style={{ background: isTbd ? D.borderFaint : D.card }}
+          />
         )}
-        <span className={`truncate text-[11px] font-bold ${isTbd ? "text-[var(--val-white)]/20 italic" : "text-[var(--val-white)]"}`}>
+        <span
+          className="truncate text-[11px] font-medium"
+          style={{
+            color: isTbd ? D.textSubtle : D.textPrimary,
+            fontStyle: isTbd ? "italic" : undefined,
+          }}
+        >
           {name}
         </span>
       </div>
       {score !== null && (
-        <span className={`ml-2 text-xs font-black tabular-nums ${won ? "text-[var(--val-white)]" : "text-[var(--val-white)]/30"}`}>
+        <span
+          className="ml-2 text-[12px] font-medium tabular-nums"
+          style={{ color: won ? D.textPrimary : D.textSubtle }}
+        >
           {score}
         </span>
       )}

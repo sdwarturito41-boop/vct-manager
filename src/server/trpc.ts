@@ -9,7 +9,15 @@ export const createTRPCContext = async () => {
 
 export type TRPCContext = Awaited<ReturnType<typeof createTRPCContext>>;
 
-const t = initTRPC.context<TRPCContext>().create();
+const t = initTRPC.context<TRPCContext>().create({
+  errorFormatter({ shape, error }) {
+    // Log server errors fully in dev
+    if (error.code === "INTERNAL_SERVER_ERROR") {
+      console.error("[tRPC INTERNAL]", error.message, "\nstack:", error.stack);
+    }
+    return shape;
+  },
+});
 
 export const router = t.router;
 export const publicProcedure = t.procedure;

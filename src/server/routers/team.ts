@@ -46,7 +46,18 @@ export const teamRouter = router({
       const prestige = dbTemplate?.prestige ?? constTemplate?.prestige ?? 50;
       const logoUrl = dbTemplate?.logoUrl ?? null;
 
-      // Create the team
+      // If an AI team with the same template name already exists (from seed), delete it
+      // and reassign its players to the new user team.
+      // AI teams are owned by ghost users with emails starting with "ai-"
+      const existingAiTeam = await ctx.prisma.team.findFirst({
+        where: {
+          name: input.templateTeamName,
+          user: { email: { startsWith: "ai-" } },
+        },
+        include: { players: true, user: true },
+      });
+
+      // Create the user team
       const team = await ctx.prisma.team.create({
         data: {
           name: input.name,
@@ -59,11 +70,23 @@ export const teamRouter = router({
         },
       });
 
-      // Find all players whose currentTeam matches the template and assign them
-      await ctx.prisma.player.updateMany({
-        where: { currentTeam: input.templateTeamName, teamId: null },
-        data: { teamId: team.id },
-      });
+      if (existingAiTeam) {
+        // Transfer players from AI team to user team
+        await ctx.prisma.player.updateMany({
+          where: { teamId: existingAiTeam.id },
+          data: { teamId: team.id },
+        });
+        const ghostUserId = existingAiTeam.userId;
+        // Delete the AI team then its ghost user
+        await ctx.prisma.team.delete({ where: { id: existingAiTeam.id } });
+        await ctx.prisma.user.delete({ where: { id: ghostUserId } }).catch(() => {});
+      } else {
+        // Fallback: assign by currentTeam name for orphan players
+        await ctx.prisma.player.updateMany({
+          where: { currentTeam: input.templateTeamName, teamId: null },
+          data: { teamId: team.id },
+        });
+      }
 
       // Initialize AI teams + match schedule
       await initializeSeasonForTeam(

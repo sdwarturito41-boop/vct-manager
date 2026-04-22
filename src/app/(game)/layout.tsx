@@ -25,9 +25,16 @@ export default async function GameLayout({
 
   return (
     <TRPCProvider>
-      <div className="flex min-h-screen">
+      <div
+        className="flex h-screen overflow-hidden"
+        style={{
+          background: "#0F0F14",
+          fontFamily: "Inter, system-ui, sans-serif",
+          color: "#ECE8E1",
+        }}
+      >
         <SidebarNav />
-        <main className="flex-1 overflow-y-auto p-6 lg:p-8">{children}</main>
+        <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
     </TRPCProvider>
   );

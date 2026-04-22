@@ -2,16 +2,19 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../trpc";
 import { simulateMatch, simulateMap as simulateMapEngine } from "@/server/simulation/engine";
-import type { SimTeam } from "@/server/simulation/engine";
+import { applyMasteryUpdate, applyPassiveDecay } from "@/server/simulation/mastery";
+import type { SimTeam, AgentPick } from "@/server/simulation/engine";
+import { VALORANT_AGENTS } from "@/constants/agents";
 import type { Player, Team, Region } from "@/generated/prisma/client";
 import { progressBracket } from "@/server/schedule/generate";
 
 function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
+  const top5 = [...team.players].sort((a, b) => b.acs - a.acs).slice(0, 5);
   return {
     id: team.id,
     name: team.name,
     tag: team.tag,
-    players: team.players.map((p) => ({
+    players: top5.map((p) => ({
       id: p.id,
       ign: p.ign,
       acs: p.acs,
@@ -24,7 +27,27 @@ function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
     skillAim: team.skillAim,
     skillUtility: team.skillUtility,
     skillTeamplay: team.skillTeamplay,
+    playstyle: team.playstyle,
   };
+}
+
+async function applyActivePatch(
+  prisma: import("@/generated/prisma/client").PrismaClient,
+): Promise<void> {
+  const { applyPatchToMeta } = await import("@/constants/meta");
+  const season = await prisma.season.findFirst({ where: { isActive: true } });
+  if (!season) return;
+  const patch = await prisma.metaPatch.findFirst({
+    where: { season: season.number, stage: season.currentStage },
+    orderBy: { createdAt: "desc" },
+  });
+  if (patch) {
+    const buffs = Array.isArray(patch.buffs) ? (patch.buffs as string[]) : [];
+    const nerfs = Array.isArray(patch.nerfs) ? (patch.nerfs as string[]) : [];
+    applyPatchToMeta(buffs, nerfs);
+  } else {
+    applyPatchToMeta([], []);
+  }
 }
 
 export const matchRouter = router({
@@ -57,6 +80,7 @@ export const matchRouter = router({
       const simTeam1 = buildSimTeam(match.team1);
       const simTeam2 = buildSimTeam(match.team2);
 
+      await applyActivePatch(ctx.prisma);
       const result = simulateMatch(simTeam1, simTeam2, match.format);
 
       // Update the match record
@@ -84,6 +108,30 @@ export const matchRouter = router({
           data: { losses: { increment: 1 } },
         }),
       ]);
+
+      // Group stage champ pt (+1 per win)
+      if (
+        match.stageId === "STAGE_1_ALPHA" || match.stageId === "STAGE_1_OMEGA" ||
+        match.stageId === "STAGE_2_ALPHA" || match.stageId === "STAGE_2_OMEGA"
+      ) {
+        await ctx.prisma.team.update({
+          where: { id: result.winnerId },
+          data: { champPts: { increment: 1 } },
+        });
+      }
+
+      // Sponsor win bonus for the winner
+      const winSponsors = await ctx.prisma.sponsor.findMany({
+        where: { teamId: result.winnerId, isActive: true },
+        select: { winBonus: true },
+      });
+      const winBonusTotal = winSponsors.reduce((s, v) => s + v.winBonus, 0);
+      if (winBonusTotal > 0) {
+        await ctx.prisma.team.update({
+          where: { id: result.winnerId },
+          data: { budget: { increment: winBonusTotal } },
+        });
+      }
 
       return updatedMatch;
     }),
@@ -126,6 +174,7 @@ export const matchRouter = router({
       const simTeam1 = buildSimTeam(match.team1);
       const simTeam2 = buildSimTeam(match.team2);
 
+      await applyActivePatch(ctx.prisma);
       const result = simulateMatch(simTeam1, simTeam2, match.format, input.selectedMaps);
 
       const updatedMatch = await ctx.prisma.match.update({
@@ -151,6 +200,30 @@ export const matchRouter = router({
           data: { losses: { increment: 1 } },
         }),
       ]);
+
+      // Group stage champ pt (+1 per win)
+      if (
+        match.stageId === "STAGE_1_ALPHA" || match.stageId === "STAGE_1_OMEGA" ||
+        match.stageId === "STAGE_2_ALPHA" || match.stageId === "STAGE_2_OMEGA"
+      ) {
+        await ctx.prisma.team.update({
+          where: { id: result.winnerId },
+          data: { champPts: { increment: 1 } },
+        });
+      }
+
+      // Sponsor win bonus for the winner
+      const winSponsors = await ctx.prisma.sponsor.findMany({
+        where: { teamId: result.winnerId, isActive: true },
+        select: { winBonus: true },
+      });
+      const winBonusTotal = winSponsors.reduce((s, v) => s + v.winBonus, 0);
+      if (winBonusTotal > 0) {
+        await ctx.prisma.team.update({
+          where: { id: result.winnerId },
+          data: { budget: { increment: winBonusTotal } },
+        });
+      }
 
       return updatedMatch;
     }),
@@ -247,12 +320,84 @@ export const matchRouter = router({
         simTeam2 = buildSimTeam(match.team1);
       }
 
-      const mapResult = simulateMapEngine(simTeam1, simTeam2, input.mapName);
+      // Build agent picks with roles for simulation impact
+      const userAgentPicks: AgentPick[] = input.playerAgents.map((pa) => {
+        const agent = VALORANT_AGENTS.find((a) => a.name === pa.agentName);
+        return { playerId: pa.playerId, agentName: pa.agentName, agentRole: agent?.role };
+      });
 
-      // If we swapped teams, swap the scores back so score1 always = match.team1
+      // AI generates random agent picks (role-matched to their players)
+      const aiTeam = isUserTeam1 ? match.team2 : match.team1;
+      const aiAgentPicks: AgentPick[] = aiTeam.players.slice(0, 5).map((p) => {
+        const roleAgents = VALORANT_AGENTS.filter((a) => a.role === p.role || (p.role === "IGL" && ["Controller", "Initiator"].includes(a.role)));
+        const picked = roleAgents[Math.floor(Math.random() * roleAgents.length)] ?? VALORANT_AGENTS[0];
+        return { playerId: p.id, agentName: picked.name, agentRole: picked.role };
+      });
+
+      const t1Agents = isUserTeam1 ? userAgentPicks : aiAgentPicks;
+      const t2Agents = isUserTeam1 ? aiAgentPicks : userAgentPicks;
+
       const swapped =
         (isUserTeam1 && input.side === "defense") ||
         (!isUserTeam1 && input.side === "attack");
+
+      let mapResult;
+      try {
+        await applyActivePatch(ctx.prisma);
+        mapResult = simulateMapEngine(simTeam1, simTeam2, input.mapName, {
+          team1Agents: swapped ? t2Agents : t1Agents,
+          team2Agents: swapped ? t1Agents : t2Agents,
+          team1StartsAttack: true,
+        });
+      } catch (err) {
+        console.error("[simulateMap] engine error:", err);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: err instanceof Error ? `Engine: ${err.message}` : "Engine error",
+        });
+      }
+
+      // ── Apply mastery progression for user's team ──
+      // Normalize scores back to real team1/team2 order (pre-swap)
+      const realScore1 = swapped ? mapResult.score2 : mapResult.score1;
+      const realScore2 = swapped ? mapResult.score1 : mapResult.score2;
+      const userScore = isUserTeam1 ? realScore1 : realScore2;
+      const oppScore = isUserTeam1 ? realScore2 : realScore1;
+
+      const userPlayers = await ctx.prisma.player.findMany({
+        where: { id: { in: input.playerAgents.map((pa) => pa.playerId) } },
+        select: { id: true, role: true },
+      });
+      const userRoleByPlayerId = new Map(userPlayers.map((p) => [p.id, p.role as string]));
+
+      const playedAgentByPlayerId: Record<string, string> = {};
+      for (const pa of input.playerAgents) {
+        playedAgentByPlayerId[pa.playerId] = pa.agentName;
+      }
+
+      try {
+        // Apply passive decay first (agents NOT played this map accumulate rust)
+        await applyPassiveDecay(ctx.prisma, input.playerAgents.map((pa) => pa.playerId), playedAgentByPlayerId);
+
+        // Apply mastery update for agents that WERE played
+        for (const pa of input.playerAgents) {
+          const stat = mapResult.playerStats.find((s) => s.playerId === pa.playerId);
+          if (!stat) continue;
+          await applyMasteryUpdate(ctx.prisma, {
+            playerId: pa.playerId,
+            agentName: pa.agentName,
+            mapName: input.mapName,
+            myScore: userScore,
+            oppScore,
+            playerACS: stat.acs,
+            naturalRole: userRoleByPlayerId.get(pa.playerId) ?? "Flex",
+            isScrim: false,
+          });
+        }
+      } catch (err) {
+        console.error("[simulateMap] mastery error:", err);
+        // Don't fail the whole request if mastery fails
+      }
 
       if (swapped) {
         return {
@@ -261,6 +406,12 @@ export const matchRouter = router({
           score2: mapResult.score1,
           playerStats: mapResult.playerStats,
           highlights: mapResult.highlights,
+          rounds: mapResult.rounds.map((r) => ({
+            ...r,
+            winner: (r.winner === 1 ? 2 : 1) as 1 | 2,
+            score1: r.score2,
+            score2: r.score1,
+          })),
         };
       }
 
@@ -336,6 +487,30 @@ export const matchRouter = router({
           data: { losses: { increment: 1 } },
         }),
       ]);
+
+      // Group stage champ pt (+1 per win)
+      if (
+        match.stageId === "STAGE_1_ALPHA" || match.stageId === "STAGE_1_OMEGA" ||
+        match.stageId === "STAGE_2_ALPHA" || match.stageId === "STAGE_2_OMEGA"
+      ) {
+        await ctx.prisma.team.update({
+          where: { id: input.winnerId },
+          data: { champPts: { increment: 1 } },
+        });
+      }
+
+      // 2b. Sponsor win bonuses for the winning team
+      const winningTeamSponsors = await ctx.prisma.sponsor.findMany({
+        where: { teamId: input.winnerId, isActive: true },
+        select: { winBonus: true },
+      });
+      const winBonusTotal = winningTeamSponsors.reduce((s, v) => s + v.winBonus, 0);
+      if (winBonusTotal > 0) {
+        await ctx.prisma.team.update({
+          where: { id: input.winnerId },
+          data: { budget: { increment: winBonusTotal } },
+        });
+      }
 
       // 3. Check bracket progression
       const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });

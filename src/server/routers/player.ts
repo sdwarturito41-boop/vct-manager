@@ -161,4 +161,43 @@ export const playerRouter = router({
 
       return player;
     }),
+
+  teamMapStats: protectedProcedure.query(async ({ ctx }) => {
+    const team = await ctx.prisma.team.findUnique({
+      where: { userId: ctx.userId },
+      include: { players: { where: { isActive: true }, select: { id: true, ign: true, role: true, mapFactors: true } } },
+    });
+    if (!team) throw new TRPCError({ code: "NOT_FOUND" });
+
+    // Average map factor per map across all players
+    const mapAvg: Record<string, number> = {};
+    const mapCount: Record<string, number> = {};
+    for (const p of team.players) {
+      const factors = (p.mapFactors ?? {}) as Record<string, number>;
+      for (const [map, factor] of Object.entries(factors)) {
+        mapAvg[map] = (mapAvg[map] ?? 0) + factor;
+        mapCount[map] = (mapCount[map] ?? 0) + 1;
+      }
+    }
+    for (const map of Object.keys(mapAvg)) {
+      mapAvg[map] = mapAvg[map] / (mapCount[map] ?? 1);
+    }
+
+    return { teamMapFactors: mapAvg, players: team.players };
+  }),
+
+  agentMastery: protectedProcedure
+    .input(z.object({ playerIds: z.array(z.string()) }))
+    .query(async ({ ctx, input }) => {
+      const records = await ctx.prisma.playerAgentPool.findMany({
+        where: { playerId: { in: input.playerIds } },
+      });
+      // Group by playerId
+      const byPlayer: Record<string, Array<{ agentName: string; mapName: string; stars: number }>> = {};
+      for (const r of records) {
+        if (!byPlayer[r.playerId]) byPlayer[r.playerId] = [];
+        byPlayer[r.playerId].push({ agentName: r.agentName, mapName: r.mapName, stars: r.stars });
+      }
+      return byPlayer;
+    }),
 });

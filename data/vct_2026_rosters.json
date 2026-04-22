@@ -1,0 +1,2153 @@
+[
+  {
+    "region": "Americas",
+    "team": "100 Thieves",
+    "player": "Asuna",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "sage",
+    "agent_3": "kayo"
+  },
+  {
+    "region": "Americas",
+    "team": "100 Thieves",
+    "player": "Timotino",
+    "role": "Duelist",
+    "agent_1": "phoenix",
+    "agent_2": "raze",
+    "agent_3": "jett"
+  },
+  {
+    "region": "Americas",
+    "team": "100 Thieves",
+    "player": "bang",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "harbor",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "100 Thieves",
+    "player": "Cryocells",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "cypher",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "100 Thieves",
+    "player": "vora",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "Cloud9",
+    "player": "OXY",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "Cloud9",
+    "player": "penny",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "chamber",
+    "agent_3": "vyse"
+  },
+  {
+    "region": "Americas",
+    "team": "Cloud9",
+    "player": "v1c",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "Cloud9",
+    "player": "Zellsis",
+    "role": "Sentinel",
+    "agent_1": "killjoy",
+    "agent_2": "tejo",
+    "agent_3": "vyse"
+  },
+  {
+    "region": "Americas",
+    "team": "Cloud9",
+    "player": "Xeppaa",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "sova",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "ENVY",
+    "player": "keznit",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "waylay",
+    "agent_3": "raze"
+  },
+  {
+    "region": "Americas",
+    "team": "ENVY",
+    "player": "Eggsterr",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "phoenix",
+    "agent_3": "veto"
+  },
+  {
+    "region": "Americas",
+    "team": "ENVY",
+    "player": "Rossy",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": "tejo"
+  },
+  {
+    "region": "Americas",
+    "team": "ENVY",
+    "player": "Demon1",
+    "role": "Sentinel",
+    "agent_1": "chamber",
+    "agent_2": "astra",
+    "agent_3": "jett"
+  },
+  {
+    "region": "Americas",
+    "team": "ENVY",
+    "player": "P0PPIN",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "skye",
+    "agent_3": "fade"
+  },
+  {
+    "region": "Americas",
+    "team": "Evil Geniuses",
+    "player": "dgzin",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "Evil Geniuses",
+    "player": "Okeanos",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "waylay",
+    "agent_3": "kayo"
+  },
+  {
+    "region": "Americas",
+    "team": "Evil Geniuses",
+    "player": "supamen",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "Evil Geniuses",
+    "player": "bao",
+    "role": "Sentinel",
+    "agent_1": "killjoy",
+    "agent_2": "vyse",
+    "agent_3": "harbor"
+  },
+  {
+    "region": "Americas",
+    "team": "Evil Geniuses",
+    "player": "C0M",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "FURIA",
+    "player": "alym",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "waylay",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "FURIA",
+    "player": "koalanoob",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "yoru",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "Americas",
+    "team": "FURIA",
+    "player": "nerve",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": "tejo"
+  },
+  {
+    "region": "Americas",
+    "team": "FURIA",
+    "player": "artzin",
+    "role": "Sentinel",
+    "agent_1": "killjoy",
+    "agent_2": "omen",
+    "agent_3": "vyse"
+  },
+  {
+    "region": "Americas",
+    "team": "FURIA",
+    "player": "eeiu",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "G2 Esports",
+    "player": "BABYBAY",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "vyse",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "Americas",
+    "team": "G2 Esports",
+    "player": "jawgemo",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "phoenix",
+    "agent_3": "raze"
+  },
+  {
+    "region": "Americas",
+    "team": "G2 Esports",
+    "player": "leaf",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": "yoru"
+  },
+  {
+    "region": "Americas",
+    "team": "G2 Esports",
+    "player": "valyn",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "harbor",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "Americas",
+    "team": "G2 Esports",
+    "player": "trent",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "sova",
+    "agent_3": "skye"
+  },
+  {
+    "region": "Americas",
+    "team": "KRÜ Esports",
+    "player": "Dantedeu5",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "KRÜ Esports",
+    "player": "Less",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "KRÜ Esports",
+    "player": "saadhak",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "KRÜ Esports",
+    "player": "silentzz",
+    "role": "Sentinel",
+    "agent_1": "vyse",
+    "agent_2": "chamber",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "KRÜ Esports",
+    "player": "mwzera",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "sova",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "LEVIATÁN",
+    "player": "Sato",
+    "role": "Duelist",
+    "agent_1": "phoenix",
+    "agent_2": "neon",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "LEVIATÁN",
+    "player": "spike",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "omen",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "LEVIATÁN",
+    "player": "kiNgg",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "LEVIATÁN",
+    "player": "Neon",
+    "role": "Sentinel",
+    "agent_1": "chamber",
+    "agent_2": "brimstone",
+    "agent_3": "omen"
+  },
+  {
+    "region": "Americas",
+    "team": "LEVIATÁN",
+    "player": "blowz",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "skye",
+    "agent_3": "fade"
+  },
+  {
+    "region": "Americas",
+    "team": "LOUD",
+    "player": "Virtyy",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "raze",
+    "agent_3": "jett"
+  },
+  {
+    "region": "Americas",
+    "team": "LOUD",
+    "player": "Darker",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "viper",
+    "agent_3": "vyse"
+  },
+  {
+    "region": "Americas",
+    "team": "LOUD",
+    "player": "lukxo",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "chamber",
+    "agent_3": "vyse"
+  },
+  {
+    "region": "Americas",
+    "team": "LOUD",
+    "player": "cauanzin",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": "skye"
+  },
+  {
+    "region": "Americas",
+    "team": "LOUD",
+    "player": "erde",
+    "role": "Flex",
+    "agent_1": "",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "MIBR",
+    "player": "aspas",
+    "role": "Duelist",
+    "agent_1": "raze",
+    "agent_2": "jett",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "MIBR",
+    "player": "zekken",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "phoenix",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "MIBR",
+    "player": "Mazino",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "MIBR",
+    "player": "tex",
+    "role": "Sentinel",
+    "agent_1": "vyse",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "MIBR",
+    "player": "Verno",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "NRG",
+    "player": "mada",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "neon",
+    "agent_3": "yoru"
+  },
+  {
+    "region": "Americas",
+    "team": "NRG",
+    "player": "keiko",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "killjoy",
+    "agent_3": "jett"
+  },
+  {
+    "region": "Americas",
+    "team": "NRG",
+    "player": "skuba",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "Americas",
+    "team": "NRG",
+    "player": "brawk",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "vyse",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "Americas",
+    "team": "NRG",
+    "player": "Ethan",
+    "role": "Initiator",
+    "agent_1": "tejo",
+    "agent_2": "skye",
+    "agent_3": "fade"
+  },
+  {
+    "region": "Americas",
+    "team": "Sentinels",
+    "player": "Jerrwin",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "jett",
+    "agent_3": "neon"
+  },
+  {
+    "region": "Americas",
+    "team": "Sentinels",
+    "player": "cortezia",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "killjoy",
+    "agent_3": "veto"
+  },
+  {
+    "region": "Americas",
+    "team": "Sentinels",
+    "player": "johnqt",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "sage",
+    "agent_3": "harbor"
+  },
+  {
+    "region": "Americas",
+    "team": "Sentinels",
+    "player": "Reduxx",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "iso",
+    "agent_3": ""
+  },
+  {
+    "region": "Americas",
+    "team": "Sentinels",
+    "player": "JonahP",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "skye",
+    "agent_3": "fade"
+  },
+  {
+    "region": "EMEA",
+    "team": "BBL Esports",
+    "player": "Lar0k",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "raze",
+    "agent_3": "jett"
+  },
+  {
+    "region": "EMEA",
+    "team": "BBL Esports",
+    "player": "lovers rock",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "jett",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "EMEA",
+    "team": "BBL Esports",
+    "player": "Loita",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "viper"
+  },
+  {
+    "region": "EMEA",
+    "team": "BBL Esports",
+    "player": "Crewen",
+    "role": "Sentinel",
+    "agent_1": "cypher",
+    "agent_2": "viper",
+    "agent_3": "vyse"
+  },
+  {
+    "region": "EMEA",
+    "team": "BBL Esports",
+    "player": "Rosé",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": "skye"
+  },
+  {
+    "region": "EMEA",
+    "team": "FNATIC",
+    "player": "Alfajer",
+    "role": "Duelist",
+    "agent_1": "raze",
+    "agent_2": "killjoy",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "EMEA",
+    "team": "FNATIC",
+    "player": "kaajak",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "waylay",
+    "agent_3": ""
+  },
+  {
+    "region": "EMEA",
+    "team": "FNATIC",
+    "player": "Boaster",
+    "role": "Controller",
+    "agent_1": "harbor",
+    "agent_2": "astra",
+    "agent_3": "omen"
+  },
+  {
+    "region": "EMEA",
+    "team": "FNATIC",
+    "player": "Veqaj",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "kayo",
+    "agent_3": ""
+  },
+  {
+    "region": "EMEA",
+    "team": "FNATIC",
+    "player": "crashies",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "sova",
+    "agent_3": "fade"
+  },
+  {
+    "region": "EMEA",
+    "team": "FUT Esports",
+    "player": "s0pp",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "yoru",
+    "agent_3": "jett"
+  },
+  {
+    "region": "EMEA",
+    "team": "FUT Esports",
+    "player": "xeus",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "waylay",
+    "agent_3": "raze"
+  },
+  {
+    "region": "EMEA",
+    "team": "FUT Esports",
+    "player": "sociablEE",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "brimstone",
+    "agent_3": "fade"
+  },
+  {
+    "region": "EMEA",
+    "team": "FUT Esports",
+    "player": "yetujey",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "cypher",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "EMEA",
+    "team": "FUT Esports",
+    "player": "KROSTALY",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "sova",
+    "agent_3": "skye"
+  },
+  {
+    "region": "EMEA",
+    "team": "Gentle Mates",
+    "player": "bipo",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "waylay",
+    "agent_3": "raze"
+  },
+  {
+    "region": "EMEA",
+    "team": "Gentle Mates",
+    "player": "marteen",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "phoenix",
+    "agent_3": "veto"
+  },
+  {
+    "region": "EMEA",
+    "team": "Gentle Mates",
+    "player": "GLYPH",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "EMEA",
+    "team": "Gentle Mates",
+    "player": "Minny",
+    "role": "Sentinel",
+    "agent_1": "cypher",
+    "agent_2": "viper",
+    "agent_3": "kayo"
+  },
+  {
+    "region": "EMEA",
+    "team": "Gentle Mates",
+    "player": "starxo",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "sova",
+    "agent_3": "skye"
+  },
+  {
+    "region": "EMEA",
+    "team": "GIANTX",
+    "player": "ara",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "waylay",
+    "agent_3": "raze"
+  },
+  {
+    "region": "EMEA",
+    "team": "GIANTX",
+    "player": "westside",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "phoenix",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "EMEA",
+    "team": "GIANTX",
+    "player": "Flickless",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "cypher",
+    "agent_3": "fade"
+  },
+  {
+    "region": "EMEA",
+    "team": "GIANTX",
+    "player": "grubinho",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "EMEA",
+    "team": "GIANTX",
+    "player": "Cloud",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": "skye"
+  },
+  {
+    "region": "EMEA",
+    "team": "Karmine Corp",
+    "player": "LewN",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "waylay",
+    "agent_3": "jett"
+  },
+  {
+    "region": "EMEA",
+    "team": "Karmine Corp",
+    "player": "Avez",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "raze",
+    "agent_3": "tejo"
+  },
+  {
+    "region": "EMEA",
+    "team": "Karmine Corp",
+    "player": "dos9",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": "neon"
+  },
+  {
+    "region": "EMEA",
+    "team": "Karmine Corp",
+    "player": "SUYGETSU",
+    "role": "Sentinel",
+    "agent_1": "vyse",
+    "agent_2": "viper",
+    "agent_3": "cypher"
+  },
+  {
+    "region": "EMEA",
+    "team": "Karmine Corp",
+    "player": "N4RRATE",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "veto",
+    "agent_3": ""
+  },
+  {
+    "region": "EMEA",
+    "team": "Natus Vincere",
+    "player": "ExiT",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "yoru",
+    "agent_3": ""
+  },
+  {
+    "region": "EMEA",
+    "team": "Natus Vincere",
+    "player": "hiro",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "cypher",
+    "agent_3": "tejo"
+  },
+  {
+    "region": "EMEA",
+    "team": "Natus Vincere",
+    "player": "Ruxic",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "EMEA",
+    "team": "Natus Vincere",
+    "player": "Filu",
+    "role": "Sentinel",
+    "agent_1": "chamber",
+    "agent_2": "yoru",
+    "agent_3": "neon"
+  },
+  {
+    "region": "EMEA",
+    "team": "Natus Vincere",
+    "player": "chloric",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "sova",
+    "agent_3": "skye"
+  },
+  {
+    "region": "EMEA",
+    "team": "PCIFIC Esports",
+    "player": "cNed",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "waylay",
+    "agent_3": "jett"
+  },
+  {
+    "region": "EMEA",
+    "team": "PCIFIC Esports",
+    "player": "seven",
+    "role": "Duelist",
+    "agent_1": "raze",
+    "agent_2": "kayo",
+    "agent_3": "neon"
+  },
+  {
+    "region": "EMEA",
+    "team": "PCIFIC Esports",
+    "player": "al0rante",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "veto",
+    "agent_3": ""
+  },
+  {
+    "region": "EMEA",
+    "team": "PCIFIC Esports",
+    "player": "qpert",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": ""
+  },
+  {
+    "region": "EMEA",
+    "team": "PCIFIC Esports",
+    "player": "NINJA",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "sova",
+    "agent_3": ""
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Heretics",
+    "player": "koshmaras",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "neon",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Heretics",
+    "player": "Wo0t",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "raze",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Heretics",
+    "player": "benjyfishy",
+    "role": "Controller",
+    "agent_1": "harbor",
+    "agent_2": "viper",
+    "agent_3": "cypher"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Heretics",
+    "player": "Boo",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Heretics",
+    "player": "RieNs",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "fade",
+    "agent_3": "sova"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Liquid",
+    "player": "kamo",
+    "role": "Duelist",
+    "agent_1": "phoenix",
+    "agent_2": "waylay",
+    "agent_3": "yoru"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Liquid",
+    "player": "MiniBoo",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Liquid",
+    "player": "nAts",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "killjoy",
+    "agent_3": "astra"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Liquid",
+    "player": "wayne",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "harbor"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Liquid",
+    "player": "purp0",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "sova",
+    "agent_3": "fade"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Vitality",
+    "player": "Derke",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "jett",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Vitality",
+    "player": "Jamppi",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "fade",
+    "agent_3": "kayo"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Vitality",
+    "player": "Chronicle",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "chamber",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Vitality",
+    "player": "PROFEK",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "EMEA",
+    "team": "Team Vitality",
+    "player": "Sayonara",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "viper",
+    "agent_3": "raze"
+  },
+  {
+    "region": "EMEA",
+    "team": "ULF Esports",
+    "player": "s0pp",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "yoru",
+    "agent_3": "jett"
+  },
+  {
+    "region": "EMEA",
+    "team": "ULF Esports",
+    "player": "audaz",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "EMEA",
+    "team": "ULF Esports",
+    "player": "echo",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "chamber",
+    "agent_3": "cypher"
+  },
+  {
+    "region": "EMEA",
+    "team": "ULF Esports",
+    "player": "Favian",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "raze",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "EMEA",
+    "team": "ULF Esports",
+    "player": "nekky",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": "skye"
+  },
+  {
+    "region": "Pacific",
+    "team": "DetonatioN FocusMe",
+    "player": "Meiy",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "neon",
+    "agent_3": "raze"
+  },
+  {
+    "region": "Pacific",
+    "team": "DetonatioN FocusMe",
+    "player": "yatsuka",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "skye",
+    "agent_3": "fade"
+  },
+  {
+    "region": "Pacific",
+    "team": "DetonatioN FocusMe",
+    "player": "Caedye",
+    "role": "Sentinel",
+    "agent_1": "killjoy",
+    "agent_2": "viper",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "Pacific",
+    "team": "DetonatioN FocusMe",
+    "player": "Akame",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "neon",
+    "agent_3": "viper"
+  },
+  {
+    "region": "Pacific",
+    "team": "DetonatioN FocusMe",
+    "player": "SSeeS",
+    "role": "Initiator",
+    "agent_1": "tejo",
+    "agent_2": "brimstone",
+    "agent_3": "omen"
+  },
+  {
+    "region": "Pacific",
+    "team": "FULL SENSE",
+    "player": "JitBoyS",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "cypher",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "FULL SENSE",
+    "player": "primmie",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "phoenix",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "FULL SENSE",
+    "player": "Crws",
+    "role": "Controller",
+    "agent_1": "brimstone",
+    "agent_2": "deadlock",
+    "agent_3": "omen"
+  },
+  {
+    "region": "Pacific",
+    "team": "FULL SENSE",
+    "player": "Leviathan",
+    "role": "Sentinel",
+    "agent_1": "cypher",
+    "agent_2": "omen",
+    "agent_3": "vyse"
+  },
+  {
+    "region": "Pacific",
+    "team": "FULL SENSE",
+    "player": "Killua",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "fade",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "Gen.G",
+    "player": "ZynX",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "yoru",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "Pacific",
+    "team": "Gen.G",
+    "player": "Ash",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "Pacific",
+    "team": "Gen.G",
+    "player": "Foxy9",
+    "role": "Controller",
+    "agent_1": "brimstone",
+    "agent_2": "omen",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "Gen.G",
+    "player": "Karon",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "phoenix",
+    "agent_3": "cypher"
+  },
+  {
+    "region": "Pacific",
+    "team": "Gen.G",
+    "player": "Lakia",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "breach",
+    "agent_3": "sova"
+  },
+  {
+    "region": "Pacific",
+    "team": "Global Esports",
+    "player": "UdoTan",
+    "role": "Duelist",
+    "agent_1": "raze",
+    "agent_2": "waylay",
+    "agent_3": "neon"
+  },
+  {
+    "region": "Pacific",
+    "team": "Global Esports",
+    "player": "Autumn",
+    "role": "Controller",
+    "agent_1": "brimstone",
+    "agent_2": "veto",
+    "agent_3": "omen"
+  },
+  {
+    "region": "Pacific",
+    "team": "Global Esports",
+    "player": "PatMen",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "fade",
+    "agent_3": "skye"
+  },
+  {
+    "region": "Pacific",
+    "team": "Global Esports",
+    "player": "xavi8k",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "kayo"
+  },
+  {
+    "region": "Pacific",
+    "team": "Global Esports",
+    "player": "Kr1stal",
+    "role": "Sentinel",
+    "agent_1": "deadlock",
+    "agent_2": "fade",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "Kiwoom DRX",
+    "player": "free1ng",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "tejo",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "Kiwoom DRX",
+    "player": "HYUNMIN",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "raze",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "Pacific",
+    "team": "Kiwoom DRX",
+    "player": "MaKo",
+    "role": "Controller",
+    "agent_1": "brimstone",
+    "agent_2": "omen",
+    "agent_3": "astra"
+  },
+  {
+    "region": "Pacific",
+    "team": "Kiwoom DRX",
+    "player": "yong",
+    "role": "Sentinel",
+    "agent_1": "cypher",
+    "agent_2": "viper",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "Pacific",
+    "team": "Kiwoom DRX",
+    "player": "Hermes",
+    "role": "Flex",
+    "agent_1": "",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "Nongshim RedForce",
+    "player": "Dambi",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "waylay",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "Pacific",
+    "team": "Nongshim RedForce",
+    "player": "Francis",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "breach",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "Pacific",
+    "team": "Nongshim RedForce",
+    "player": "Ivy",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "cypher",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "Pacific",
+    "team": "Nongshim RedForce",
+    "player": "Rb",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "brimstone",
+    "agent_3": "astra"
+  },
+  {
+    "region": "Pacific",
+    "team": "Nongshim RedForce",
+    "player": "Xross",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "sova",
+    "agent_3": "tejo"
+  },
+  {
+    "region": "Pacific",
+    "team": "Paper Rex",
+    "player": "Jinggg",
+    "role": "Duelist",
+    "agent_1": "raze",
+    "agent_2": "omen",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "Pacific",
+    "team": "Paper Rex",
+    "player": "something",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "jett",
+    "agent_3": "neon"
+  },
+  {
+    "region": "Pacific",
+    "team": "Paper Rex",
+    "player": "d4v41",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "vyse",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "Pacific",
+    "team": "Paper Rex",
+    "player": "f0rsakeN",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "viper",
+    "agent_3": "astra"
+  },
+  {
+    "region": "Pacific",
+    "team": "Paper Rex",
+    "player": "invy",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "sova",
+    "agent_3": "skye"
+  },
+  {
+    "region": "Pacific",
+    "team": "Rex Regum Qeon",
+    "player": "Jemkin",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "killjoy",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "Pacific",
+    "team": "Rex Regum Qeon",
+    "player": "Monyet",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "Rex Regum Qeon",
+    "player": "crazyguy",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "brimstone",
+    "agent_3": "kayo"
+  },
+  {
+    "region": "Pacific",
+    "team": "Rex Regum Qeon",
+    "player": "xffero",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": "veto"
+  },
+  {
+    "region": "Pacific",
+    "team": "Rex Regum Qeon",
+    "player": "Kushy",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "sova",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "T1",
+    "player": "BuZz",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "jett",
+    "agent_3": "yoru"
+  },
+  {
+    "region": "Pacific",
+    "team": "T1",
+    "player": "Munchkin",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": "viper"
+  },
+  {
+    "region": "Pacific",
+    "team": "T1",
+    "player": "iZu",
+    "role": "Sentinel",
+    "agent_1": "chamber",
+    "agent_2": "yoru",
+    "agent_3": "cypher"
+  },
+  {
+    "region": "Pacific",
+    "team": "T1",
+    "player": "Meteor",
+    "role": "Sentinel",
+    "agent_1": "killjoy",
+    "agent_2": "viper",
+    "agent_3": "astra"
+  },
+  {
+    "region": "Pacific",
+    "team": "T1",
+    "player": "stax",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "sova",
+    "agent_3": "fade"
+  },
+  {
+    "region": "Pacific",
+    "team": "Team Secret",
+    "player": "Rimuru",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "jett",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "Team Secret",
+    "player": "kellyS",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "skye",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "Pacific",
+    "team": "Team Secret",
+    "player": "Sylvan",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "Pacific",
+    "team": "Team Secret",
+    "player": "BerserX",
+    "role": "Sentinel",
+    "agent_1": "cypher",
+    "agent_2": "vyse",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "Pacific",
+    "team": "Team Secret",
+    "player": "JessieVash",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "tejo",
+    "agent_3": "fade"
+  },
+  {
+    "region": "Pacific",
+    "team": "VARREL",
+    "player": "Klaus",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "tejo",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "Pacific",
+    "team": "VARREL",
+    "player": "Zexy",
+    "role": "Duelist",
+    "agent_1": "jett",
+    "agent_2": "raze",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "Pacific",
+    "team": "VARREL",
+    "player": "C1ndeR",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "VARREL",
+    "player": "oonzmlp",
+    "role": "Sentinel",
+    "agent_1": "chamber",
+    "agent_2": "deadlock",
+    "agent_3": "viper"
+  },
+  {
+    "region": "Pacific",
+    "team": "VARREL",
+    "player": "XuNa",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "fade",
+    "agent_3": "sova"
+  },
+  {
+    "region": "Pacific",
+    "team": "ZETA DIVISION",
+    "player": "Absol",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "ZETA DIVISION",
+    "player": "eKo",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "phoenix",
+    "agent_3": ""
+  },
+  {
+    "region": "Pacific",
+    "team": "ZETA DIVISION",
+    "player": "SugarZ3ro",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "brimstone",
+    "agent_3": "astra"
+  },
+  {
+    "region": "Pacific",
+    "team": "ZETA DIVISION",
+    "player": "SyouTa",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "cypher",
+    "agent_3": "veto"
+  },
+  {
+    "region": "Pacific",
+    "team": "ZETA DIVISION",
+    "player": "Xdll",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "breach",
+    "agent_3": "fade"
+  },
+  {
+    "region": "China",
+    "team": "All Gamers",
+    "player": "f4ngeer",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "yoru",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "China",
+    "team": "All Gamers",
+    "player": "Youze",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "jett",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "China",
+    "team": "All Gamers",
+    "player": "K1ra",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "cypher",
+    "agent_3": "raze"
+  },
+  {
+    "region": "China",
+    "team": "All Gamers",
+    "player": "Septem7",
+    "role": "Controller",
+    "agent_1": "astra",
+    "agent_2": "omen",
+    "agent_3": "gekko"
+  },
+  {
+    "region": "China",
+    "team": "All Gamers",
+    "player": "Shr1mp",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "fade",
+    "agent_3": "sova"
+  },
+  {
+    "region": "China",
+    "team": "Bilibili Gaming",
+    "player": "whzy",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "chamber",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "China",
+    "team": "Bilibili Gaming",
+    "player": "yilai",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "killjoy",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "China",
+    "team": "Bilibili Gaming",
+    "player": "nephh",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "China",
+    "team": "Bilibili Gaming",
+    "player": "rushia",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "cypher",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "China",
+    "team": "Dragon Ranger Gaming",
+    "player": "Akeman",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "jett",
+    "agent_3": "neon"
+  },
+  {
+    "region": "China",
+    "team": "Dragon Ranger Gaming",
+    "player": "Life",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "China",
+    "team": "Dragon Ranger Gaming",
+    "player": "Flex1n",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "miks"
+  },
+  {
+    "region": "China",
+    "team": "Dragon Ranger Gaming",
+    "player": "vo0kashu",
+    "role": "Sentinel",
+    "agent_1": "cypher",
+    "agent_2": "omen",
+    "agent_3": "viper"
+  },
+  {
+    "region": "China",
+    "team": "Dragon Ranger Gaming",
+    "player": "Nicc",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "sova",
+    "agent_3": ""
+  },
+  {
+    "region": "China",
+    "team": "EDward Gaming",
+    "player": "Jieni7",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "omen",
+    "agent_3": "kayo"
+  },
+  {
+    "region": "China",
+    "team": "EDward Gaming",
+    "player": "Smoggy",
+    "role": "Duelist",
+    "agent_1": "phoenix",
+    "agent_2": "omen",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "China",
+    "team": "EDward Gaming",
+    "player": "ZmjjKK",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "chamber",
+    "agent_3": "raze"
+  },
+  {
+    "region": "China",
+    "team": "EDward Gaming",
+    "player": "CHICHOO",
+    "role": "Sentinel",
+    "agent_1": "cypher",
+    "agent_2": "viper",
+    "agent_3": "omen"
+  },
+  {
+    "region": "China",
+    "team": "EDward Gaming",
+    "player": "nobody",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": "skye"
+  },
+  {
+    "region": "China",
+    "team": "FunPlus Phoenix",
+    "player": "Ben1Ley",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "astra",
+    "agent_3": "omen"
+  },
+  {
+    "region": "China",
+    "team": "FunPlus Phoenix",
+    "player": "Setrod",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "waylay",
+    "agent_3": ""
+  },
+  {
+    "region": "China",
+    "team": "FunPlus Phoenix",
+    "player": "AAAAY",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "killjoy",
+    "agent_3": "sage"
+  },
+  {
+    "region": "China",
+    "team": "FunPlus Phoenix",
+    "player": "BerLIN",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "astra",
+    "agent_3": "skye"
+  },
+  {
+    "region": "China",
+    "team": "FunPlus Phoenix",
+    "player": "KovaQ",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "tejo",
+    "agent_3": "skye"
+  },
+  {
+    "region": "China",
+    "team": "JDG Esports",
+    "player": "Yuicaw",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "killjoy",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "China",
+    "team": "JDG Esports",
+    "player": "zhe",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "viper",
+    "agent_3": "yoru"
+  },
+  {
+    "region": "China",
+    "team": "JDG Esports",
+    "player": "jkuro",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "cypher",
+    "agent_3": "astra"
+  },
+  {
+    "region": "China",
+    "team": "JDG Esports",
+    "player": "stew",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "raze",
+    "agent_3": "neon"
+  },
+  {
+    "region": "China",
+    "team": "JDG Esports",
+    "player": "coconut",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "skye",
+    "agent_3": "fade"
+  },
+  {
+    "region": "China",
+    "team": "Nova Esports",
+    "player": "Ezeir",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "brimstone",
+    "agent_3": "astra"
+  },
+  {
+    "region": "China",
+    "team": "Nova Esports",
+    "player": "GREEN",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "waylay",
+    "agent_3": "yoru"
+  },
+  {
+    "region": "China",
+    "team": "Nova Esports",
+    "player": "OBONE",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "China",
+    "team": "Nova Esports",
+    "player": "GuanG",
+    "role": "Sentinel",
+    "agent_1": "cypher",
+    "agent_2": "jett",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "China",
+    "team": "Nova Esports",
+    "player": "qiutiaN",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "fade",
+    "agent_3": "viper"
+  },
+  {
+    "region": "China",
+    "team": "Titan Esports Club",
+    "player": "Dynamite",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "yoru",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "China",
+    "team": "Titan Esports Club",
+    "player": "Spitfires",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "China",
+    "team": "Titan Esports Club",
+    "player": "Coco",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "brimstone",
+    "agent_3": "killjoy"
+  },
+  {
+    "region": "China",
+    "team": "Titan Esports Club",
+    "player": "Haodong",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "cypher",
+    "agent_3": "astra"
+  },
+  {
+    "region": "China",
+    "team": "Titan Esports Club",
+    "player": "lucas",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "sova",
+    "agent_3": "fade"
+  },
+  {
+    "region": "China",
+    "team": "Trace Esports",
+    "player": "Kai",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "jett",
+    "agent_3": "raze"
+  },
+  {
+    "region": "China",
+    "team": "Trace Esports",
+    "player": "Xlele",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "omen",
+    "agent_3": "phoenix"
+  },
+  {
+    "region": "China",
+    "team": "Trace Esports",
+    "player": "Abo",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "killjoy",
+    "agent_3": "cypher"
+  },
+  {
+    "region": "China",
+    "team": "Trace Esports",
+    "player": "Viva",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "skye",
+    "agent_3": "sova"
+  },
+  {
+    "region": "China",
+    "team": "Trace Esports",
+    "player": "LuoK1ng",
+    "role": "Flex",
+    "agent_1": "",
+    "agent_2": "",
+    "agent_3": ""
+  },
+  {
+    "region": "China",
+    "team": "TYLOO",
+    "player": "Erv",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "omen",
+    "agent_3": "kayo"
+  },
+  {
+    "region": "China",
+    "team": "TYLOO",
+    "player": "slowly",
+    "role": "Duelist",
+    "agent_1": "yoru",
+    "agent_2": "brimstone",
+    "agent_3": "astra"
+  },
+  {
+    "region": "China",
+    "team": "TYLOO",
+    "player": "splash",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "jett",
+    "agent_3": "waylay"
+  },
+  {
+    "region": "China",
+    "team": "TYLOO",
+    "player": "Scales",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "killjoy",
+    "agent_3": "cypher"
+  },
+  {
+    "region": "China",
+    "team": "TYLOO",
+    "player": "sword9",
+    "role": "Initiator",
+    "agent_1": "sova",
+    "agent_2": "skye",
+    "agent_3": "fade"
+  },
+  {
+    "region": "China",
+    "team": "Wolves Esports",
+    "player": "glacier",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "neon",
+    "agent_3": "jett"
+  },
+  {
+    "region": "China",
+    "team": "Wolves Esports",
+    "player": "jowa",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "raze",
+    "agent_3": "breach"
+  },
+  {
+    "region": "China",
+    "team": "Wolves Esports",
+    "player": "Spring",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "China",
+    "team": "Wolves Esports",
+    "player": "yosemite",
+    "role": "Sentinel",
+    "agent_1": "killjoy",
+    "agent_2": "cypher",
+    "agent_3": "brimstone"
+  },
+  {
+    "region": "China",
+    "team": "Wolves Esports",
+    "player": "SiuFatBB",
+    "role": "Initiator",
+    "agent_1": "fade",
+    "agent_2": "skye",
+    "agent_3": "sova"
+  },
+  {
+    "region": "China",
+    "team": "Xi Lai Gaming",
+    "player": "NoMan",
+    "role": "Duelist",
+    "agent_1": "waylay",
+    "agent_2": "killjoy",
+    "agent_3": "tejo"
+  },
+  {
+    "region": "China",
+    "team": "Xi Lai Gaming",
+    "player": "Rarga",
+    "role": "Duelist",
+    "agent_1": "neon",
+    "agent_2": "yoru",
+    "agent_3": "chamber"
+  },
+  {
+    "region": "China",
+    "team": "Xi Lai Gaming",
+    "player": "happywei",
+    "role": "Controller",
+    "agent_1": "viper",
+    "agent_2": "astra",
+    "agent_3": "veto"
+  },
+  {
+    "region": "China",
+    "team": "Xi Lai Gaming",
+    "player": "Lysoar",
+    "role": "Controller",
+    "agent_1": "omen",
+    "agent_2": "brimstone",
+    "agent_3": "sage"
+  },
+  {
+    "region": "China",
+    "team": "Xi Lai Gaming",
+    "player": "WsLeo",
+    "role": "Initiator",
+    "agent_1": "skye",
+    "agent_2": "sova",
+    "agent_3": ""
+  }
+]

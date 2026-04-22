@@ -28,9 +28,10 @@ export default function OnboardingPage() {
     { enabled: !!selectedRegion }
   );
 
-  const createTeam = trpc.team.create.useMutation({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const createTeam = (trpc.team.create as any).useMutation({
     onSuccess: () => router.push("/dashboard"),
-    onError: (err) => setError(err.message),
+    onError: (err: { message: string }) => setError(err.message),
   });
 
   return (
