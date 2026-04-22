@@ -107,7 +107,9 @@ model Player {
   isActive      Boolean    @default(true)
   isRetired     Boolean    @default(false)
   teamId        String?
-  team          Team?      @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  // Cascade delete: when a save is deleted its teams cascade, and their players
+  // go with them. Otherwise cloned players pollute the template pool as orphans.
+  team          Team?      @relation(fields: [teamId], references: [id], onDelete: Cascade)
   contractEndSeason Int       @default(1)
   contractEndWeek   Int       @default(52)
   buyoutClause      Int       @default(0)
