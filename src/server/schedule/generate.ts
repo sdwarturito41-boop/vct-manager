@@ -1884,10 +1884,14 @@ export async function initializeSaveWorld(
   const userTemplate = await prisma.vctTeamTemplate.findFirst({
     where: { name: input.teamName },
   });
+  // Verify the user actually exists (session could be stale after manual delete).
+  const userExists = await prisma.user.findUnique({ where: { id: save.userId } });
   const userTeam = await prisma.team.create({
     data: {
       saveId,
-      userId: save.userId,
+      // Only set userId if the User row exists — otherwise FK constraint fails.
+      // isPlayerTeam=true is the authoritative flag for "user's team in this save".
+      userId: userExists ? save.userId : undefined,
       isPlayerTeam: true,
       name: input.teamName,
       tag: input.teamTag,
@@ -1920,13 +1924,13 @@ export async function initializeSaveWorld(
   }
 
   // 4. Clone players from the global "template" pool (seeded by pandascore).
-  //    Global players have saveId=null (or no saveId) and teamId=null with
-  //    `currentTeam` set to their real-life team name. We clone them per save,
-  //    mapping `currentTeam` name → the save's new Team.id.
+  //    Template players have teamId=null (unassigned) and `currentTeam` set to
+  //    their real-life team name. We clone them per save, mapping `currentTeam`
+  //    name → the save's new Team.id. Filter by teamId=null so we DON'T pick up
+  //    players from other saves that already have a teamId.
   const globalPlayers = await prisma.player.findMany({
     where: {
-      // Template players: those that belong to the global (pre-save) pool.
-      // A newly-seeded Pandascore player has `currentTeam` set and `teamId` null.
+      teamId: null,
       currentTeam: { not: null },
       isRetired: false,
     },

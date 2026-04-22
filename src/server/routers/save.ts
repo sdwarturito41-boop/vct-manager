@@ -41,11 +41,17 @@ export const saveRouter = router({
       const save = await ctx.prisma.save.create({
         data: { userId: ctx.userId },
       });
-      await initializeSaveWorld(ctx.prisma, save.id, {
-        teamName: input.teamName,
-        teamTag: input.teamTag,
-        region: input.region,
-      });
+      try {
+        await initializeSaveWorld(ctx.prisma, save.id, {
+          teamName: input.teamName,
+          teamTag: input.teamTag,
+          region: input.region,
+        });
+      } catch (err) {
+        // Rollback: delete the orphaned save so the user can retry.
+        await ctx.prisma.save.delete({ where: { id: save.id } }).catch(() => {});
+        throw err;
+      }
       return save;
     }),
 
