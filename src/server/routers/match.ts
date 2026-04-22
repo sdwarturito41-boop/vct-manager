@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMatch, simulateMap as simulateMapEngine } from "@/server/simulation/engine";
 import { applyMasteryUpdate, applyPassiveDecay } from "@/server/simulation/mastery";
 import type { SimTeam, AgentPick } from "@/server/simulation/engine";
@@ -33,9 +33,10 @@ function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
 
 async function applyActivePatch(
   prisma: import("@/generated/prisma/client").PrismaClient,
+  saveId: string,
 ): Promise<void> {
   const { applyPatchToMeta } = await import("@/constants/meta");
-  const season = await prisma.season.findFirst({ where: { isActive: true } });
+  const season = await prisma.season.findFirst({ where: { isActive: true, saveId } });
   if (!season) return;
   const patch = await prisma.metaPatch.findFirst({
     where: { season: season.number, stage: season.currentStage },
@@ -51,7 +52,7 @@ async function applyActivePatch(
 }
 
 export const matchRouter = router({
-  simulate: protectedProcedure
+  simulate: saveProcedure
     .input(z.object({ matchId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const match = await ctx.prisma.match.findUnique({
@@ -80,7 +81,7 @@ export const matchRouter = router({
       const simTeam1 = buildSimTeam(match.team1);
       const simTeam2 = buildSimTeam(match.team2);
 
-      await applyActivePatch(ctx.prisma);
+      await applyActivePatch(ctx.prisma, ctx.save.id);
       const result = simulateMatch(simTeam1, simTeam2, match.format);
 
       // Update the match record
@@ -136,7 +137,7 @@ export const matchRouter = router({
       return updatedMatch;
     }),
 
-  simulateWithVeto: protectedProcedure
+  simulateWithVeto: saveProcedure
     .input(z.object({ matchId: z.string(), selectedMaps: z.array(z.string()).min(1) }))
     .mutation(async ({ ctx, input }) => {
       const match = await ctx.prisma.match.findUnique({
@@ -174,7 +175,7 @@ export const matchRouter = router({
       const simTeam1 = buildSimTeam(match.team1);
       const simTeam2 = buildSimTeam(match.team2);
 
-      await applyActivePatch(ctx.prisma);
+      await applyActivePatch(ctx.prisma, ctx.save.id);
       const result = simulateMatch(simTeam1, simTeam2, match.format, input.selectedMaps);
 
       const updatedMatch = await ctx.prisma.match.update({
@@ -228,7 +229,7 @@ export const matchRouter = router({
       return updatedMatch;
     }),
 
-  getById: protectedProcedure
+  getById: saveProcedure
     .input(z.object({ matchId: z.string() }))
     .query(async ({ ctx, input }) => {
       const match = await ctx.prisma.match.findUnique({
@@ -246,7 +247,7 @@ export const matchRouter = router({
       return match;
     }),
 
-  listByTeam: protectedProcedure
+  listByTeam: saveProcedure
     .input(z.object({ teamId: z.string() }))
     .query(async ({ ctx, input }) => {
       return ctx.prisma.match.findMany({
@@ -258,7 +259,7 @@ export const matchRouter = router({
       });
     }),
 
-  simulateMap: protectedProcedure
+  simulateMap: saveProcedure
     .input(
       z.object({
         matchId: z.string(),
@@ -343,7 +344,7 @@ export const matchRouter = router({
 
       let mapResult;
       try {
-        await applyActivePatch(ctx.prisma);
+        await applyActivePatch(ctx.prisma, ctx.save.id);
         mapResult = simulateMapEngine(simTeam1, simTeam2, input.mapName, {
           team1Agents: swapped ? t2Agents : t1Agents,
           team2Agents: swapped ? t1Agents : t2Agents,
@@ -418,7 +419,7 @@ export const matchRouter = router({
       return mapResult;
     }),
 
-  finalizeMatch: protectedProcedure
+  finalizeMatch: saveProcedure
     .input(
       z.object({
         matchId: z.string(),
@@ -513,7 +514,7 @@ export const matchRouter = router({
       }
 
       // 3. Check bracket progression
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
 
       if (season) {
         const allRoundMatches = await ctx.prisma.match.findMany({

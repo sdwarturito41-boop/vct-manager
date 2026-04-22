@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMap } from "@/server/simulation/engine";
 import type { SimTeam, AgentPick } from "@/server/simulation/engine";
 import { VALORANT_AGENTS } from "@/constants/agents";
@@ -72,13 +72,13 @@ function generateFakeAgentPicks(players: Player[]): AgentPick[] {
 }
 
 export const scrimRouter = router({
-  listScrims: protectedProcedure.query(async ({ ctx }) => {
+  listScrims: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });
     if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
     const scrims = await ctx.prisma.scrim.findMany({
@@ -100,7 +100,7 @@ export const scrimRouter = router({
     }));
   }),
 
-  requestScrim: protectedProcedure
+  requestScrim: saveProcedure
     .input(
       z.object({
         opponentTeamId: z.string(),
@@ -115,7 +115,7 @@ export const scrimRouter = router({
       });
       if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
       // Check scrim slots
@@ -287,13 +287,13 @@ export const scrimRouter = router({
       };
     }),
 
-  getScrimSlots: protectedProcedure.query(async ({ ctx }) => {
+  getScrimSlots: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });
     if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) return { used: 0, max: MAX_SCRIMS_PER_WEEK, week: 0 };
 
     const used = await ctx.prisma.scrim.count({
@@ -307,10 +307,10 @@ export const scrimRouter = router({
     return { used, max: MAX_SCRIMS_PER_WEEK, week: season.currentWeek };
   }),
 
-  getScoutingData: protectedProcedure
+  getScoutingData: saveProcedure
     .input(z.object({ opponentTeamId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) return [];
 
       const currentPoolIdx = getPoolIndex(season.currentStage);
@@ -394,7 +394,7 @@ export const scrimRouter = router({
         .filter((s): s is NonNullable<typeof s> => s !== null);
     }),
 
-  getRegionTeams: protectedProcedure.query(async ({ ctx }) => {
+  getRegionTeams: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });

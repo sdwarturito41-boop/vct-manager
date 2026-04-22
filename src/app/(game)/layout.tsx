@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { TRPCProvider } from "@/components/TRPCProvider";
 import { SidebarNav } from "@/components/SidebarNav";
 
+export const dynamic = "force-dynamic";
+
 export default async function GameLayout({
   children,
 }: {
@@ -14,13 +16,24 @@ export default async function GameLayout({
     redirect("/auth/login");
   }
 
-  const team = await prisma.team.findUnique({
+  // Multi-save guard: user must have a save to enter the game.
+  // No save → send them to create one.
+  const save = await prisma.save.findUnique({
     where: { userId: session.user.id! },
+    select: { id: true },
+  });
+  if (!save) {
+    redirect("/new-save");
+  }
+
+  // User's team within this save
+  const team = await prisma.team.findFirst({
+    where: { saveId: save.id, isPlayerTeam: true },
     select: { id: true, name: true, tag: true, budget: true, region: true },
   });
-
   if (!team) {
-    redirect("/onboarding");
+    // Save exists but no player team — corrupted state, recreate.
+    redirect("/new-save");
   }
 
   return (

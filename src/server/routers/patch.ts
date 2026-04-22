@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "@/server/trpc";
+import { router, protectedProcedure, saveProcedure } from "@/server/trpc";
 
 function toStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
@@ -7,8 +7,8 @@ function toStringArray(v: unknown): string[] {
 }
 
 export const patchRouter = router({
-  getCurrentPatch: protectedProcedure.query(async ({ ctx }) => {
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+  getCurrentPatch: saveProcedure.query(async ({ ctx }) => {
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
     const patch = await ctx.prisma.metaPatch.findFirst({
@@ -28,7 +28,7 @@ export const patchRouter = router({
     };
   }),
 
-  listPatches: protectedProcedure.query(async ({ ctx }) => {
+  listPatches: saveProcedure.query(async ({ ctx }) => {
     const patches = await ctx.prisma.metaPatch.findMany({
       orderBy: [{ season: "desc" }, { createdAt: "desc" }],
     });

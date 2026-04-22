@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 import type { Region } from "@/generated/prisma/client";
 
 // ── Coach generation data ──
@@ -106,7 +106,7 @@ function generateCoachOffers(region: Region): CoachOffer[] {
 }
 
 export const coachRouter = router({
-  listMyCoach: protectedProcedure.query(async ({ ctx }) => {
+  listMyCoach: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
       include: { coach: true },
@@ -117,7 +117,7 @@ export const coachRouter = router({
     return team.coach;
   }),
 
-  listAvailableCoaches: protectedProcedure.query(async ({ ctx }) => {
+  listAvailableCoaches: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });
@@ -125,7 +125,7 @@ export const coachRouter = router({
       throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
     }
 
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) {
       throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
     }
@@ -140,7 +140,7 @@ export const coachRouter = router({
     return offers;
   }),
 
-  hireCoach: protectedProcedure
+  hireCoach: saveProcedure
     .input(
       z.object({
         coachOfferId: z.string(),
@@ -154,7 +154,7 @@ export const coachRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
       }
 
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) {
         throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
       }
@@ -221,7 +221,7 @@ export const coachRouter = router({
       return coach;
     }),
 
-  fireCoach: protectedProcedure.mutation(async ({ ctx }) => {
+  fireCoach: saveProcedure.mutation(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });

@@ -1854,12 +1854,20 @@ export async function rollOffSeason(
 // from VctTeamTemplate, creates the user's team. Players/schedule/sponsors are
 // TODO — they'll need to be populated by follow-up work that scopes everything
 // by saveId. For now this is enough to let a new save exist without crashes.
+/**
+ * Full save bootstrap: Season + per-save teams (cloned from VctTeamTemplate)
+ * + per-save players (cloned from the global "template" player pool which the
+ * pandascore seed populated) + Kickoff bracket scheduled for Week 1.
+ */
 export async function initializeSaveWorld(
   prisma: PrismaClient,
   saveId: string,
   input: { teamName: string; teamTag: string; region: Region },
 ): Promise<void> {
-  // 1. Season
+  const save = await prisma.save.findUnique({ where: { id: saveId } });
+  if (!save) throw new Error("Save not found");
+
+  // 1. Season record for this save
   await prisma.season.create({
     data: {
       saveId,
@@ -1871,11 +1879,12 @@ export async function initializeSaveWorld(
     },
   });
 
-  // 2. Player's team (linked to the Save owner — pulled via the save relation)
-  const save = await prisma.save.findUnique({ where: { id: saveId } });
-  if (!save) throw new Error("Save not found");
-
-  await prisma.team.create({
+  // 2. User's team — create it from VctTeamTemplate preset if the name matches,
+  //    else from the user's custom inputs.
+  const userTemplate = await prisma.vctTeamTemplate.findFirst({
+    where: { name: input.teamName },
+  });
+  const userTeam = await prisma.team.create({
     data: {
       saveId,
       userId: save.userId,
@@ -1883,15 +1892,19 @@ export async function initializeSaveWorld(
       name: input.teamName,
       tag: input.teamTag,
       region: input.region,
+      logoUrl: userTemplate?.logoUrl,
+      budget: userTemplate?.budget ?? 1_000_000,
+      prestige: userTemplate?.prestige ?? 50,
     },
   });
 
-  // 3. Clone AI teams from VctTeamTemplate (all regions)
+  // 3. Clone AI teams from VctTeamTemplate (every region, every team except user's)
   const templates = await prisma.vctTeamTemplate.findMany();
+  const savedTeamByName = new Map<string, string>();
+  savedTeamByName.set(input.teamName, userTeam.id);
   for (const t of templates) {
-    // Skip if it matches the user's chosen team name (avoid duplicate)
     if (t.name === input.teamName) continue;
-    await prisma.team.create({
+    const team = await prisma.team.create({
       data: {
         saveId,
         isPlayerTeam: false,
@@ -1903,9 +1916,72 @@ export async function initializeSaveWorld(
         prestige: t.prestige,
       },
     });
+    savedTeamByName.set(t.name, team.id);
   }
 
-  // TODO: seed players per AI team, build Kickoff bracket, seed sponsors,
-  // create initial MetaPatch + MapPool. See initializeSeasonForTeam for the
-  // reference logic — needs to be refactored to take saveId.
+  // 4. Clone players from the global "template" pool (seeded by pandascore).
+  //    Global players have saveId=null (or no saveId) and teamId=null with
+  //    `currentTeam` set to their real-life team name. We clone them per save,
+  //    mapping `currentTeam` name → the save's new Team.id.
+  const globalPlayers = await prisma.player.findMany({
+    where: {
+      // Template players: those that belong to the global (pre-save) pool.
+      // A newly-seeded Pandascore player has `currentTeam` set and `teamId` null.
+      currentTeam: { not: null },
+      isRetired: false,
+    },
+  });
+  for (const p of globalPlayers) {
+    const teamId = p.currentTeam ? savedTeamByName.get(p.currentTeam) : null;
+    if (!teamId) continue; // player's team isn't part of any save template, skip
+    await prisma.player.create({
+      data: {
+        ign: p.ign,
+        firstName: p.firstName,
+        lastName: p.lastName,
+        nationality: p.nationality,
+        age: p.age,
+        role: p.role,
+        leadershipRole: p.leadershipRole,
+        imageUrl: p.imageUrl,
+        currentTeam: p.currentTeam,
+        region: p.region,
+        tier: p.tier,
+        salary: p.salary,
+        acs: p.acs,
+        kd: p.kd,
+        adr: p.adr,
+        kast: p.kast,
+        hs: p.hs,
+        mapFactors: p.mapFactors as object,
+        teamId,
+        contractEndSeason: p.contractEndSeason,
+        contractEndWeek: p.contractEndWeek,
+        buyoutClause: p.buyoutClause,
+      },
+    });
+  }
+
+  // 5. Kickoff bracket — schedule R1 matches per region using the KICKOFF_SEEDS
+  //    pairings (same as single-save initializeSeasonForTeam).
+  let totalMatches = 0;
+  for (const region of ALL_REGIONS) {
+    const seed = KICKOFF_SEEDS[region];
+    const pairs: [string, string][] = seed.round1Matchups
+      .map(([a, b]) => [savedTeamByName.get(a), savedTeamByName.get(b)] as [string | undefined, string | undefined])
+      .filter((p): p is [string, string] => !!p[0] && !!p[1]);
+    const data = pairs.map(([team1Id, team2Id]) => ({
+      saveId,
+      team1Id,
+      team2Id,
+      stageId: "KICKOFF_UB_R1",
+      format: "BO3" as MatchFormat,
+    }));
+    const scheduled = assignDaysWeek(data, region, 1, 1);
+    if (scheduled.length > 0) {
+      await prisma.match.createMany({ data: scheduled });
+      totalMatches += scheduled.length;
+    }
+  }
+  void totalMatches;
 }

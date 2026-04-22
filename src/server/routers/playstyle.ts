@@ -1,19 +1,19 @@
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "@/server/trpc";
+import { router, protectedProcedure, saveProcedure } from "@/server/trpc";
 import { z } from "zod";
 
 const PLAYSTYLE_COST = 50000;
 const PLAYSTYLES = ["Aggressive", "Tactical", "Defensive", "Balanced", "Flex"] as const;
 
 export const playstyleRouter = router({
-  getMyPlaystyle: protectedProcedure.query(async ({ ctx }) => {
+  getMyPlaystyle: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
       select: { id: true, playstyle: true, budget: true },
     });
     if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
 
     // Has the team changed playstyle during the current stage?
     // We track this by looking for a training session flagged via focus? No dedicated model.
@@ -43,7 +43,7 @@ export const playstyleRouter = router({
     };
   }),
 
-  setMyPlaystyle: protectedProcedure
+  setMyPlaystyle: saveProcedure
     .input(
       z.object({
         playstyle: z.enum(PLAYSTYLES),
@@ -53,7 +53,7 @@ export const playstyleRouter = router({
       const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
       if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
       if (team.playstyle === input.playstyle) {

@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMatch } from "@/server/simulation/engine";
 import type { SimTeam } from "@/server/simulation/engine";
 import type { Player, Team, Region } from "@/generated/prisma/client";
@@ -47,14 +47,14 @@ function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
 }
 
 export const seasonRouter = router({
-  getCurrent: protectedProcedure.query(async ({ ctx }) => {
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+  getCurrent: saveProcedure.query(async ({ ctx }) => {
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
     return season;
   }),
 
-  advanceDay: protectedProcedure.mutation(async ({ ctx }) => {
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+  advanceDay: saveProcedure.mutation(async ({ ctx }) => {
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
     // Block only if user has an unplayed match on or BEFORE current day (in the past).
@@ -578,7 +578,7 @@ export const seasonRouter = router({
     // ═══════════════════════════════════════════════════════════
     // AI resolves pending transfer offers (buyouts etc.)
     // ═══════════════════════════════════════════════════════════
-    await runAiOfferResolutions({ prisma: ctx.prisma });
+    await runAiOfferResolutions({ prisma: ctx.prisma, save: { id: ctx.save.id } });
 
     // ── Sponsor win bonuses for completed (AI) matches played today ──
     const winnersToday = new Set<string>();
@@ -669,7 +669,7 @@ export const seasonRouter = router({
 
     // ── Stage transition: clear sponsor + coach offer caches ──
     // Fetch latest season (post-transition) and compare
-    const latestSeason = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+    const latestSeason = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (latestSeason && latestSeason.currentStage !== season.currentStage) {
       invalidateSponsorOffersCache();
       invalidateCoachOffersCache();
@@ -699,8 +699,8 @@ export const seasonRouter = router({
     };
   }),
 
-  getSchedule: protectedProcedure.query(async ({ ctx }) => {
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+  getSchedule: saveProcedure.query(async ({ ctx }) => {
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
     // Try current stage first, fall back to showing all matches if none found

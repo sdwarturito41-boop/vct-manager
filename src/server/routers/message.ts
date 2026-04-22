@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 
 export const messageRouter = router({
   list: protectedProcedure
@@ -18,7 +18,7 @@ export const messageRouter = router({
       });
     }),
 
-  unreadCount: protectedProcedure.query(async ({ ctx }) => {
+  unreadCount: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
     if (!team) return 0;
     return ctx.prisma.message.count({
@@ -37,7 +37,7 @@ export const messageRouter = router({
       });
     }),
 
-  markAllRead: protectedProcedure.mutation(async ({ ctx }) => {
+  markAllRead: saveProcedure.mutation(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
     if (!team) throw new TRPCError({ code: "NOT_FOUND" });
     await ctx.prisma.message.updateMany({

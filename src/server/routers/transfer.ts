@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 import type { OfferStatus } from "@/generated/prisma/client";
 
 // ── Helpers ──
@@ -10,6 +10,7 @@ type ResolveCtx = {
   // mutations as well as from hooks inside other routers (e.g. season.advanceDay).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   prisma: any;
+  save: { id: string };
 };
 
 /**
@@ -93,7 +94,7 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
   });
   if (!offer) return;
 
-  const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+  const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
   const currentSeason = season?.number ?? offer.season;
   const currentWeek = season?.currentWeek ?? offer.week;
 
@@ -198,7 +199,7 @@ export async function runAiOfferResolutions(ctx: ResolveCtx): Promise<number> {
 
 export const transferRouter = router({
   // ── Free agents grouped by region ──
-  listFreeAgents: protectedProcedure
+  listFreeAgents: saveProcedure
     .input(
       z
         .object({
@@ -239,7 +240,7 @@ export const transferRouter = router({
     }),
 
   // ── Players from OTHER teams, showing their buyout clause ──
-  listMarketPlayers: protectedProcedure
+  listMarketPlayers: saveProcedure
     .input(
       z
         .object({
@@ -283,7 +284,7 @@ export const transferRouter = router({
     }),
 
   // ── Create a transfer offer ──
-  makeOffer: protectedProcedure
+  makeOffer: saveProcedure
     .input(
       z.object({
         playerId: z.string(),
@@ -299,7 +300,7 @@ export const transferRouter = router({
       });
       if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
       const player = await ctx.prisma.player.findUnique({
@@ -374,7 +375,7 @@ export const transferRouter = router({
     }),
 
   // ── List offers related to current user ──
-  myOffers: protectedProcedure.query(async ({ ctx }) => {
+  myOffers: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });
@@ -403,7 +404,7 @@ export const transferRouter = router({
   }),
 
   // ── Accept/reject an incoming offer on one of user's players ──
-  respondToOffer: protectedProcedure
+  respondToOffer: saveProcedure
     .input(
       z.object({
         offerId: z.string(),
@@ -439,7 +440,7 @@ export const transferRouter = router({
     }),
 
   // ── Called by advanceDay to resolve pending AI decisions ──
-  aiResolveOffers: protectedProcedure.mutation(async ({ ctx }) => {
+  aiResolveOffers: saveProcedure.mutation(async ({ ctx }) => {
     const n = await runAiOfferResolutions(ctx);
     return { resolved: n };
   }),

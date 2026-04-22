@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 
 export const leagueRouter = router({
-  standings: protectedProcedure.query(async ({ ctx }) => {
+  standings: saveProcedure.query(async ({ ctx }) => {
     const userTeam = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });
@@ -26,7 +26,7 @@ export const leagueRouter = router({
     });
   }),
 
-  champPoints: protectedProcedure
+  champPoints: saveProcedure
     .input(z.object({ teamId: z.string() }))
     .query(async ({ ctx, input }) => {
       const team = await ctx.prisma.team.findUnique({

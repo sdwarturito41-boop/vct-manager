@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "@/server/trpc";
+import { router, protectedProcedure, saveProcedure } from "@/server/trpc";
 import { z } from "zod";
 import type { TrainingFocus } from "@/generated/prisma/client";
 
@@ -10,11 +10,11 @@ const FOCUS_VALUES = ["AGENT_MASTERY", "MAP_FACTOR", "TEAM_SYNERGY", "AIM", "UTI
 
 export const trainingRouter = router({
   // ── List this week's training sessions for the user's team ──
-  listMyTrainings: protectedProcedure.query(async ({ ctx }) => {
+  listMyTrainings: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
     if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
     const sessions = await ctx.prisma.trainingSession.findMany({
@@ -40,11 +40,11 @@ export const trainingRouter = router({
   }),
 
   // ── How many training sessions are left this week ──
-  getTrainingSlots: protectedProcedure.query(async ({ ctx }) => {
+  getTrainingSlots: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
     if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) return { used: 0, max: MAX_SESSIONS_PER_WEEK, week: 0 };
 
     const used = await ctx.prisma.trainingSession.count({
@@ -59,7 +59,7 @@ export const trainingRouter = router({
   }),
 
   // ── Legacy: bulk allocate training points (keep for compatibility) ──
-  allocate: protectedProcedure
+  allocate: saveProcedure
     .input(
       z.object({
         aim: z.number().min(0).max(10),
@@ -77,7 +77,7 @@ export const trainingRouter = router({
       });
       if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "No team found" });
 
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season" });
 
       if (team.lastTrainedWeek >= season.currentWeek) {
@@ -99,7 +99,7 @@ export const trainingRouter = router({
     }),
 
   // ── Create an individual training session with instant effect ──
-  createTraining: protectedProcedure
+  createTraining: saveProcedure
     .input(
       z.object({
         playerId: z.string(),
@@ -115,7 +115,7 @@ export const trainingRouter = router({
       });
       if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
       // Slot check

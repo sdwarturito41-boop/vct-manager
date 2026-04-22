@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 import type { SponsorTier } from "@/generated/prisma/client";
 
 // ── Sponsor generation data ──
@@ -123,7 +123,7 @@ function generateOffers(prestige: number): SponsorOffer[] {
 }
 
 export const sponsorRouter = router({
-  listMySponsors: protectedProcedure.query(async ({ ctx }) => {
+  listMySponsors: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });
@@ -139,7 +139,7 @@ export const sponsorRouter = router({
     return sponsors;
   }),
 
-  listOffers: protectedProcedure.query(async ({ ctx }) => {
+  listOffers: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
     });
@@ -147,7 +147,7 @@ export const sponsorRouter = router({
       throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
     }
 
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) {
       throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
     }
@@ -162,7 +162,7 @@ export const sponsorRouter = router({
     return offers;
   }),
 
-  acceptSponsor: protectedProcedure
+  acceptSponsor: saveProcedure
     .input(
       z.object({
         offerId: z.string(),
@@ -176,7 +176,7 @@ export const sponsorRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
       }
 
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) {
         throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
       }
@@ -228,7 +228,7 @@ export const sponsorRouter = router({
       return sponsor;
     }),
 
-  dropSponsor: protectedProcedure
+  dropSponsor: saveProcedure
     .input(
       z.object({
         sponsorId: z.string(),
