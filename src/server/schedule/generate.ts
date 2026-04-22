@@ -1973,6 +1973,46 @@ export async function initializeSaveWorld(
     await prisma.player.createMany({ data: playerCloneData });
   }
 
+  // 4b. Clone PlayerAgentPool entries — each template player has agent mastery
+  //     data (stars per agent × map). We need to duplicate these for the newly
+  //     cloned players, mapping template playerId → save's cloned playerId.
+  const templatePlayerIds = globalPlayers.map((p) => p.id);
+  const templateAgentPools = await prisma.playerAgentPool.findMany({
+    where: { playerId: { in: templatePlayerIds } },
+  });
+  if (templateAgentPools.length > 0) {
+    // Build map: template (ign + currentTeam) → cloned playerId
+    const clonedPlayers = await prisma.player.findMany({
+      where: { teamId: { in: [...savedTeamByName.values()] } },
+      select: { id: true, ign: true, currentTeam: true },
+    });
+    const clonedIdByKey = new Map<string, string>();
+    for (const cp of clonedPlayers) {
+      const key = cp.ign + "::" + (cp.currentTeam ?? "");
+      clonedIdByKey.set(key, cp.id);
+    }
+    const templateById = new Map(globalPlayers.map((p) => [p.id, p] as const));
+    const agentPoolCloneData = templateAgentPools
+      .map((pool) => {
+        const tmpl = templateById.get(pool.playerId);
+        if (!tmpl) return null;
+        const newPlayerId = clonedIdByKey.get(tmpl.ign + "::" + (tmpl.currentTeam ?? ""));
+        if (!newPlayerId) return null;
+        return {
+          saveId,
+          playerId: newPlayerId,
+          agentName: pool.agentName,
+          mapName: pool.mapName,
+          stars: pool.stars,
+          lastPlayedMatch: pool.lastPlayedMatch,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    if (agentPoolCloneData.length > 0) {
+      await prisma.playerAgentPool.createMany({ data: agentPoolCloneData });
+    }
+  }
+
   // 5. Kickoff bracket — schedule R1 matches per region using the KICKOFF_SEEDS
   //    pairings (same as single-save initializeSeasonForTeam).
   let totalMatches = 0;
