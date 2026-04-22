@@ -211,8 +211,12 @@ export const transferRouter = router({
         .optional(),
     )
     .query(async ({ ctx, input }) => {
+      // Template players (seeded from pandascore for cloning into saves) have
+      // teamId=null AND currentTeam set. Real released free agents have
+      // teamId=null AND currentTeam=null. Filter out templates.
       const where: Record<string, unknown> = {
         teamId: null,
+        currentTeam: null,
         isRetired: false,
       };
       if (input?.region) where.region = input.region;
