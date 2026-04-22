@@ -4,8 +4,8 @@ import { router, protectedProcedure, saveProcedure } from "../trpc";
 
 export const leagueRouter = router({
   standings: saveProcedure.query(async ({ ctx }) => {
-    const userTeam = await ctx.prisma.team.findUnique({
-      where: { userId: ctx.userId },
+    const userTeam = await ctx.prisma.team.findFirst({
+      where: { saveId: ctx.save.id, isPlayerTeam: true },
     });
 
     if (!userTeam) {
@@ -13,7 +13,7 @@ export const leagueRouter = router({
     }
 
     return ctx.prisma.team.findMany({
-      where: { region: userTeam.region },
+      where: { saveId: ctx.save.id, region: userTeam.region },
       orderBy: [{ champPts: "desc" }, { wins: "desc" }],
       include: {
         _count: {
@@ -40,6 +40,7 @@ export const leagueRouter = router({
       // Get all played matches for this team to build a stage-by-stage breakdown
       const matches = await ctx.prisma.match.findMany({
         where: {
+          saveId: ctx.save.id,
           isPlayed: true,
           OR: [{ team1Id: input.teamId }, { team2Id: input.teamId }],
         },

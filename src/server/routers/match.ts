@@ -252,6 +252,7 @@ export const matchRouter = router({
     .query(async ({ ctx, input }) => {
       return ctx.prisma.match.findMany({
         where: {
+          saveId: ctx.save.id,
           OR: [{ team1Id: input.teamId }, { team2Id: input.teamId }],
         },
         include: { team1: true, team2: true },

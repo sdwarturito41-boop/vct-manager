@@ -706,6 +706,7 @@ export const seasonRouter = router({
     // Try current stage first, fall back to showing all matches if none found
     let matches = await ctx.prisma.match.findMany({
       where: {
+        saveId: ctx.save.id,
         season: season.number,
         stageId: { startsWith: season.currentStage },
       },
@@ -716,10 +717,9 @@ export const seasonRouter = router({
       orderBy: [{ day: "asc" }],
     });
 
-    // If no matches for current stage, show the last completed stage (Kickoff)
     if (matches.length === 0) {
       matches = await ctx.prisma.match.findMany({
-        where: { season: season.number },
+        where: { saveId: ctx.save.id, season: season.number },
         include: {
           team1: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
           team2: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
