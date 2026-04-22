@@ -1,19 +1,33 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc-client";
 import type { PlayerInfo } from "@/lib/types";
 import { D, roleColor } from "@/constants/design";
 import { formatCurrency, formatStat } from "@/lib/format";
 import { countryToFlag } from "@/lib/country-flag";
+import { PlayerDetailModal } from "@/components/PlayerDetailModal";
 
 interface RosterPlayer extends PlayerInfo {
   leadershipRole?: string;
   contractEndSeason?: number;
   contractEndWeek?: number;
+  happiness?: number;
+  happinessTags?: unknown;
+  isTransferListed?: boolean;
+}
+
+function happinessColor(score: number): string {
+  if (score >= 70) return D.green;
+  if (score >= 40) return D.gold;
+  if (score >= 20) return "#ff8c50";
+  return D.red;
 }
 
 export default function RosterPage() {
+  const [detailPlayerId, setDetailPlayerId] = useState<string | null>(null);
+
   const { data: team, isLoading: teamLoading } = trpc.team.get.useQuery(
     undefined,
     { retry: false }
@@ -144,6 +158,7 @@ export default function RosterPage() {
               key={p.id}
               player={p}
               isMvp={p.id === topAcsId}
+              onOpenDetail={() => setDetailPlayerId(p.id)}
               onBench={() =>
                 toggleMutation.mutate({ playerId: p.id, isActive: false })
               }
@@ -166,6 +181,7 @@ export default function RosterPage() {
               key={p.id}
               player={p}
               isMvp={false}
+              onOpenDetail={() => setDetailPlayerId(p.id)}
               onBench={() =>
                 toggleMutation.mutate({ playerId: p.id, isActive: true })
               }
@@ -188,6 +204,14 @@ export default function RosterPage() {
             to sign free agents.
           </p>
         </div>
+      )}
+
+      {detailPlayerId && (
+        <PlayerDetailModal
+          playerId={detailPlayerId}
+          isOwnPlayer={true}
+          onClose={() => setDetailPlayerId(null)}
+        />
       )}
     </div>
   );
@@ -285,6 +309,7 @@ function RosterRow({
   player,
   isMvp,
   active,
+  onOpenDetail,
   onBench,
   onRelease,
   togglePending,
@@ -293,6 +318,7 @@ function RosterRow({
   player: RosterPlayer;
   isMvp: boolean;
   active: boolean;
+  onOpenDetail: () => void;
   onBench: () => void;
   onRelease: () => void;
   togglePending: boolean;
@@ -300,20 +326,24 @@ function RosterRow({
 }) {
   const rColor = roleColor(player.role);
   const mvpBg = isMvp ? "rgba(198,155,58,0.04)" : undefined;
+  const happiness = typeof player.happiness === "number" ? player.happiness : 75;
+  const hColor = happinessColor(happiness);
 
   return (
     <div
-      className="grid items-center gap-3 px-10 py-3 transition-colors"
+      className="grid items-center gap-3 px-10 py-3 transition-colors hover:bg-white/5"
       style={{
         gridTemplateColumns:
           "48px minmax(180px,1.3fr) 100px 110px 60px repeat(4,minmax(60px,1fr)) 110px 120px 170px",
         borderBottom: `1px solid ${D.borderFaint}`,
         background: mvpBg,
         opacity: active ? 1 : 0.75,
+        cursor: "pointer",
       }}
+      onClick={onOpenDetail}
     >
       {/* Photo / initials */}
-      <Link href={`/player/${player.id}`} className="block">
+      <div className="block">
         {player.imageUrl ? (
           <img
             src={player.imageUrl}
@@ -334,10 +364,10 @@ function RosterRow({
             </span>
           </div>
         )}
-      </Link>
+      </div>
 
       {/* IGN + Full name */}
-      <Link href={`/player/${player.id}`} className="min-w-0 flex flex-col">
+      <div className="min-w-0 flex flex-col">
         <div className="flex items-center gap-2">
           <span
             className="truncate text-[14px] font-medium"
@@ -348,6 +378,23 @@ function RosterRow({
           <span className="text-[12px]">
             {countryToFlag(player.nationality)}
           </span>
+          {/* Happiness dot */}
+          <span
+            title={`Mood ${happiness}/100`}
+            className="h-2 w-2 rounded-full"
+            style={{ background: hColor }}
+          />
+          {player.isTransferListed && (
+            <span
+              className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
+              style={{
+                background: "rgba(255,70,85,0.1)",
+                color: D.red,
+              }}
+            >
+              Listed
+            </span>
+          )}
           {isMvp && (
             <span
               className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
@@ -366,7 +413,7 @@ function RosterRow({
         >
           {player.firstName} {player.lastName}
         </span>
-      </Link>
+      </div>
 
       {/* Role */}
       <span
@@ -438,12 +485,12 @@ function RosterRow({
       </span>
 
       {/* Actions */}
-      <div className="flex items-center justify-end gap-2">
+      <div
+        className="flex items-center justify-end gap-2"
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
-          onClick={(e) => {
-            e.preventDefault();
-            onBench();
-          }}
+          onClick={onBench}
           disabled={togglePending}
           className="rounded px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
           style={{
@@ -454,10 +501,7 @@ function RosterRow({
           {active ? "Bench" : "Activate"}
         </button>
         <button
-          onClick={(e) => {
-            e.preventDefault();
-            onRelease();
-          }}
+          onClick={onRelease}
           disabled={sellPending}
           className="rounded px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
           style={{

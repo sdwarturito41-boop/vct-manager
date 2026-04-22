@@ -38,6 +38,7 @@ model Save {
   sponsors      Sponsor[]
   injuries      Injury[]
   transferOffers TransferOffer[]
+  transferNews  TransferNews[]
   trainingSessions TrainingSession[]
   playerAgentPools PlayerAgentPool[]
 }
@@ -113,6 +114,19 @@ model Player {
   contractEndSeason Int       @default(1)
   contractEndWeek   Int       @default(52)
   buyoutClause      Int       @default(0)
+  // Nominal buyout clause — effectiveBuyoutClause = baseBuyoutClause × 0.7
+  // while player is WANTS_TRANSFER. Kept separate so the discount is reversible.
+  baseBuyoutClause       Int     @default(0)
+  // Happiness system
+  happiness              Int     @default(75)
+  happinessTags          Json    @default("[]")
+  isTransferListed       Boolean @default(false)
+  pepTalksUsedSeason     Int     @default(0)
+  raisesUsedSeason       Int     @default(0)
+  // Tracks when player entered WANTS_TRANSFER state (for 4-week FORCE_SALE unlock).
+  // Null when not in that state.
+  wantsTransferSinceWeek   Int?
+  wantsTransferSinceSeason Int?
   incomingOffers    TransferOffer[]
   trainingSessions  TrainingSession[]
   injuries          Injury[]
@@ -175,12 +189,25 @@ model TransferOffer {
   transferFee    Int      @default(0)
   proposedSalary Int
   contractLengthWeeks Int  @default(52)
+  // Full-FM negotiation variables
+  signingBonus       Int     @default(0)
+  sellOnPercentage   Float   @default(0)
+  performanceBonuses Json    @default("{}")
+  loyaltyBonus       Int     @default(0)
+  // Counter-offer chain (rounds 1..3). parentOfferId links to previous round.
+  negotiationRound   Int     @default(1)
+  parentOfferId      String?
+  parentOffer        TransferOffer?  @relation("OfferChain", fields: [parentOfferId], references: [id], onDelete: SetNull)
+  childOffers        TransferOffer[] @relation("OfferChain")
+  // Response deadline (72h from creation). null for pre-migration offers.
+  deadlineAt         DateTime?
   status         OfferStatus @default(PENDING)
   week           Int
   season         Int
   createdAt      DateTime @default(now())
 
   @@index([saveId])
+  @@index([status, deadlineAt])
 }
 
 model TrainingSession {
@@ -436,4 +463,27 @@ model Scrim {
   createdAt    DateTime @default(now())
 
   @@index([saveId])
+}
+
+// Append-only log of completed IA↔IA transfers. Consumed later by the social
+// feed. Denormalized team tag / player ign so the feed doesn't need joins
+// even if the player/team gets deleted.
+model TransferNews {
+  id          String    @id @default(cuid())
+  saveId      String
+  save        Save      @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  playerId    String
+  playerIgn   String
+  fromTeamId  String?
+  fromTeamTag String?
+  toTeamId    String
+  toTeamTag   String
+  transferFee Int       @default(0)
+  offerType   OfferType
+  week        Int
+  season      Int
+  createdAt   DateTime  @default(now())
+
+  @@index([saveId])
+  @@index([saveId, createdAt])
 }

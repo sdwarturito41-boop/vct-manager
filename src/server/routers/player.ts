@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
+import { marketRate } from "@/server/mercato/marketRate";
 
 export const playerRouter = router({
   roster: protectedProcedure.query(async ({ ctx }) => {
@@ -199,5 +200,128 @@ export const playerRouter = router({
         byPlayer[r.playerId].push({ agentName: r.agentName, mapName: r.mapName, stars: r.stars });
       }
       return byPlayer;
+    }),
+
+  // ── Mercato V1 — user actions for roster management ──
+
+  raiseSalary: saveProcedure
+    .input(
+      z.object({
+        playerId: z.string(),
+        newSalary: z.number().int().positive(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+      if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+
+      const player = await ctx.prisma.player.findUnique({ where: { id: input.playerId } });
+      if (!player) throw new TRPCError({ code: "NOT_FOUND", message: "Player not found." });
+      if (player.teamId !== team.id) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not your player." });
+      }
+      if (input.newSalary <= player.salary) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "New salary must exceed current salary." });
+      }
+      if (player.raisesUsedSeason >= 1) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This player has already received a raise this season." });
+      }
+      const upfront = input.newSalary * 2;
+      if (team.budget < upfront) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Not enough budget. Raise costs $${upfront.toLocaleString()} upfront.`,
+        });
+      }
+
+      const rate = marketRate(player);
+      const nextTags = (Array.isArray(player.happinessTags) ? (player.happinessTags as string[]) : [])
+        .filter((t) => t !== "UNDERPAID")
+        .filter((t) => t !== "RECENT_SIGNING");
+      nextTags.push("RECENT_SIGNING");
+      // If still below 70% of market, keep UNDERPAID
+      if (input.newSalary < rate * 0.7) nextTags.push("UNDERPAID");
+
+      const [, updatedPlayer] = await ctx.prisma.$transaction([
+        ctx.prisma.team.update({
+          where: { id: team.id },
+          data: { budget: { decrement: upfront } },
+        }),
+        ctx.prisma.player.update({
+          where: { id: player.id },
+          data: {
+            salary: input.newSalary,
+            happiness: Math.min(100, player.happiness + 15),
+            happinessTags: nextTags,
+            raisesUsedSeason: { increment: 1 },
+          },
+        }),
+      ]);
+      return updatedPlayer;
+    }),
+
+  pepTalk: saveProcedure
+    .input(z.object({ playerId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+      if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+
+      const player = await ctx.prisma.player.findUnique({ where: { id: input.playerId } });
+      if (!player) throw new TRPCError({ code: "NOT_FOUND", message: "Player not found." });
+      if (player.teamId !== team.id) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not your player." });
+      }
+      if (player.pepTalksUsedSeason >= 2) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "You've already had 2 pep talks with this player this season.",
+        });
+      }
+      return ctx.prisma.player.update({
+        where: { id: player.id },
+        data: {
+          happiness: Math.min(100, player.happiness + 8),
+          pepTalksUsedSeason: { increment: 1 },
+        },
+      });
+    }),
+
+  setTransferListed: saveProcedure
+    .input(
+      z.object({
+        playerId: z.string(),
+        listed: z.boolean(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+      if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+
+      const player = await ctx.prisma.player.findUnique({ where: { id: input.playerId } });
+      if (!player) throw new TRPCError({ code: "NOT_FOUND", message: "Player not found." });
+      if (player.teamId !== team.id) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not your player." });
+      }
+      return ctx.prisma.player.update({
+        where: { id: player.id },
+        data: { isTransferListed: input.listed },
+      });
+    }),
+
+  // ── Detail fetch for the Player Detail Modal ──
+  detail: saveProcedure
+    .input(z.object({ playerId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const player = await ctx.prisma.player.findUnique({
+        where: { id: input.playerId },
+        include: {
+          team: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
+        },
+      });
+      if (!player) throw new TRPCError({ code: "NOT_FOUND", message: "Player not found." });
+      return {
+        ...player,
+        marketRate: marketRate(player),
+      };
     }),
 });

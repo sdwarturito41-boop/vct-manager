@@ -1783,6 +1783,11 @@ export async function rollOffSeason(
     data: { wins: 0, losses: 0, champPts: 0, lastTrainedWeek: 0 },
   });
 
+  // 4b) Reset per-season player counters (pep talks, raises)
+  await prisma.player.updateMany({
+    data: { pepTalksUsedSeason: 0, raisesUsedSeason: 0 },
+  });
+
   // 5) Bump season to a fresh KICKOFF
   await prisma.season.update({
     where: { id: seasonId },

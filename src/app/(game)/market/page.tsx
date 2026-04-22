@@ -38,6 +38,8 @@ interface MarketPlayer {
   buyoutClause: number;
   contractEndSeason: number;
   contractEndWeek: number;
+  isTransferListed?: boolean;
+  happiness?: number;
   team?: { id: string; name: string; tag: string; logoUrl: string | null; region: string } | null;
 }
 
@@ -50,6 +52,12 @@ interface OfferRow {
   transferFee: number;
   proposedSalary: number;
   contractLengthWeeks: number;
+  signingBonus: number;
+  sellOnPercentage: number;
+  loyaltyBonus: number;
+  negotiationRound: number;
+  parentOfferId: string | null;
+  deadlineAt: string | Date | null;
   status: "PENDING" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "COUNTERED";
   week: number;
   season: number;
@@ -74,6 +82,7 @@ export default function MarketPage() {
   const [minSalary, setMinSalary] = useState<string>("");
   const [maxSalary, setMaxSalary] = useState<string>("");
   const [offerTarget, setOfferTarget] = useState<MarketPlayer | null>(null);
+  const [counterTarget, setCounterTarget] = useState<OfferRow | null>(null);
 
   const utils = trpc.useUtils();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -255,6 +264,7 @@ export default function MarketPage() {
             onRespond={(offerId, action) =>
               respondMutation.mutate({ offerId, action })
             }
+            onCounter={(o) => setCounterTarget(o)}
             respondPending={respondMutation.isPending as boolean}
           />
         )}
@@ -269,6 +279,18 @@ export default function MarketPage() {
           onClose={() => setOfferTarget(null)}
           onDone={() => {
             setOfferTarget(null);
+            invalidateAll();
+          }}
+        />
+      )}
+
+      {/* Counter-offer modal */}
+      {counterTarget && team && (
+        <CounterOfferModal
+          offer={counterTarget}
+          onClose={() => setCounterTarget(null)}
+          onDone={() => {
+            setCounterTarget(null);
             invalidateAll();
           }}
         />
@@ -545,6 +567,17 @@ function MarketPlayerRow({
           >
             Age {player.age}
           </span>
+          {player.isTransferListed && (
+            <span
+              className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
+              style={{
+                background: "rgba(255,70,85,0.1)",
+                color: D.red,
+              }}
+            >
+              Listed
+            </span>
+          )}
         </div>
         <div
           className="flex items-center gap-3 text-[10px] uppercase tracking-[0.15em] tabular-nums"
@@ -654,12 +687,14 @@ function OffersTab({
   isLoading,
   userTeamId,
   onRespond,
+  onCounter,
   respondPending,
 }: {
   data?: { made: OfferRow[]; received: OfferRow[] };
   isLoading: boolean;
   userTeamId: string;
   onRespond: (offerId: string, action: "ACCEPT" | "REJECT") => void;
+  onCounter: (offer: OfferRow) => void;
   respondPending: boolean;
 }) {
   if (isLoading) return <CenterMsg>Loading offers...</CenterMsg>;
@@ -694,6 +729,7 @@ function OffersTab({
               direction="IN"
               userTeamId={userTeamId}
               onRespond={onRespond}
+              onCounter={onCounter}
               respondPending={respondPending}
             />
           ))}
@@ -726,6 +762,7 @@ function OffersTab({
               direction="OUT"
               userTeamId={userTeamId}
               onRespond={onRespond}
+              onCounter={onCounter}
               respondPending={respondPending}
             />
           ))}
@@ -739,12 +776,14 @@ function OfferRow({
   offer,
   direction,
   onRespond,
+  onCounter,
   respondPending,
 }: {
   offer: OfferRow;
   direction: "IN" | "OUT";
   userTeamId: string;
   onRespond: (offerId: string, action: "ACCEPT" | "REJECT") => void;
+  onCounter: (offer: OfferRow) => void;
   respondPending: boolean;
 }) {
   const status = STATUS_COLOR[offer.status] ?? {
@@ -881,6 +920,14 @@ function OfferRow({
         >
           {offer.status}
         </span>
+        {offer.negotiationRound > 1 && (
+          <span
+            className="rounded px-2 py-0.5 text-[10px] uppercase tracking-[0.2em]"
+            style={{ background: D.card, color: D.textMuted, border: `1px solid ${D.borderFaint}` }}
+          >
+            Round {offer.negotiationRound}
+          </span>
+        )}
         {direction === "IN" && offer.status === "PENDING" && (
           <>
             <button
@@ -894,6 +941,20 @@ function OfferRow({
             >
               Reject
             </button>
+            {offer.negotiationRound < 3 && (
+              <button
+                disabled={respondPending}
+                onClick={() => onCounter(offer)}
+                className="rounded px-2 py-1 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
+                style={{
+                  background: "rgba(96,165,250,0.1)",
+                  color: D.blue,
+                  border: `1px solid rgba(96,165,250,0.3)`,
+                }}
+              >
+                Counter
+              </button>
+            )}
             <button
               disabled={respondPending}
               onClick={() => onRespond(offer.id, "ACCEPT")}
@@ -936,13 +997,17 @@ function OfferModal({
   const [proposedSalary, setProposedSalary] = useState<number>(defaultSalary);
   const [contractLengthWeeks, setContractLengthWeeks] = useState<number>(52);
   const [transferFee, setTransferFee] = useState<number>(defaultFee);
+  const [signingBonus, setSigningBonus] = useState<number>(0);
+  const [sellOnPercentage, setSellOnPercentage] = useState<number>(0);
+  const [loyaltyBonus, setLoyaltyBonus] = useState<number>(0);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const makeOffer = trpc.transfer.makeOffer.useMutation({
     onSuccess: () => onDone(),
   }) as any;
 
-  const upfront = isBuyout ? transferFee : proposedSalary * 4;
+  const upfront =
+    (isBuyout ? transferFee : proposedSalary * 4) + signingBonus;
   const insufficient = upfront > userBudget;
 
   const handleSubmit = () => {
@@ -952,6 +1017,9 @@ function OfferModal({
       transferFee: isBuyout ? transferFee : undefined,
       proposedSalary,
       contractLengthWeeks,
+      signingBonus: signingBonus || undefined,
+      sellOnPercentage: sellOnPercentage || undefined,
+      loyaltyBonus: loyaltyBonus || undefined,
     });
   };
 
@@ -1131,6 +1199,29 @@ function OfferModal({
             </div>
           </div>
 
+          {/* Extra leverage — signing bonus, sell-on, loyalty */}
+          <div className="grid grid-cols-3 gap-3">
+            <FieldInput
+              label="Signing Bonus"
+              value={signingBonus}
+              onChange={setSigningBonus}
+              hint="paid upfront"
+            />
+            <FieldInput
+              label="Sell-on %"
+              value={sellOnPercentage}
+              onChange={setSellOnPercentage}
+              max={50}
+              hint="% of future resale"
+            />
+            <FieldInput
+              label="Loyalty Bonus"
+              value={loyaltyBonus}
+              onChange={setLoyaltyBonus}
+              hint="end of contract"
+            />
+          </div>
+
           {/* Upfront */}
           <div
             className="flex items-center justify-between rounded px-3 py-2.5"
@@ -1226,6 +1317,257 @@ function ModalMetric({
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+// ───────────────────────── Field input (compact) ─────────────────────────
+
+function FieldInput({
+  label,
+  value,
+  onChange,
+  hint,
+  max,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  hint?: string;
+  max?: number;
+}) {
+  return (
+    <div>
+      <label
+        className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.2em]"
+        style={{ color: D.textSubtle }}
+      >
+        {label}
+      </label>
+      <input
+        type="number"
+        value={value}
+        min={0}
+        max={max}
+        onChange={(e) => onChange(parseFloat(e.target.value || "0"))}
+        className="w-full rounded px-2 py-2 text-[12px] outline-none tabular-nums"
+        style={{
+          background: D.card,
+          color: D.textPrimary,
+          border: `1px solid ${D.border}`,
+        }}
+      />
+      {hint && (
+        <p
+          className="mt-1 text-[9px] uppercase tracking-[0.15em]"
+          style={{ color: D.textSubtle }}
+        >
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────── Counter-Offer Modal ─────────────────────────
+
+function CounterOfferModal({
+  offer,
+  onClose,
+  onDone,
+}: {
+  offer: OfferRow;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [transferFee, setTransferFee] = useState<number>(offer.transferFee);
+  const [proposedSalary, setProposedSalary] = useState<number>(offer.proposedSalary);
+  const [contractLengthWeeks, setContractLengthWeeks] = useState<number>(offer.contractLengthWeeks);
+  const [signingBonus, setSigningBonus] = useState<number>(offer.signingBonus);
+  const [sellOnPercentage, setSellOnPercentage] = useState<number>(offer.sellOnPercentage);
+  const [loyaltyBonus, setLoyaltyBonus] = useState<number>(offer.loyaltyBonus);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const respondMutation = trpc.transfer.respondToOffer.useMutation({
+    onSuccess: () => onDone(),
+  }) as any;
+
+  const handleSubmit = () => {
+    respondMutation.mutate({
+      offerId: offer.id,
+      action: "COUNTER",
+      counter: {
+        transferFee: offer.offerType === "BUYOUT" ? transferFee : undefined,
+        proposedSalary,
+        contractLengthWeeks,
+        signingBonus: signingBonus || undefined,
+        sellOnPercentage: sellOnPercentage || undefined,
+        loyaltyBonus: loyaltyBonus || undefined,
+      },
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl rounded-lg"
+        style={{ background: D.surface, border: `1px solid ${D.border}` }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center justify-between px-6 py-4"
+          style={{ borderBottom: `1px solid ${D.borderFaint}` }}
+        >
+          <div>
+            <div
+              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              style={{ color: D.textSubtle }}
+            >
+              Counter Offer · Round {offer.negotiationRound + 1}/3
+            </div>
+            <h2
+              className="mt-1 text-[22px] font-medium uppercase tracking-[0.05em]"
+              style={{ color: D.textPrimary }}
+            >
+              {offer.player.ign}
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-[12px] uppercase tracking-[0.2em]"
+            style={{ color: D.textMuted }}
+          >
+            Close
+          </button>
+        </div>
+
+        {/* Their offer reference */}
+        <div
+          className="grid grid-cols-4"
+          style={{ borderBottom: `1px solid ${D.borderFaint}` }}
+        >
+          <ModalMetric label="Their Fee" value={formatCurrency(offer.transferFee)} />
+          <ModalMetric
+            label="Their Salary"
+            value={`${formatCurrency(offer.proposedSalary)}/wk`}
+          />
+          <ModalMetric label="Their Length" value={`${offer.contractLengthWeeks}w`} />
+          <ModalMetric
+            label="Their Bonus"
+            value={formatCurrency(offer.signingBonus)}
+            last
+          />
+        </div>
+
+        <div className="flex flex-col gap-5 px-6 py-5">
+          {offer.offerType === "BUYOUT" && (
+            <FieldInput
+              label="Your Transfer Fee"
+              value={transferFee}
+              onChange={setTransferFee}
+            />
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <FieldInput
+              label="Your Proposed Salary"
+              value={proposedSalary}
+              onChange={setProposedSalary}
+              hint="/ week"
+            />
+            <div>
+              <label
+                className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.2em]"
+                style={{ color: D.textSubtle }}
+              >
+                Contract Length
+              </label>
+              <div className="flex gap-1">
+                {[26, 52, 104].map((w) => {
+                  const active = contractLengthWeeks === w;
+                  return (
+                    <button
+                      key={w}
+                      onClick={() => setContractLengthWeeks(w)}
+                      className="flex-1 rounded px-2 py-2 text-[11px] font-medium uppercase tracking-[0.15em]"
+                      style={{
+                        background: active
+                          ? "rgba(255,70,85,0.1)"
+                          : "transparent",
+                        color: active ? D.red : D.textMuted,
+                        border: active
+                          ? `1px solid rgba(255,70,85,0.3)`
+                          : `1px solid ${D.border}`,
+                      }}
+                    >
+                      {w}w
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <FieldInput
+              label="Signing Bonus"
+              value={signingBonus}
+              onChange={setSigningBonus}
+            />
+            <FieldInput
+              label="Sell-on %"
+              value={sellOnPercentage}
+              onChange={setSellOnPercentage}
+              max={50}
+            />
+            <FieldInput
+              label="Loyalty Bonus"
+              value={loyaltyBonus}
+              onChange={setLoyaltyBonus}
+            />
+          </div>
+
+          {respondMutation.error && (
+            <div
+              className="rounded px-3 py-2 text-[11px]"
+              style={{
+                background: "rgba(255,70,85,0.08)",
+                color: D.red,
+                border: `1px solid rgba(255,70,85,0.25)`,
+              }}
+            >
+              {respondMutation.error.message}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={onClose}
+              className="rounded px-4 py-2 text-[11px] font-medium uppercase tracking-[0.2em]"
+              style={{ border: `1px solid ${D.border}`, color: D.textMuted }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={respondMutation.isPending || proposedSalary <= 0}
+              className="rounded px-4 py-2 text-[11px] font-medium uppercase tracking-[0.25em] disabled:cursor-not-allowed disabled:opacity-40"
+              style={{
+                background: "rgba(96,165,250,0.1)",
+                color: D.blue,
+                border: `1px solid rgba(96,165,250,0.3)`,
+              }}
+            >
+              {respondMutation.isPending ? "Sending..." : "Send Counter"}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -21,6 +21,8 @@ import { applyPatchToMeta } from "@/constants/meta";
 import { runAiOfferResolutions } from "./transfer";
 import { invalidateSponsorOffersCache } from "./sponsor";
 import { invalidateCoachOffersCache } from "./coach";
+import { runAiTransferActivity, expireStaleOffers } from "@/server/mercato/iaOffers";
+import { recomputeHappinessAll, generateHappinessMessages } from "@/server/mercato/happiness";
 
 function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
   // Only use top 5 players by ACS (active roster limit)
@@ -576,9 +578,75 @@ export const seasonRouter = router({
     }
 
     // ═══════════════════════════════════════════════════════════
-    // AI resolves pending transfer offers (buyouts etc.)
+    // Mercato V1 ticks — expire stale offers (daily), recompute happiness +
+    // run IA transfer activity on weekly tick (first day of a new week).
     // ═══════════════════════════════════════════════════════════
+    await expireStaleOffers(ctx.prisma);
+
+    // Daily: AI resolves pending transfer offers (buyouts etc.)
     await runAiOfferResolutions({ prisma: ctx.prisma, save: { id: ctx.save.id } });
+
+    const prevWeek = Math.ceil(season.currentDay / 7);
+    const isNewWeekTick = newWeek > prevWeek;
+    if (isNewWeekTick) {
+      const { transitions } = await recomputeHappinessAll(
+        ctx.prisma,
+        ctx.save.id,
+        newWeek,
+        season.number,
+      );
+      if (userTeam) {
+        await generateHappinessMessages(
+          ctx.prisma,
+          ctx.save.id,
+          userTeam.id,
+          transitions,
+          newWeek,
+          season.number,
+        );
+      }
+
+      const before = userTeam
+        ? await ctx.prisma.transferOffer.findMany({
+            where: { toTeamId: userTeam.id, status: "PENDING" },
+            select: { id: true },
+          })
+        : [];
+      const beforeIds = new Set(before.map((o) => o.id));
+
+      await runAiTransferActivity(ctx.prisma, ctx.save.id, newWeek, season.number);
+
+      // Inbox notifs for newly created IA → user offers
+      if (userTeam) {
+        const after = await ctx.prisma.transferOffer.findMany({
+          where: { toTeamId: userTeam.id, status: "PENDING" },
+          include: {
+            player: { select: { id: true, ign: true } },
+            fromTeam: { select: { name: true, tag: true } },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        for (const o of after) {
+          if (beforeIds.has(o.id)) continue;
+          await ctx.prisma.message.create({
+            data: {
+              saveId: ctx.save.id,
+              teamId: userTeam.id,
+              category: "MARKET",
+              fromName: o.fromTeam?.name ?? "Unknown",
+              fromRole: "GM",
+              subject: `${o.fromTeam?.tag ?? "???"} want ${o.player?.ign ?? "your player"}`,
+              body: `We've put an offer on the table. Fee $${o.transferFee.toLocaleString()}, salary $${o.proposedSalary.toLocaleString()}/wk for ${o.contractLengthWeeks} weeks.`,
+              eventType: "BUYOUT_RECEIVED",
+              eventData: { offerId: o.id },
+              requiresAction: true,
+              week: newWeek,
+              season: season.number,
+            },
+          });
+        }
+      }
+    }
 
     // ── Sponsor win bonuses for completed (AI) matches played today ──
     const winnersToday = new Set<string>();
