@@ -14,6 +14,13 @@ export const saveRouter = router({
     });
   }),
 
+  /** List all available VCT teams for save creation (grouped by region). */
+  availableTeams: protectedProcedure.query(async ({ ctx }) => {
+    return ctx.prisma.vctTeamTemplate.findMany({
+      orderBy: [{ region: "asc" }, { name: "asc" }],
+    });
+  }),
+
   /**
    * Create a new save for the current user. Requires playerTeamName/tag/region
    * so we know which preset team becomes the player's team and which are AI.
