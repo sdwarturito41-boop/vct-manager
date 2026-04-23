@@ -201,6 +201,67 @@ function percentile(arr: number[], value: number, invert = false): number {
   return (invert ? 1 - pct : pct) * 20;
 }
 
+// ── Synthetic stats for unmatched players ──────────────────
+
+/**
+ * For players whose extended stats weren't populated by the VLR scrape
+ * (lastScrapedAt = null OR vlrRounds = 0), derive kpr / apr / fkpr / fdpr /
+ * clPct / rating from the base stats we do have (ACS, KD, ADR, KAST). The
+ * goal is NOT to invent fake data — it's to place the player somewhere
+ * plausible in the distribution based on how strong their base stats are.
+ *
+ * All formulas are anchored on empirical VCT tier-1 averages:
+ *   - median ACS ≈ 215, kpr ≈ 0.75
+ *   - median KD ≈ 1.0, fkpr ≈ 0.12, fdpr ≈ 0.12
+ *   - median KAST ≈ 72, apr ≈ 0.32
+ */
+export function synthesizeMissingStats(p: PlayerRaw): PlayerRaw {
+  // Player was scraped — trust real data, return as-is
+  if (p.vlrRounds > 0) return p;
+
+  const acs = p.acs;
+  const kd = p.kd;
+  const kast = p.kast / 100; // 0-1
+
+  // kpr tracks ACS closely — 1 kill contributes ~100 ACS
+  const kpr = Math.max(0.45, Math.min(1.0, 0.5 + (acs - 150) / 250));
+  // apr tracks kast but also playstyle; duelists lower, supports higher
+  const apr = Math.max(0.15, Math.min(0.55, 0.25 + (kast - 0.7) * 0.6));
+  // fkpr correlates with KD and role aggression
+  const fkpr = Math.max(0.05, Math.min(0.22, 0.09 + (kd - 0.9) * 0.12));
+  // fdpr is inverse — good players die less often first
+  const fdpr = Math.max(0.05, Math.min(0.22, 0.14 - (kd - 0.9) * 0.08));
+  // clutch % tracks overall form
+  const rating = Math.max(0.75, Math.min(1.35, 0.85 + (kd - 0.9) * 0.8 + (kast - 0.7) * 0.5));
+  const clPct = Math.max(0.08, Math.min(0.42, 0.18 + (rating - 1.0) * 0.4));
+
+  // Assume ~300 rounds over a typical VCT window so rates have a denominator
+  const rounds = 300;
+  const kills = Math.round(kpr * rounds);
+  const deaths = Math.round(rounds * (1 - kast) * 0.9 + rounds * 0.15);
+  const vlrAssists = Math.round(apr * rounds);
+  const fk = Math.round(fkpr * rounds);
+  const fd = Math.round(fdpr * rounds);
+
+  return {
+    ...p,
+    rating: p.rating || rating,
+    kpr: p.kpr || kpr,
+    apr: p.apr || apr,
+    fkpr: p.fkpr || fkpr,
+    fdpr: p.fdpr || fdpr,
+    clPct: p.clPct || clPct,
+    clTotal: p.clTotal || Math.round(rounds * 0.08),
+    kills: p.kills || kills,
+    deaths: p.deaths || deaths,
+    vlrAssists: p.vlrAssists || vlrAssists,
+    fk: p.fk || fk,
+    fd: p.fd || fd,
+    vlrRounds: rounds,
+    agentStats: p.agentStats, // leave as-is (empty)
+  };
+}
+
 // ── Attribute computation ───────────────────────────────────
 
 export function computeAttributes(
@@ -216,7 +277,10 @@ export function computeAttributes(
 
   const agents = (p.agentStats as AgentStatsMap | null) ?? {};
   const agentCount = Object.keys(agents).length;
-  const agentAcsVariance = computeAgentVariance(agents, "acs");
+  // No per-agent data → no signal. Use neutral value so the downstream
+  // percentile lookup lands around 10 instead of 20 (empty variance = 0
+  // would otherwise read as "perfectly consistent across agents").
+  const agentAcsVariance = agentCount >= 2 ? computeAgentVariance(agents, "acs") : -1;
 
   const pAcs = percentile(cache.acs, p.acs);
   const pAdr = percentile(cache.adr, p.adr);
@@ -236,7 +300,9 @@ export function computeAttributes(
   const pFkFd = percentile(cache.fkFdRatio, fkFdRatio);
   const pTradeRate = percentile(cache.tradeRate, tradeRate);
   const pNbAgents = percentile(cache.nbAgents, agentCount);
-  const pAgentVar = percentile(cache.agentVariance, agentAcsVariance, true);
+  // Sentinel -1 means "no agent data" — use neutral 10 instead of a real
+  // percentile that would over-reward missing info.
+  const pAgentVar = agentAcsVariance < 0 ? 10 : percentile(cache.agentVariance, agentAcsVariance, true);
 
   // Role flexibility — proxy for "can play outside main lane". Higher when
   // player has many agents AND spreads stats evenly across them.
@@ -409,8 +475,9 @@ export async function recomputeAllOveralls(
           agentStats: p.agentStats,
           isIgl: p.isIgl,
         };
-        const role = p.playstyleRole ?? inferPlaystyleRole(raw);
-        const attrs = computeAttributes(raw, cache);
+        const synthesized = synthesizeMissingStats(raw);
+        const role = p.playstyleRole ?? inferPlaystyleRole(synthesized);
+        const attrs = computeAttributes(synthesized, cache);
         const overall = computeOverall(attrs, role);
         return prisma.player.update({
           where: { id: p.id },

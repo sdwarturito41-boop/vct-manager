@@ -7,6 +7,7 @@ import {
   computeAttributes,
   computeOverall,
   inferPlaystyleRole,
+  synthesizeMissingStats,
 } from "@/server/mercato/attributes";
 import type { PlayerRaw } from "@/server/mercato/attributeTypes";
 
@@ -365,8 +366,9 @@ export const playerRouter = router({
         agentStats: p.agentStats,
         isIgl: p.isIgl,
       };
-      const role = p.playstyleRole ?? inferPlaystyleRole(raw);
-      const attrs = computeAttributes(raw, cache);
+      const synthesized = synthesizeMissingStats(raw);
+      const role = p.playstyleRole ?? inferPlaystyleRole(synthesized);
+      const attrs = computeAttributes(synthesized, cache);
       const overall = computeOverall(attrs, role);
       return {
         attrs,
@@ -403,7 +405,8 @@ export const playerRouter = router({
         vlrAssists: p.vlrAssists, fk: p.fk, fd: p.fd, vlrRounds: p.vlrRounds,
         agentStats: p.agentStats, isIgl: p.isIgl,
       };
-      const attrs = computeAttributes(raw, cache);
+      const synthesized = synthesizeMissingStats(raw);
+      const attrs = computeAttributes(synthesized, cache);
       const overall = computeOverall(attrs, input.role);
       return ctx.prisma.player.update({
         where: { id: p.id },
