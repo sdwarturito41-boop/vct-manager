@@ -304,6 +304,9 @@ export function PlayerDetailModal({
         isLoading={relationsQuery.isLoading}
       />
 
+      {/* Attributes (V4) */}
+      <AttributesSection playerId={playerId} isOwnPlayer={isOwnPlayer} />
+
       {/* Action bar */}
       {isOwnPlayer ? (
         <div className="flex flex-col gap-3 px-8 py-5">
@@ -691,6 +694,265 @@ function RelationRowView({ r, active }: { r: RelationRow; active: boolean }) {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ───────────────────────── Attributes section (V4) ─────────────────────────
+
+type AttrKey =
+  | "aim" | "crosshair" | "entryTiming" | "peek" | "positioning"
+  | "utilUsage" | "tradeDiscipline" | "clutch" | "counterStrat" | "mapAdaptability"
+  | "aggression" | "decisionMaking" | "consistency" | "workRate" | "vision"
+  | "composure" | "pressureRes" | "adaptability" | "leadership" | "ambition"
+  | "reactionTime" | "mousePrecision" | "peakPerf" | "staminaBO5" | "movementSpeed"
+  | "mentalEndurance";
+
+type PlaystyleRoleValue =
+  | "Entry" | "Fragger" | "Carry"
+  | "AggressiveInit" | "IntelInit" | "FlexInit"
+  | "IglSmoke" | "AggressiveSmoke" | "AnchorSmoke"
+  | "Anchor" | "Lurker" | "SupportSent";
+
+const PLAYSTYLE_ROLES: { value: PlaystyleRoleValue; label: string }[] = [
+  { value: "Entry", label: "Entry" },
+  { value: "Fragger", label: "Fragger" },
+  { value: "Carry", label: "Carry" },
+  { value: "AggressiveInit", label: "Aggr Init" },
+  { value: "IntelInit", label: "Intel Init" },
+  { value: "FlexInit", label: "Flex Init" },
+  { value: "IglSmoke", label: "IGL Smoke" },
+  { value: "AggressiveSmoke", label: "Aggr Smoke" },
+  { value: "AnchorSmoke", label: "Anchor Smoke" },
+  { value: "Anchor", label: "Anchor" },
+  { value: "Lurker", label: "Lurker" },
+  { value: "SupportSent", label: "Support Sent" },
+];
+
+const ATTR_LABELS: Record<AttrKey, string> = {
+  aim: "Aim mechanics",
+  crosshair: "Crosshair placement",
+  entryTiming: "Entry timing",
+  peek: "Peek mechanics",
+  positioning: "Positioning",
+  utilUsage: "Util usage",
+  tradeDiscipline: "Trade discipline",
+  clutch: "Clutch execution",
+  counterStrat: "Counter-strat",
+  mapAdaptability: "Map adaptability",
+  aggression: "Aggression",
+  decisionMaking: "Decision making",
+  consistency: "Consistency",
+  workRate: "Work rate",
+  vision: "Vision",
+  composure: "Composure",
+  pressureRes: "Pressure res.",
+  adaptability: "Adaptability",
+  leadership: "Leadership",
+  ambition: "Ambition",
+  reactionTime: "Reaction time",
+  mousePrecision: "Mouse precision",
+  peakPerf: "Peak performance",
+  staminaBO5: "Stamina BO5",
+  movementSpeed: "Movement speed",
+  mentalEndurance: "Mental endurance",
+};
+
+const GROUP_TECH: AttrKey[] = [
+  "aim", "crosshair", "entryTiming", "peek", "positioning",
+  "utilUsage", "tradeDiscipline", "clutch", "counterStrat", "mapAdaptability",
+];
+const GROUP_MENTAL: AttrKey[] = [
+  "aggression", "decisionMaking", "consistency", "workRate", "vision",
+  "composure", "pressureRes", "adaptability", "leadership", "ambition",
+];
+const GROUP_PHYSICAL: AttrKey[] = [
+  "reactionTime", "mousePrecision", "peakPerf", "staminaBO5", "movementSpeed",
+  "mentalEndurance",
+];
+
+function attrColor(v: number): string {
+  if (v >= 16) return "#4ac96a"; // green
+  if (v >= 13) return "#d8c44a"; // yellow
+  if (v >= 8) return "#d89a4a"; // orange
+  if (v >= 5) return "#d84a4a"; // red
+  return "#555";                 // dark grey — terrible
+}
+
+function AttributesSection({
+  playerId,
+  isOwnPlayer,
+}: {
+  playerId: string;
+  isOwnPlayer: boolean;
+}) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const query = trpc.player.attributes.useQuery({ playerId }) as any;
+  const utils = trpc.useUtils();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const setRoleMutation = trpc.player.setPlaystyleRole.useMutation({
+    onSuccess: () => {
+      utils.player.attributes.invalidate({ playerId });
+      utils.player.detail.invalidate({ playerId });
+      utils.player.rosterAll.invalidate();
+    },
+  }) as any;
+
+  const data = query.data as
+    | {
+        attrs: Record<AttrKey, number>;
+        overall: number;
+        playstyleRole: PlaystyleRoleValue;
+        wasAutoAssigned: boolean;
+      }
+    | undefined;
+
+  if (query.isLoading) {
+    return (
+      <div
+        className="px-8 py-5"
+        style={{ borderBottom: `1px solid ${D.borderFaint}` }}
+      >
+        <span className="text-[10px]" style={{ color: D.textSubtle }}>
+          Loading attributes...
+        </span>
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const overallRounded = Math.round(data.overall);
+  const overallClr = attrColor(overallRounded);
+
+  return (
+    <div
+      className="px-8 py-5"
+      style={{ borderBottom: `1px solid ${D.borderFaint}` }}
+    >
+      <div className="flex items-center justify-between mb-4">
+        <span
+          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          style={{ color: D.textSubtle }}
+        >
+          Attributes
+        </span>
+        <div className="flex items-center gap-3">
+          {isOwnPlayer ? (
+            <select
+              value={data.playstyleRole}
+              onChange={(e) =>
+                setRoleMutation.mutate({
+                  playerId,
+                  role: e.target.value as PlaystyleRoleValue,
+                })
+              }
+              disabled={setRoleMutation.isPending}
+              className="rounded px-2 py-1 text-[11px] uppercase tracking-[0.15em] outline-none"
+              style={{
+                background: D.card,
+                color: D.textPrimary,
+                border: `1px solid ${D.border}`,
+              }}
+            >
+              {PLAYSTYLE_ROLES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span
+              className="text-[11px] uppercase tracking-[0.15em]"
+              style={{ color: D.textMuted }}
+            >
+              {PLAYSTYLE_ROLES.find((r) => r.value === data.playstyleRole)?.label ?? data.playstyleRole}
+            </span>
+          )}
+          {data.wasAutoAssigned && (
+            <span
+              className="text-[9px] uppercase tracking-[0.15em]"
+              style={{ color: D.textSubtle, fontStyle: "italic" }}
+            >
+              auto
+            </span>
+          )}
+          <div className="flex flex-col items-end">
+            <span
+              className="text-[24px] font-medium tabular-nums leading-none"
+              style={{ color: overallClr }}
+            >
+              {overallRounded}
+            </span>
+            <span
+              className="text-[9px] uppercase tracking-[0.2em]"
+              style={{ color: D.textSubtle }}
+            >
+              Overall
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <AttrGroup title="Technique" keys={GROUP_TECH} values={data.attrs} />
+      <AttrGroup title="Mental" keys={GROUP_MENTAL} values={data.attrs} />
+      <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={data.attrs} />
+    </div>
+  );
+}
+
+function AttrGroup({
+  title,
+  keys,
+  values,
+}: {
+  title: string;
+  keys: AttrKey[];
+  values: Record<AttrKey, number>;
+}) {
+  return (
+    <div className="mb-3">
+      <div
+        className="text-[9px] uppercase tracking-[0.25em] mb-1.5"
+        style={{ color: D.textMuted }}
+      >
+        {title}
+      </div>
+      <div className="grid gap-1" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        {keys.map((k) => (
+          <AttrRow key={k} label={ATTR_LABELS[k]} value={values[k] ?? 0} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AttrRow({ label, value }: { label: string; value: number }) {
+  const v = Math.round(value);
+  const pct = (v / 20) * 100;
+  const color = attrColor(v);
+  return (
+    <div
+      className="grid items-center gap-2"
+      style={{ gridTemplateColumns: "1fr 22px 60px" }}
+    >
+      <span className="text-[11px] truncate" style={{ color: D.textMuted }}>
+        {label}
+      </span>
+      <span
+        className="text-[11px] font-medium tabular-nums text-right"
+        style={{ color }}
+      >
+        {v}
+      </span>
+      <div
+        className="h-1 rounded-full overflow-hidden"
+        style={{ background: D.card }}
+      >
+        <div
+          className="h-full transition-all"
+          style={{ width: `${pct}%`, background: color }}
+        />
+      </div>
     </div>
   );
 }

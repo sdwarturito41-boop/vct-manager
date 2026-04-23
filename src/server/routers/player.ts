@@ -2,6 +2,13 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { marketRate } from "@/server/mercato/marketRate";
+import {
+  getPercentileCache,
+  computeAttributes,
+  computeOverall,
+  inferPlaystyleRole,
+} from "@/server/mercato/attributes";
+import type { PlayerRaw } from "@/server/mercato/attributeTypes";
 
 export const playerRouter = router({
   roster: protectedProcedure.query(async ({ ctx }) => {
@@ -323,6 +330,85 @@ export const playerRouter = router({
         ...player,
         marketRate: marketRate(player),
       };
+    }),
+
+  // ── Mercato V4 — FM-style attributes (on-demand) ──
+  attributes: saveProcedure
+    .input(z.object({ playerId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const p = await ctx.prisma.player.findUnique({
+        where: { id: input.playerId },
+      });
+      if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Player not found." });
+      const cache = await getPercentileCache(ctx.prisma);
+      const raw: PlayerRaw = {
+        id: p.id,
+        role: p.role,
+        rating: p.rating,
+        acs: p.acs,
+        kd: p.kd,
+        adr: p.adr,
+        kast: p.kast,
+        hs: p.hs,
+        kpr: p.kpr,
+        apr: p.apr,
+        fkpr: p.fkpr,
+        fdpr: p.fdpr,
+        clPct: p.clPct,
+        clTotal: p.clTotal,
+        kills: p.kills,
+        deaths: p.deaths,
+        vlrAssists: p.vlrAssists,
+        fk: p.fk,
+        fd: p.fd,
+        vlrRounds: p.vlrRounds,
+        agentStats: p.agentStats,
+        isIgl: p.isIgl,
+      };
+      const role = p.playstyleRole ?? inferPlaystyleRole(raw);
+      const attrs = computeAttributes(raw, cache);
+      const overall = computeOverall(attrs, role);
+      return {
+        attrs,
+        overall,
+        playstyleRole: role,
+        wasAutoAssigned: !p.playstyleRole,
+      };
+    }),
+
+  setPlaystyleRole: saveProcedure
+    .input(
+      z.object({
+        playerId: z.string(),
+        role: z.enum([
+          "Entry", "Fragger", "Carry",
+          "AggressiveInit", "IntelInit", "FlexInit",
+          "IglSmoke", "AggressiveSmoke", "AnchorSmoke",
+          "Anchor", "Lurker", "SupportSent",
+        ]),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+      if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+      const p = await ctx.prisma.player.findUnique({ where: { id: input.playerId } });
+      if (!p) throw new TRPCError({ code: "NOT_FOUND", message: "Player not found." });
+      if (p.teamId !== team.id) throw new TRPCError({ code: "FORBIDDEN", message: "Not your player." });
+
+      const cache = await getPercentileCache(ctx.prisma);
+      const raw: PlayerRaw = {
+        id: p.id, role: p.role, rating: p.rating, acs: p.acs, kd: p.kd, adr: p.adr,
+        kast: p.kast, hs: p.hs, kpr: p.kpr, apr: p.apr, fkpr: p.fkpr, fdpr: p.fdpr,
+        clPct: p.clPct, clTotal: p.clTotal, kills: p.kills, deaths: p.deaths,
+        vlrAssists: p.vlrAssists, fk: p.fk, fd: p.fd, vlrRounds: p.vlrRounds,
+        agentStats: p.agentStats, isIgl: p.isIgl,
+      };
+      const attrs = computeAttributes(raw, cache);
+      const overall = computeOverall(attrs, input.role);
+      return ctx.prisma.player.update({
+        where: { id: p.id },
+        data: { playstyleRole: input.role, overall },
+      });
     }),
 
   // ── Roster relation summary for UI dots (V3) ──

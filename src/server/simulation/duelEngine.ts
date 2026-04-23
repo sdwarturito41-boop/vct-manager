@@ -37,6 +37,8 @@ export interface SimPlayerInput {
   role: Role;
   mapFactors?: Record<string, number>;
   joinedWeek?: number;
+  /** V4 — 0-20 FM-style overall. Undefined treated as 10 (neutral). */
+  overall?: number;
 }
 
 export interface SimTeamInput {
@@ -353,7 +355,11 @@ function computeRating(p: SimPlayerInput, mapName: string, agentName: string, ag
   // Agent meta score (±5%)
   const metaBonus = clamp(AGENT_META[agentName] ?? 1.0, 0.95, 1.05);
 
-  return baseRating * mapFactor * masteryBonus * metaBonus;
+  // V4 — FM-style overall multiplier. Overall 0-20, multiplier 0.7-1.3.
+  const overall = p.overall ?? 10;
+  const overallMultiplier = 0.7 + (overall / 20) * 0.6;
+
+  return baseRating * mapFactor * masteryBonus * metaBonus * overallMultiplier;
 }
 
 function rollGameDay(): number {

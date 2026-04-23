@@ -42,6 +42,7 @@ model Save {
   trainingSessions TrainingSession[]
   playerAgentPools PlayerAgentPool[]
   playerRelations PlayerRelation[]
+  playerStatSnapshots PlayerStatSnapshot[]
 }
 
 model Team {
@@ -133,6 +134,27 @@ model Player {
   injuries          Injury[]
   relationsA        PlayerRelation[] @relation("RelPlayerA")
   relationsB        PlayerRelation[] @relation("RelPlayerB")
+  statSnapshots     PlayerStatSnapshot[]
+  // Mercato V4 — extended stats scraped from VLR + derived attributes
+  rating            Float      @default(1.0)
+  kpr               Float      @default(0.65)
+  apr               Float      @default(0.3)
+  fkpr              Float      @default(0.12)
+  fdpr              Float      @default(0.12)
+  clPct             Float      @default(0.15)   // clutch win %
+  clTotal           Int        @default(0)
+  kills             Int        @default(0)
+  deaths            Int        @default(0)
+  vlrAssists        Int        @default(0)      // "vlrAssists" to avoid clash with relation word
+  fk                Int        @default(0)
+  fd                Int        @default(0)
+  vlrRounds         Int        @default(0)
+  agentStats        Json       @default("{}")
+  playstyleRole     PlaystyleRole?
+  overall           Float      @default(10)     // 0-20 FM-scale
+  isIgl             Boolean    @default(false)
+  lastScrapedAt     DateTime?
+  scrapedRounds     Int        @default(0)
   createdAt     DateTime   @default(now())
 
   @@index([teamId])
@@ -522,4 +544,58 @@ model PlayerRelation {
   @@index([saveId, isCurrentlyTogether])
   @@index([playerAId, isCurrentlyTogether])
   @@index([playerBId, isCurrentlyTogether])
+}
+
+// ─────────────────────── Mercato V4 ──────────────────────────
+// FM-style player attributes derived from scraped VLR stats, role-weighted
+// overall feeding the match engine as a multiplier on computeRating.
+
+enum PlaystyleRole {
+  Entry
+  Fragger
+  Carry
+  AggressiveInit
+  IntelInit
+  FlexInit
+  IglSmoke
+  AggressiveSmoke
+  AnchorSmoke
+  Anchor
+  Lurker
+  SupportSent
+}
+
+// Global (not save-scoped) — tracks each VLR scrape run for idempotency and
+// observability. Only the most recent successful run matters to the UI.
+model VlrScrapeRun {
+  id             String    @id @default(cuid())
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  status         String    // "pending" | "success" | "failed"
+  playersUpdated Int       @default(0)
+  error          String?
+}
+
+// Save-scoped weekly snapshot of per-player stats. Enables real (non-proxy)
+// variance for Consistance / Composure / Ambition attributes once the save
+// has >12 weeks of history.
+model PlayerStatSnapshot {
+  id        String   @id @default(cuid())
+  saveId    String
+  save      Save     @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  season    Int
+  week      Int
+  rating    Float
+  acs       Float
+  kd        Float
+  kast      Float
+  adr       Float
+  clPct     Float
+  createdAt DateTime @default(now())
+
+  @@unique([playerId, season, week])
+  @@index([saveId, playerId])
+  @@index([saveId, season, week])
 }

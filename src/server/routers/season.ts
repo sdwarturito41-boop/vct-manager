@@ -28,6 +28,10 @@ import {
   applyMentorStatGrowth,
   loadActivePairMaps,
 } from "@/server/mercato/relationships";
+import {
+  recomputeAllOveralls,
+  snapshotPlayerStats,
+} from "@/server/mercato/attributes";
 
 function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
   // Only use top 5 players by ACS (active roster limit)
@@ -45,6 +49,7 @@ function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
       kast: p.kast,
       hs: p.hs,
       role: p.role,
+      overall: p.overall,
     })),
     skillAim: team.skillAim,
     skillUtility: team.skillUtility,
@@ -626,6 +631,12 @@ export const seasonRouter = router({
       // Mercato V3 — relationships tick + mentor stat growth
       await runRelationshipsTick(ctx.prisma, ctx.save.id, newWeek, season.number);
       await applyMentorStatGrowth(ctx.prisma, ctx.save.id);
+
+      // Mercato V4 — recompute FM-style overalls (consumes mentor-bumped stats)
+      await recomputeAllOveralls(ctx.prisma, ctx.save.id);
+
+      // V4.1 — weekly snapshot of player stats for historical variance
+      await snapshotPlayerStats(ctx.prisma, ctx.save.id, newWeek, season.number);
 
       const before = userTeam
         ? await ctx.prisma.transferOffer.findMany({

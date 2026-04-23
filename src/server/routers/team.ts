@@ -1,8 +1,16 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { VCT_TEAMS } from "@/constants/teams";
 import { initializeSeasonForTeam } from "@/server/schedule/generate";
+import {
+  getPercentileCache,
+  computeAttributes,
+  computeOverall,
+  inferPlaystyleRole,
+} from "@/server/mercato/attributes";
+import type { PlayerRaw } from "@/server/mercato/attributeTypes";
+import { ALL_ATTR_KEYS } from "@/constants/role-weights";
 
 export const teamRouter = router({
   get: protectedProcedure.query(async ({ ctx }) => {
@@ -183,4 +191,61 @@ export const teamRouter = router({
         data: { budget: newBudget },
       });
     }),
+
+  // ── Mercato V4.1 — aggregated team attributes for Team Overview ──
+  attributeOverview: saveProcedure.query(async ({ ctx }) => {
+    const team = await ctx.prisma.team.findUnique({
+      where: { userId: ctx.userId },
+      include: {
+        players: { where: { isActive: true, isRetired: false } },
+      },
+    });
+    if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+    if (team.players.length === 0) {
+      return {
+        teamOverall: 0,
+        bestAttribute: null,
+        worstAttribute: null,
+        byAttribute: [] as Array<{ key: string; avg: number }>,
+        byPlayer: [] as Array<{ id: string; ign: string; overall: number; playstyleRole: string | null }>,
+      };
+    }
+
+    const cache = await getPercentileCache(ctx.prisma);
+    const perPlayer = team.players.map((p) => {
+      const raw: PlayerRaw = {
+        id: p.id, role: p.role, rating: p.rating, acs: p.acs, kd: p.kd, adr: p.adr,
+        kast: p.kast, hs: p.hs, kpr: p.kpr, apr: p.apr, fkpr: p.fkpr, fdpr: p.fdpr,
+        clPct: p.clPct, clTotal: p.clTotal, kills: p.kills, deaths: p.deaths,
+        vlrAssists: p.vlrAssists, fk: p.fk, fd: p.fd, vlrRounds: p.vlrRounds,
+        agentStats: p.agentStats, isIgl: p.isIgl,
+      };
+      const role = p.playstyleRole ?? inferPlaystyleRole(raw);
+      const attrs = computeAttributes(raw, cache);
+      return { player: p, role, attrs, overall: computeOverall(attrs, role) };
+    });
+
+    // Team-average per attribute
+    const byAttribute = ALL_ATTR_KEYS.map((key) => {
+      const sum = perPlayer.reduce((s, pp) => s + pp.attrs[key], 0);
+      return { key, avg: sum / perPlayer.length };
+    });
+    byAttribute.sort((a, b) => b.avg - a.avg);
+
+    const teamOverall =
+      perPlayer.reduce((s, pp) => s + pp.overall, 0) / perPlayer.length;
+
+    return {
+      teamOverall,
+      bestAttribute: byAttribute[0] ?? null,
+      worstAttribute: byAttribute[byAttribute.length - 1] ?? null,
+      byAttribute,
+      byPlayer: perPlayer.map((pp) => ({
+        id: pp.player.id,
+        ign: pp.player.ign,
+        overall: pp.overall,
+        playstyleRole: pp.role,
+      })),
+    };
+  }),
 });

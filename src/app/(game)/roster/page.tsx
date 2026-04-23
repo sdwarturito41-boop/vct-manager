@@ -16,6 +16,7 @@ interface RosterPlayer extends PlayerInfo {
   happiness?: number;
   happinessTags?: unknown;
   isTransferListed?: boolean;
+  overall?: number;
 }
 
 function happinessColor(score: number): string {
@@ -155,6 +156,9 @@ export default function RosterPage() {
           last
         />
       </section>
+
+      {/* Team Attribute Overview (V4.1) */}
+      <TeamAttributeOverview />
 
       {/* Active table */}
       {activePlayers.length > 0 && (
@@ -411,6 +415,13 @@ function RosterRow({
               style={{ background: "#ff4655" }}
             />
           )}
+          {typeof player.overall === "number" && player.overall >= 17 && (
+            <span
+              title={`Elite overall (${Math.round(player.overall)}/20)`}
+              className="h-2 w-2 rounded-full"
+              style={{ background: "#c69b3a" }}
+            />
+          )}
           {player.isTransferListed && (
             <span
               className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
@@ -541,5 +552,174 @@ function RosterRow({
         </button>
       </div>
     </div>
+  );
+}
+
+// ───────────────────── Team Attribute Overview (V4.1) ─────────────────────
+
+const ATTR_DISPLAY_LABELS: Record<string, string> = {
+  aim: "Aim",
+  crosshair: "Crosshair",
+  entryTiming: "Entry timing",
+  peek: "Peek",
+  positioning: "Positioning",
+  utilUsage: "Util usage",
+  tradeDiscipline: "Trade disc.",
+  clutch: "Clutch",
+  counterStrat: "Counter-strat",
+  mapAdaptability: "Map adapt.",
+  aggression: "Aggression",
+  decisionMaking: "Decision",
+  consistency: "Consistency",
+  workRate: "Work rate",
+  vision: "Vision",
+  composure: "Composure",
+  pressureRes: "Pressure",
+  adaptability: "Adaptability",
+  leadership: "Leadership",
+  ambition: "Ambition",
+  reactionTime: "Reaction",
+  mousePrecision: "Mouse",
+  peakPerf: "Peak perf.",
+  staminaBO5: "Stamina",
+  movementSpeed: "Movement",
+  mentalEndurance: "Endurance",
+};
+
+function attrColorFor(v: number): string {
+  if (v >= 16) return "#4ac96a";
+  if (v >= 13) return "#d8c44a";
+  if (v >= 8) return "#d89a4a";
+  if (v >= 5) return "#d84a4a";
+  return "#555";
+}
+
+function TeamAttributeOverview() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const query = trpc.team.attributeOverview.useQuery(undefined, {
+    retry: false,
+  }) as any;
+  const data = query.data as
+    | {
+        teamOverall: number;
+        bestAttribute: { key: string; avg: number } | null;
+        worstAttribute: { key: string; avg: number } | null;
+        byAttribute: Array<{ key: string; avg: number }>;
+        byPlayer: Array<{ id: string; ign: string; overall: number; playstyleRole: string | null }>;
+      }
+    | undefined;
+
+  if (query.isLoading || !data || data.byPlayer.length === 0) return null;
+
+  const overallRounded = Math.round(data.teamOverall);
+
+  return (
+    <section
+      className="grid grid-cols-4"
+      style={{ borderBottom: `1px solid ${D.border}` }}
+    >
+      <div
+        className="flex flex-col gap-1 px-6 py-5"
+        style={{ borderRight: `1px solid ${D.borderFaint}` }}
+      >
+        <span
+          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          style={{ color: D.textSubtle }}
+        >
+          Team Overall
+        </span>
+        <span
+          className="text-[22px] font-medium tabular-nums"
+          style={{ color: attrColorFor(overallRounded) }}
+        >
+          {overallRounded}
+        </span>
+        <span className="text-[10px]" style={{ color: D.textSubtle }}>
+          out of 20
+        </span>
+      </div>
+      <div
+        className="flex flex-col gap-1 px-6 py-5"
+        style={{ borderRight: `1px solid ${D.borderFaint}` }}
+      >
+        <span
+          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          style={{ color: D.textSubtle }}
+        >
+          Strongest
+        </span>
+        {data.bestAttribute && (
+          <>
+            <span
+              className="text-[16px] font-medium"
+              style={{ color: attrColorFor(data.bestAttribute.avg) }}
+            >
+              {ATTR_DISPLAY_LABELS[data.bestAttribute.key] ?? data.bestAttribute.key}
+            </span>
+            <span
+              className="text-[10px] tabular-nums"
+              style={{ color: D.textSubtle }}
+            >
+              {data.bestAttribute.avg.toFixed(1)} avg
+            </span>
+          </>
+        )}
+      </div>
+      <div
+        className="flex flex-col gap-1 px-6 py-5"
+        style={{ borderRight: `1px solid ${D.borderFaint}` }}
+      >
+        <span
+          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          style={{ color: D.textSubtle }}
+        >
+          Weakest
+        </span>
+        {data.worstAttribute && (
+          <>
+            <span
+              className="text-[16px] font-medium"
+              style={{ color: attrColorFor(data.worstAttribute.avg) }}
+            >
+              {ATTR_DISPLAY_LABELS[data.worstAttribute.key] ?? data.worstAttribute.key}
+            </span>
+            <span
+              className="text-[10px] tabular-nums"
+              style={{ color: D.textSubtle }}
+            >
+              {data.worstAttribute.avg.toFixed(1)} avg
+            </span>
+          </>
+        )}
+      </div>
+      <div className="flex flex-col gap-1 px-6 py-5">
+        <span
+          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          style={{ color: D.textSubtle }}
+        >
+          Top performer
+        </span>
+        {(() => {
+          const top = [...data.byPlayer].sort((a, b) => b.overall - a.overall)[0];
+          if (!top) return null;
+          return (
+            <>
+              <span
+                className="text-[16px] font-medium"
+                style={{ color: attrColorFor(top.overall) }}
+              >
+                {top.ign} · {Math.round(top.overall)}
+              </span>
+              <span
+                className="text-[10px]"
+                style={{ color: D.textSubtle }}
+              >
+                {top.playstyleRole ?? "—"}
+              </span>
+            </>
+          );
+        })()}
+      </div>
+    </section>
   );
 }

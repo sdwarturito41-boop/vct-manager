@@ -24,6 +24,7 @@ function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
       kast: p.kast,
       hs: p.hs,
       role: p.role,
+      overall: p.overall,
     })),
     skillAim: team.skillAim,
     skillUtility: team.skillUtility,

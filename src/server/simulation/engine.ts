@@ -22,6 +22,8 @@ export interface SimPlayer {
   role: Role;
   mapFactors?: Record<string, number>; // map name → factor
   joinedWeek?: number; // for synergy calc
+  /** V4 — FM-style 0-20 overall. Undefined before the first recompute tick. */
+  overall?: number;
 }
 
 export interface SimTeam {
