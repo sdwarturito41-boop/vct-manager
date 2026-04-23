@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { trpc } from "@/lib/trpc-client";
 import type { PlayerInfo } from "@/lib/types";
 import { D, roleColor } from "@/constants/design";
 import { formatCurrency, formatStat } from "@/lib/format";
 import { countryToFlag } from "@/lib/country-flag";
-import { PlayerDetailModal } from "@/components/PlayerDetailModal";
 
 interface RosterPlayer extends PlayerInfo {
   leadershipRole?: string;
@@ -27,7 +26,7 @@ function happinessColor(score: number): string {
 }
 
 export default function RosterPage() {
-  const [detailPlayerId, setDetailPlayerId] = useState<string | null>(null);
+  const router = useRouter();
 
   const { data: team, isLoading: teamLoading } = trpc.team.get.useQuery(
     undefined,
@@ -171,7 +170,7 @@ export default function RosterPage() {
               player={p}
               isMvp={p.id === topAcsId}
               relationSummary={relationSummary[p.id]}
-              onOpenDetail={() => setDetailPlayerId(p.id)}
+              onOpenDetail={() => router.push(`/player/${p.id}`)}
               onBench={() =>
                 toggleMutation.mutate({ playerId: p.id, isActive: false })
               }
@@ -195,7 +194,7 @@ export default function RosterPage() {
               player={p}
               isMvp={false}
               relationSummary={relationSummary[p.id]}
-              onOpenDetail={() => setDetailPlayerId(p.id)}
+              onOpenDetail={() => router.push(`/player/${p.id}`)}
               onBench={() =>
                 toggleMutation.mutate({ playerId: p.id, isActive: true })
               }
@@ -220,13 +219,6 @@ export default function RosterPage() {
         </div>
       )}
 
-      {detailPlayerId && (
-        <PlayerDetailModal
-          playerId={detailPlayerId}
-          isOwnPlayer={true}
-          onClose={() => setDetailPlayerId(null)}
-        />
-      )}
     </div>
   );
 }
