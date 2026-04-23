@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMatch, simulateMap as simulateMapEngine } from "@/server/simulation/engine";
 import { applyMasteryUpdate, applyPassiveDecay } from "@/server/simulation/mastery";
+import { loadActivePairMaps } from "@/server/mercato/relationships";
 import type { SimTeam, AgentPick } from "@/server/simulation/engine";
 import { VALORANT_AGENTS } from "@/constants/agents";
 import type { Player, Team, Region } from "@/generated/prisma/client";
@@ -82,7 +83,21 @@ export const matchRouter = router({
       const simTeam2 = buildSimTeam(match.team2);
 
       await applyActivePatch(ctx.prisma, ctx.save.id);
-      const result = simulateMatch(simTeam1, simTeam2, match.format);
+      const pairs = await loadActivePairMaps(ctx.prisma, ctx.save.id, [
+        match.team1Id,
+        match.team2Id,
+      ]);
+      const result = simulateMatch(
+        simTeam1,
+        simTeam2,
+        match.format,
+        undefined,
+        undefined,
+        {
+          team1Pairs: pairs.get(match.team1Id),
+          team2Pairs: pairs.get(match.team2Id),
+        },
+      );
 
       // Update the match record
       const updatedMatch = await ctx.prisma.match.update({
@@ -176,7 +191,21 @@ export const matchRouter = router({
       const simTeam2 = buildSimTeam(match.team2);
 
       await applyActivePatch(ctx.prisma, ctx.save.id);
-      const result = simulateMatch(simTeam1, simTeam2, match.format, input.selectedMaps);
+      const pairs = await loadActivePairMaps(ctx.prisma, ctx.save.id, [
+        match.team1Id,
+        match.team2Id,
+      ]);
+      const result = simulateMatch(
+        simTeam1,
+        simTeam2,
+        match.format,
+        input.selectedMaps,
+        undefined,
+        {
+          team1Pairs: pairs.get(match.team1Id),
+          team2Pairs: pairs.get(match.team2Id),
+        },
+      );
 
       const updatedMatch = await ctx.prisma.match.update({
         where: { id: match.id },

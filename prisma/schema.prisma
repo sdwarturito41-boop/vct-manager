@@ -41,6 +41,7 @@ model Save {
   transferNews  TransferNews[]
   trainingSessions TrainingSession[]
   playerAgentPools PlayerAgentPool[]
+  playerRelations PlayerRelation[]
 }
 
 model Team {
@@ -130,6 +131,8 @@ model Player {
   incomingOffers    TransferOffer[]
   trainingSessions  TrainingSession[]
   injuries          Injury[]
+  relationsA        PlayerRelation[] @relation("RelPlayerA")
+  relationsB        PlayerRelation[] @relation("RelPlayerB")
   createdAt     DateTime   @default(now())
 
   @@index([teamId])
@@ -486,4 +489,37 @@ model TransferNews {
 
   @@index([saveId])
   @@index([saveId, createdAt])
+}
+
+// Typed relation between two players, emergent from gameplay. Persists
+// historically (isCurrentlyTogether=false when separated). weeksTogether
+// is Float to allow fractional decay (-0.5/week) when separated.
+// For MENTOR: playerA is the veteran, playerB is the protégé.
+enum RelationType {
+  DUO
+  MENTOR
+  CLASH
+}
+
+model PlayerRelation {
+  id                   String       @id @default(cuid())
+  saveId               String
+  save                 Save         @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  type                 RelationType
+  playerAId            String
+  playerA              Player       @relation("RelPlayerA", fields: [playerAId], references: [id], onDelete: Cascade)
+  playerBId            String
+  playerB              Player       @relation("RelPlayerB", fields: [playerBId], references: [id], onDelete: Cascade)
+  weeksTogether        Float        @default(0)
+  strength             Float        @default(0)
+  isCurrentlyTogether  Boolean      @default(true)
+  firstTogetherWeek    Int
+  firstTogetherSeason  Int
+  createdAt            DateTime     @default(now())
+
+  @@unique([playerAId, playerBId, type])
+  @@index([saveId])
+  @@index([saveId, isCurrentlyTogether])
+  @@index([playerAId, isCurrentlyTogether])
+  @@index([playerBId, isCurrentlyTogether])
 }

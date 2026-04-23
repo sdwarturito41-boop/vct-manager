@@ -105,6 +105,13 @@ interface TeamRuntime {
   awperId: string | null;
   /** True if team chose to save this round — slight stall in duels */
   inSaveMode: boolean;
+  /**
+   * Mercato V3 — typed pair strengths for intra-team relationships. Key =
+   * "playerALoId|playerBHiId|TYPE" (IDs sorted lexicographically, TYPE in
+   * DUO|CLASH). Strength 0-1 from the PlayerRelation row. MENTOR does not
+   * affect duels.
+   */
+  pairs?: Map<string, number>;
 }
 
 export interface RoundEventDetail {
@@ -195,6 +202,9 @@ export interface DuelMapOptions {
   team1AwperId?: string;
   /** Designated AWPer for team 2 (from tactics). Falls back to Duelist/Sentinel if unset. */
   team2AwperId?: string;
+  /** Per-team relation pair maps (V3). Key = "idLo|idHi|TYPE", value = strength. */
+  team1Pairs?: Map<string, number>;
+  team2Pairs?: Map<string, number>;
 }
 
 /** End-of-map hotness per player — can be passed to the next map as priorHotness */
@@ -891,6 +901,34 @@ interface DuelContext {
   abilityBonus: number;
 }
 
+/** Key-building helper shared with the backend relationships module. */
+function relationPairKey(a: string, b: string, type: "DUO" | "CLASH"): string {
+  return a < b ? `${a}|${b}|${type}` : `${b}|${a}|${type}`;
+}
+
+/**
+ * Sums the net DUO/CLASH edge contribution for a side in the current duel.
+ * +0.03 × strength per alive DUO teammate, −0.02 × strength per alive CLASH
+ * teammate. MENTOR is intentionally excluded (it's a stat-growth mechanic,
+ * not a duel bonus).
+ */
+function relationEdgeForSide(
+  playerId: string,
+  teamRuntime: TeamRuntime | undefined,
+  aliveMates: Set<string> | undefined,
+): number {
+  if (!teamRuntime?.pairs || !aliveMates) return 0;
+  let edge = 0;
+  for (const mateId of aliveMates) {
+    if (mateId === playerId) continue;
+    const duo = teamRuntime.pairs.get(relationPairKey(playerId, mateId, "DUO"));
+    if (duo) edge += 0.03 * duo;
+    const clash = teamRuntime.pairs.get(relationPairKey(playerId, mateId, "CLASH"));
+    if (clash) edge -= 0.02 * clash;
+  }
+  return edge;
+}
+
 function duelWinProb(
   attacker: PlayerState,
   defender: PlayerState,
@@ -899,6 +937,8 @@ function duelWinProb(
   ctx: DuelContext,
   attackerTeam?: TeamRuntime,
   defenderTeam?: TeamRuntime,
+  attackerAliveMates?: Set<string>,
+  defenderAliveMates?: Set<string>,
 ): number {
   // Mechanical edge (rating × hotness captures both form and personal streak via recalcHotness)
   const mechanicalEdge = (attacker.rating * attacker.hotness - defender.rating * defender.hotness) * 0.12;
@@ -938,7 +978,12 @@ function duelWinProb(
   // Per-duel random luck (±8% — represents aim duels, pixel peeks, crosshair placement, lag)
   const luck = (Math.random() - 0.5) * 0.16;
 
-  const raw = 0.5 + mechanicalEdge + tiltEdge + positionalEdge + infoEdge + agentInDuelEdge + agentInfoEdge + agentPhaseBonus + agentDefBonus + weaponEdge + armorEdge + abilityEdge + luck;
+  // Relation edge — attacker's DUO/CLASH with their alive teammates, net against defender's
+  const attRelation = relationEdgeForSide(attacker.input.id, attackerTeam, attackerAliveMates);
+  const defRelation = relationEdgeForSide(defender.input.id, defenderTeam, defenderAliveMates);
+  const relationEdge = attRelation - defRelation;
+
+  const raw = 0.5 + mechanicalEdge + tiltEdge + positionalEdge + infoEdge + agentInDuelEdge + agentInfoEdge + agentPhaseBonus + agentDefBonus + weaponEdge + armorEdge + abilityEdge + relationEdge + luck;
   // Tighter clamp — no duel is ever a guaranteed win
   return clamp(raw, 0.15, 0.85);
 }
@@ -1824,7 +1869,23 @@ function resolveDuel(
   // Recorded before the duel resolves — we pre-register both directions lightly.
   maybeRegisterPriorDamage(attackerTeam, defender, roundCtx);
 
-  const winProb = duelWinProb(attacker, defender, attEco, defEco, ctx, attackerTeam, defenderTeam);
+  // Resolve which alive set belongs to each team (teams don't straddle).
+  // Used by duelWinProb for the relation edge (DUO/CLASH with alive mates).
+  const attackerIsRoundAttacker = attackerTeam.players.some((p) => alive.attackers.has(p.input.id));
+  const attackerAliveMates = attackerIsRoundAttacker ? alive.attackers : alive.defenders;
+  const defenderAliveMates = attackerIsRoundAttacker ? alive.defenders : alive.attackers;
+
+  const winProb = duelWinProb(
+    attacker,
+    defender,
+    attEco,
+    defEco,
+    ctx,
+    attackerTeam,
+    defenderTeam,
+    attackerAliveMates,
+    defenderAliveMates,
+  );
 
   const attackerWins = Math.random() < winProb;
 
@@ -2157,6 +2218,8 @@ export function simulateMapDuel(
 ): MapResultOut {
   const team1 = buildTeamRuntime(team1Input, options.team1Agents, mapName, options.agentMastery, options.priorHotness, options.team1AwperId);
   const team2 = buildTeamRuntime(team2Input, options.team2Agents, mapName, options.agentMastery, options.priorHotness, options.team2AwperId);
+  team1.pairs = options.team1Pairs;
+  team2.pairs = options.team2Pairs;
 
   if (options.team1CoachBoost) team1.input.skillUtility += options.team1CoachBoost * 0.05;
   if (options.team2CoachBoost) team2.input.skillUtility += options.team2CoachBoost * 0.05;

@@ -324,4 +324,88 @@ export const playerRouter = router({
         marketRate: marketRate(player),
       };
     }),
+
+  // ── Roster relation summary for UI dots (V3) ──
+  rosterRelationSummary: saveProcedure.query(async ({ ctx }) => {
+    const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+    if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+
+    const players = await ctx.prisma.player.findMany({
+      where: { teamId: team.id, isActive: true },
+      select: { id: true },
+    });
+    const playerIds = players.map((p) => p.id);
+    if (playerIds.length === 0) return {} as Record<string, { maxDuoStrength: number; hasClash: boolean }>;
+
+    const relations = await ctx.prisma.playerRelation.findMany({
+      where: {
+        saveId: ctx.save.id,
+        isCurrentlyTogether: true,
+        playerAId: { in: playerIds },
+        playerBId: { in: playerIds },
+      },
+      select: { playerAId: true, playerBId: true, type: true, strength: true },
+    });
+
+    const summary: Record<string, { maxDuoStrength: number; hasClash: boolean }> = {};
+    for (const id of playerIds) summary[id] = { maxDuoStrength: 0, hasClash: false };
+
+    for (const r of relations) {
+      for (const id of [r.playerAId, r.playerBId]) {
+        if (!(id in summary)) continue;
+        if (r.type === "DUO") {
+          summary[id].maxDuoStrength = Math.max(summary[id].maxDuoStrength, r.strength);
+        } else if (r.type === "CLASH") {
+          summary[id].hasClash = true;
+        }
+      }
+    }
+    return summary;
+  }),
+
+  // ── Fetch player's relationships (V3) ──
+  relationships: saveProcedure
+    .input(z.object({ playerId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.prisma.playerRelation.findMany({
+        where: {
+          saveId: ctx.save.id,
+          OR: [{ playerAId: input.playerId }, { playerBId: input.playerId }],
+        },
+        include: {
+          playerA: {
+            select: { id: true, ign: true, role: true, imageUrl: true, teamId: true },
+          },
+          playerB: {
+            select: { id: true, ign: true, role: true, imageUrl: true, teamId: true },
+          },
+        },
+        orderBy: { weeksTogether: "desc" },
+      });
+
+      // Normalize each row so consumers always see "other" as the non-me side.
+      // For MENTOR, mentorRole describes the direction (me-as-mentor vs me-as-protégé).
+      const normalized = rows.map((r) => {
+        const isA = r.playerAId === input.playerId;
+        const other = isA ? r.playerB : r.playerA;
+        const mentorRole =
+          r.type === "MENTOR" ? (isA ? "MENTOR_TO_THEM" : "PROTEGE_OF_THEM") : null;
+        return {
+          id: r.id,
+          type: r.type,
+          otherPlayer: other,
+          weeksTogether: r.weeksTogether,
+          strength: r.strength,
+          isCurrentlyTogether: r.isCurrentlyTogether,
+          firstTogetherSeason: r.firstTogetherSeason,
+          firstTogetherWeek: r.firstTogetherWeek,
+          mentorRole,
+        };
+      });
+
+      return {
+        current: normalized.filter((r) => r.isCurrentlyTogether),
+        historical: normalized.filter((r) => !r.isCurrentlyTogether),
+      };
+    }),
 });

@@ -31,6 +31,15 @@ const TAG_LABEL: Record<string, string> = {
   TROPHY_WON: "Trophy Won",
   MAJOR_OFFER_REJECTED: "Major Offer Rejected",
   PLAYING_HOME_REGION: "Home Region",
+  DUO_BROKEN: "Duo Broken",
+  MENTOR_LOST: "Mentor Lost",
+  CLASH_ACTIVE: "Clash Active",
+};
+
+const RELATION_COLOR: Record<string, string> = {
+  DUO: D.green,
+  CLASH: D.red,
+  MENTOR: D.gold,
 };
 
 function stateFromScore(score: number): keyof typeof STATE_COLOR {
@@ -71,6 +80,35 @@ export function PlayerDetailModal({
   const listMutation = trpc.player.setTransferListed.useMutation({
     onSuccess: invalidate,
   }) as any;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const relationsQuery = trpc.player.relationships.useQuery({ playerId }) as any;
+  const relations = relationsQuery.data as
+    | {
+        current: Array<{
+          id: string;
+          type: "DUO" | "MENTOR" | "CLASH";
+          otherPlayer: { id: string; ign: string; role: string; imageUrl: string | null; teamId: string | null };
+          weeksTogether: number;
+          strength: number;
+          isCurrentlyTogether: boolean;
+          firstTogetherSeason: number;
+          firstTogetherWeek: number;
+          mentorRole: "MENTOR_TO_THEM" | "PROTEGE_OF_THEM" | null;
+        }>;
+        historical: Array<{
+          id: string;
+          type: "DUO" | "MENTOR" | "CLASH";
+          otherPlayer: { id: string; ign: string; role: string; imageUrl: string | null; teamId: string | null };
+          weeksTogether: number;
+          strength: number;
+          isCurrentlyTogether: boolean;
+          firstTogetherSeason: number;
+          firstTogetherWeek: number;
+          mentorRole: "MENTOR_TO_THEM" | "PROTEGE_OF_THEM" | null;
+        }>;
+      }
+    | undefined;
 
   const [showRaise, setShowRaise] = useState(false);
   const [raiseAmount, setRaiseAmount] = useState<number>(0);
@@ -259,6 +297,12 @@ export function PlayerDetailModal({
           last
         />
       </div>
+
+      {/* Relationships */}
+      <RelationshipsSection
+        relations={relations}
+        isLoading={relationsQuery.isLoading}
+      />
 
       {/* Action bar */}
       {isOwnPlayer ? (
@@ -488,5 +532,165 @@ function ActionButton({
     >
       {label}
     </button>
+  );
+}
+
+// ───────────────────────── Relationships section ─────────────────────────
+
+type RelationRow = {
+  id: string;
+  type: "DUO" | "MENTOR" | "CLASH";
+  otherPlayer: { id: string; ign: string; role: string; imageUrl: string | null; teamId: string | null };
+  weeksTogether: number;
+  strength: number;
+  isCurrentlyTogether: boolean;
+  firstTogetherSeason: number;
+  firstTogetherWeek: number;
+  mentorRole: "MENTOR_TO_THEM" | "PROTEGE_OF_THEM" | null;
+};
+
+function RelationshipsSection({
+  relations,
+  isLoading,
+}: {
+  relations?: { current: RelationRow[]; historical: RelationRow[] };
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return (
+      <div className="px-8 py-5" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+        <span className="text-[10px]" style={{ color: D.textSubtle }}>
+          Loading relationships...
+        </span>
+      </div>
+    );
+  }
+  if (!relations || (relations.current.length === 0 && relations.historical.length === 0)) {
+    return (
+      <div className="px-8 py-5" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+        <div
+          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          style={{ color: D.textSubtle }}
+        >
+          Relationships
+        </div>
+        <div className="mt-2 text-[11px]" style={{ color: D.textSubtle, fontStyle: "italic" }}>
+          No meaningful relationships yet. Keep playing.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-8 py-5" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+      <div
+        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        style={{ color: D.textSubtle }}
+      >
+        Relationships
+      </div>
+
+      {relations.current.length > 0 && (
+        <div className="mt-3 flex flex-col gap-2">
+          <span className="text-[9px] uppercase tracking-[0.2em]" style={{ color: D.textMuted }}>
+            Active
+          </span>
+          {relations.current.map((r) => (
+            <RelationRowView key={r.id} r={r} active />
+          ))}
+        </div>
+      )}
+
+      {relations.historical.length > 0 && (
+        <div className="mt-4 flex flex-col gap-2">
+          <span className="text-[9px] uppercase tracking-[0.2em]" style={{ color: D.textMuted }}>
+            Historical (decaying)
+          </span>
+          {relations.historical.slice(0, 5).map((r) => (
+            <RelationRowView key={r.id} r={r} active={false} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RelationRowView({ r, active }: { r: RelationRow; active: boolean }) {
+  const color = RELATION_COLOR[r.type] ?? D.textMuted;
+  const pct = Math.round(r.strength * 100);
+  const weeks = Math.round(r.weeksTogether);
+  const label =
+    r.type === "MENTOR"
+      ? r.mentorRole === "MENTOR_TO_THEM"
+        ? "Mentors"
+        : "Protégé of"
+      : r.type;
+
+  return (
+    <div
+      className="flex items-center gap-3 rounded px-3 py-2"
+      style={{
+        background: active ? "transparent" : "rgba(255,255,255,0.02)",
+        border: `1px solid ${D.borderFaint}`,
+        opacity: active ? 1 : 0.7,
+      }}
+    >
+      <span
+        className="h-2 w-2 rounded-full shrink-0"
+        style={{ background: active ? color : D.textSubtle }}
+      />
+      {r.otherPlayer.imageUrl ? (
+        <img
+          src={r.otherPlayer.imageUrl}
+          alt={r.otherPlayer.ign}
+          className="h-6 w-6 rounded-full object-cover"
+          style={{ border: `1px solid ${D.borderFaint}` }}
+        />
+      ) : (
+        <div
+          className="flex h-6 w-6 items-center justify-center rounded-full shrink-0"
+          style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+        >
+          <span className="text-[9px]" style={{ color: D.textMuted }}>
+            {r.otherPlayer.ign.charAt(0).toUpperCase()}
+          </span>
+        </div>
+      )}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-[12px]" style={{ color: D.textPrimary }}>
+            {r.otherPlayer.ign}
+          </span>
+          <span
+            className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.15em]"
+            style={{ background: "transparent", color, border: `1px solid ${color}40` }}
+          >
+            {label}
+          </span>
+          <span className="text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
+            {weeks}w
+          </span>
+        </div>
+      </div>
+      {r.type !== "MENTOR" && (
+        <div className="flex items-center gap-2 shrink-0">
+          <div
+            className="h-1.5 w-20 overflow-hidden rounded-full"
+            style={{ background: D.card }}
+          >
+            <div
+              className="h-full"
+              style={{ width: `${pct}%`, background: color }}
+            />
+          </div>
+          <span
+            className="text-[10px] tabular-nums w-8 text-right"
+            style={{ color: D.textSubtle }}
+          >
+            {pct}%
+          </span>
+        </div>
+      )}
+    </div>
   );
 }

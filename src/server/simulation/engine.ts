@@ -145,6 +145,9 @@ export interface SimMapOptions {
   agentMastery?: Record<string, number>; // "playerId:agentName" → stars (0-5)
   team1CoachBoost?: number; // 0-100 coach utilityBoost (boosts team1 skillUtility by boost/100 * 0.05)
   team2CoachBoost?: number; // 0-100 coach utilityBoost (boosts team2 skillUtility by boost/100 * 0.05)
+  /** Mercato V3 — pre-fetched pair maps (DUO/CLASH strengths) for each side. */
+  team1Pairs?: Map<string, number>;
+  team2Pairs?: Map<string, number>;
 }
 
 // ── Helpers ──
@@ -773,6 +776,8 @@ export function simulateMap(
     team1CoachBoost: options?.team1CoachBoost,
     team2CoachBoost: options?.team2CoachBoost,
     priorHotness: options?.priorHotness,
+    team1Pairs: options?.team1Pairs,
+    team2Pairs: options?.team2Pairs,
   });
 
   const highlights = generateHighlights(mapName, team1.name, team2.name, result.score1, result.score2, result.playerStats);
@@ -796,7 +801,12 @@ export function simulateMatch(
   format: MatchFormat,
   mapOverride?: string[],
   mapPool?: string[],
-  matchOptions?: { team1CoachBoost?: number; team2CoachBoost?: number },
+  matchOptions?: {
+    team1CoachBoost?: number;
+    team2CoachBoost?: number;
+    team1Pairs?: Map<string, number>;
+    team2Pairs?: Map<string, number>;
+  },
 ): MatchResult {
   const mapsNeeded = format === "BO1" ? 1 : format === "BO3" ? 2 : 3;
   const mapCount = format === "BO1" ? 1 : format === "BO3" ? 3 : 5;
@@ -815,6 +825,8 @@ export function simulateMatch(
     const result = simulateMap(team1, team2, mapName, {
       team1CoachBoost: matchOptions?.team1CoachBoost,
       team2CoachBoost: matchOptions?.team2CoachBoost,
+      team1Pairs: matchOptions?.team1Pairs,
+      team2Pairs: matchOptions?.team2Pairs,
       priorHotness, // carry confidence between maps
     });
     maps.push(result);

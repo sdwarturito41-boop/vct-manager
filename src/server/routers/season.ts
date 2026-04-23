@@ -23,6 +23,11 @@ import { invalidateSponsorOffersCache } from "./sponsor";
 import { invalidateCoachOffersCache } from "./coach";
 import { runAiTransferActivity, expireStaleOffers } from "@/server/mercato/iaOffers";
 import { recomputeHappinessAll, generateHappinessMessages } from "@/server/mercato/happiness";
+import {
+  runRelationshipsTick,
+  applyMentorStatGrowth,
+  loadActivePairMaps,
+} from "@/server/mercato/relationships";
 
 function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
   // Only use top 5 players by ACS (active roster limit)
@@ -133,6 +138,16 @@ export const seasonRouter = router({
       needsVeto: boolean;
     }> = [];
 
+    // V3 — pre-fetch all pair maps for the teams playing today in 1 query.
+    const todaysTeamIds = Array.from(
+      new Set(todaysMatches.flatMap((m) => [m.team1Id, m.team2Id])),
+    );
+    const pairMaps = await loadActivePairMaps(
+      ctx.prisma,
+      ctx.save.id,
+      todaysTeamIds,
+    );
+
     // Track which rounds completed (for bracket progression)
     const completedRounds = new Set<string>();
 
@@ -171,6 +186,8 @@ export const seasonRouter = router({
         {
           team1CoachBoost: match.team1.coach?.utilityBoost,
           team2CoachBoost: match.team2.coach?.utilityBoost,
+          team1Pairs: pairMaps.get(match.team1Id),
+          team2Pairs: pairMaps.get(match.team2Id),
         },
       );
 
@@ -605,6 +622,10 @@ export const seasonRouter = router({
           season.number,
         );
       }
+
+      // Mercato V3 — relationships tick + mentor stat growth
+      await runRelationshipsTick(ctx.prisma, ctx.save.id, newWeek, season.number);
+      await applyMentorStatGrowth(ctx.prisma, ctx.save.id);
 
       const before = userTeam
         ? await ctx.prisma.transferOffer.findMany({

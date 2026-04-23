@@ -34,6 +34,14 @@ export default function RosterPage() {
   );
   const { data: allPlayers, isLoading: playersLoading } =
     trpc.player.rosterAll.useQuery(undefined, { retry: false });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rosterRelations = trpc.player.rosterRelationSummary.useQuery(undefined, {
+    retry: false,
+  }) as any;
+  const relationSummary = (rosterRelations.data ?? {}) as Record<
+    string,
+    { maxDuoStrength: number; hasClash: boolean }
+  >;
 
   const utils = trpc.useUtils();
 
@@ -158,6 +166,7 @@ export default function RosterPage() {
               key={p.id}
               player={p}
               isMvp={p.id === topAcsId}
+              relationSummary={relationSummary[p.id]}
               onOpenDetail={() => setDetailPlayerId(p.id)}
               onBench={() =>
                 toggleMutation.mutate({ playerId: p.id, isActive: false })
@@ -181,6 +190,7 @@ export default function RosterPage() {
               key={p.id}
               player={p}
               isMvp={false}
+              relationSummary={relationSummary[p.id]}
               onOpenDetail={() => setDetailPlayerId(p.id)}
               onBench={() =>
                 toggleMutation.mutate({ playerId: p.id, isActive: true })
@@ -309,6 +319,7 @@ function RosterRow({
   player,
   isMvp,
   active,
+  relationSummary,
   onOpenDetail,
   onBench,
   onRelease,
@@ -318,6 +329,7 @@ function RosterRow({
   player: RosterPlayer;
   isMvp: boolean;
   active: boolean;
+  relationSummary?: { maxDuoStrength: number; hasClash: boolean };
   onOpenDetail: () => void;
   onBench: () => void;
   onRelease: () => void;
@@ -384,6 +396,21 @@ function RosterRow({
             className="h-2 w-2 rounded-full"
             style={{ background: hColor }}
           />
+          {/* Relation dots (V3) */}
+          {relationSummary?.maxDuoStrength && relationSummary.maxDuoStrength >= 0.8 && (
+            <span
+              title={`Strong DUO (${Math.round(relationSummary.maxDuoStrength * 100)}%)`}
+              className="h-2 w-2 rounded-full"
+              style={{ background: "#4caf7d" }}
+            />
+          )}
+          {relationSummary?.hasClash && (
+            <span
+              title="Active CLASH with a teammate"
+              className="h-2 w-2 rounded-full"
+              style={{ background: "#ff4655" }}
+            />
+          )}
           {player.isTransferListed && (
             <span
               className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"

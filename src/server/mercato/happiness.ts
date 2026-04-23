@@ -10,7 +10,10 @@ export type HappinessTag =
   | "RECENT_SIGNING"
   | "TROPHY_WON"
   | "MAJOR_OFFER_REJECTED"
-  | "PLAYING_HOME_REGION";
+  | "PLAYING_HOME_REGION"
+  | "DUO_BROKEN"
+  | "MENTOR_LOST"
+  | "CLASH_ACTIVE";
 
 export type HappinessState = "HAPPY" | "CONCERNED" | "UNHAPPY" | "WANTS_TRANSFER";
 
@@ -28,6 +31,7 @@ const REPEATING_TAG_DELTAS: Partial<Record<HappinessTag, number>> = {
   TEAM_LOSING_STREAK: -3,
   TEAM_WINNING_STREAK: +2,
   CONTRACT_EXPIRING: -1,
+  CLASH_ACTIVE: -1,
 };
 
 // One-shot tags that decay toward removal each week. Sign indicates the
@@ -37,7 +41,17 @@ const DECAY_TAGS: Record<string, { decay: number }> = {
   TROPHY_WON: { decay: 3 },
   MAJOR_OFFER_REJECTED: { decay: 4 },
   PLAYING_HOME_REGION: { decay: 1 },
+  DUO_BROKEN: { decay: 3 },
+  MENTOR_LOST: { decay: 2 },
 };
+
+// Negative one-shot tags — drift back UP toward baseline each week.
+// Positive one-shots drift DOWN. Used by the decay loop to pick sign.
+const NEGATIVE_ONESHOT_TAGS = new Set([
+  "MAJOR_OFFER_REJECTED",
+  "DUO_BROKEN",
+  "MENTOR_LOST",
+]);
 
 type PlayerWithTeam = Player & {
   team: { id: string; region: string; wins: number; losses: number } | null;
@@ -167,7 +181,7 @@ export async function recomputeHappinessAll(
     // here we just drift back toward baseline so old events fade).
     const nextOneShots: string[] = [];
     for (const t of keptOneShots) {
-      const sign = t === "MAJOR_OFFER_REJECTED" ? +1 : -1;
+      const sign = NEGATIVE_ONESHOT_TAGS.has(t) ? +1 : -1;
       delta += sign * (DECAY_TAGS[t]?.decay ?? 0);
       // Crude decay: one-shots persist 4 weeks then drop.
       // (Weekly tick means we need a counter. Simpler: keep until natural score drift resolves.)

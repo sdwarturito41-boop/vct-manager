@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
 import type { OfferStatus } from "@/generated/prisma/client";
 import { effectiveBuyoutClause, stateFromScore } from "@/server/mercato/happiness";
+import { handleTeamDeparture } from "@/server/mercato/relationships";
 
 const OFFER_DEADLINE_HOURS = 72;
 
@@ -332,6 +333,13 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
   );
 
   await ctx.prisma.$transaction(updates);
+
+  // V3 — notify former teammates about the departure. Only BUYOUT moves a
+  // player who had active relationships with previous teammates. FA signings
+  // come from a team-less state; extensions don't change teams.
+  if (offer.offerType === "BUYOUT") {
+    await handleTeamDeparture(ctx.prisma, offer.playerId);
+  }
 }
 
 /**
