@@ -76,24 +76,30 @@ function detectRepeatingTags(
 }
 
 /**
- * Loads the last N matches for a team and returns win/loss booleans in
- * reverse-chronological order. Used for streak detection.
+ * Loads recent match results for all teams in a save in a SINGLE query,
+ * then buckets them per team. Caller picks last N per team in memory.
  */
-async function lastMatchResults(
+async function recentMatchesByTeam(
   prisma: PrismaClient,
-  teamId: string,
+  saveId: string,
   n: number,
-): Promise<{ won: boolean }[]> {
+): Promise<Map<string, { won: boolean }[]>> {
   const matches = await prisma.match.findMany({
-    where: {
-      isPlayed: true,
-      OR: [{ team1Id: teamId }, { team2Id: teamId }],
-    },
+    where: { saveId, isPlayed: true },
     orderBy: { playedAt: "desc" },
-    take: n,
     select: { team1Id: true, team2Id: true, winnerId: true },
   });
-  return matches.map((m) => ({ won: m.winnerId === teamId }));
+  const byTeam = new Map<string, { won: boolean }[]>();
+  for (const m of matches) {
+    for (const tid of [m.team1Id, m.team2Id]) {
+      const list = byTeam.get(tid);
+      if (list && list.length >= n) continue;
+      const entry = { won: m.winnerId === tid };
+      if (list) list.push(entry);
+      else byTeam.set(tid, [entry]);
+    }
+  }
+  return byTeam;
 }
 
 /**
@@ -120,22 +126,29 @@ export async function recomputeHappinessAll(
     },
   });
 
-  // Cache team results so we don't refetch per-player
-  const teamResultsCache = new Map<string, { won: boolean }[]>();
+  // Single query: recent matches per team (replaces per-player findMany)
+  const teamResults = await recentMatchesByTeam(prisma, saveId, 3);
   const transitions: Array<{
     playerId: string;
     prev: HappinessState;
     next: HappinessState;
   }> = [];
 
+  // Collect updates, then flush in parallel batches.
+  const pendingUpdates: Array<{
+    id: string;
+    data: {
+      happiness: number;
+      happinessTags: string[];
+      wantsTransferSinceWeek: number | null;
+      wantsTransferSinceSeason: number | null;
+    };
+  }> = [];
+
   for (const p of players) {
     if (!p.team) continue;
 
-    let results = teamResultsCache.get(p.team.id);
-    if (!results) {
-      results = await lastMatchResults(prisma, p.team.id, 3);
-      teamResultsCache.set(p.team.id, results);
-    }
+    const results = teamResults.get(p.team.id) ?? [];
 
     const repeatingTags = detectRepeatingTags(p, results, currentWeek, currentSeason);
 
@@ -179,8 +192,8 @@ export async function recomputeHappinessAll(
       wantsSinceSeason = null;
     }
 
-    await prisma.player.update({
-      where: { id: p.id },
+    pendingUpdates.push({
+      id: p.id,
       data: {
         happiness: nextScore,
         happinessTags: nextTags,
@@ -192,6 +205,17 @@ export async function recomputeHappinessAll(
     if (prevState !== nextState) {
       transitions.push({ playerId: p.id, prev: prevState, next: nextState });
     }
+  }
+
+  // Flush updates in parallel chunks (Neon handles ~25 concurrent writes fine)
+  const CHUNK = 25;
+  for (let i = 0; i < pendingUpdates.length; i += CHUNK) {
+    const chunk = pendingUpdates.slice(i, i + CHUNK);
+    await Promise.all(
+      chunk.map((u) =>
+        prisma.player.update({ where: { id: u.id }, data: u.data }),
+      ),
+    );
   }
 
   return { transitions };

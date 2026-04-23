@@ -339,8 +339,10 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
  * pending offers. Safe to call every tick — it only processes PENDING offers.
  */
 export async function runAiOfferResolutions(ctx: ResolveCtx): Promise<number> {
+  // Scope to the active save. Without this filter we would churn through
+  // offers from other saves (multi-user prod deployment).
   const pending = await ctx.prisma.transferOffer.findMany({
-    where: { status: "PENDING" },
+    where: { status: "PENDING", saveId: ctx.save.id },
     select: { id: true },
   });
   let resolved = 0;

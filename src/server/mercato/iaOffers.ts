@@ -87,50 +87,30 @@ function generateTerms(
 }
 
 /**
- * Returns sum of pending upfront commitments (buyout fees + FA signing
- * bonuses × 4 weeks) for a team. Used by the soft budget cap.
+ * Builds a set of "team|player" keys for pairs currently on cooldown.
+ * A single query replaces per-pair findFirsts (was O(teams × players)).
  */
-async function pendingUpfrontCost(
+async function buildCooldownSet(
   prisma: PrismaClient,
-  teamId: string,
-): Promise<number> {
-  const offers = await prisma.transferOffer.findMany({
-    where: { fromTeamId: teamId, status: "PENDING" },
-    select: { offerType: true, transferFee: true, proposedSalary: true, signingBonus: true },
-  });
-  return offers.reduce((sum, o) => {
-    const upfront =
-      o.offerType === "BUYOUT"
-        ? o.transferFee + o.signingBonus
-        : o.proposedSalary * 4 + o.signingBonus;
-    return sum + upfront;
-  }, 0);
-}
-
-/**
- * Cooldown check — after REJECT/EXPIRED, the same (team, player) pair is
- * locked for 4 weeks. Prevents spam-re-offering.
- */
-async function isOnCooldown(
-  prisma: PrismaClient,
-  teamId: string,
-  playerId: string,
+  saveId: string,
   currentWeek: number,
   currentSeason: number,
-): Promise<boolean> {
-  const last = await prisma.transferOffer.findFirst({
+): Promise<Set<string>> {
+  const cutoffAbs = currentSeason * 52 + currentWeek - 4;
+  const recent = await prisma.transferOffer.findMany({
     where: {
-      fromTeamId: teamId,
-      playerId,
+      saveId,
       status: { in: ["REJECTED", "EXPIRED"] },
     },
-    orderBy: { createdAt: "desc" },
-    select: { week: true, season: true },
+    select: { fromTeamId: true, playerId: true, week: true, season: true },
   });
-  if (!last) return false;
-  const weeksSince =
-    (currentSeason - last.season) * 52 + (currentWeek - last.week);
-  return weeksSince < 4;
+  const set = new Set<string>();
+  for (const o of recent) {
+    if (o.season * 52 + o.week >= cutoffAbs) {
+      set.add(`${o.fromTeamId}|${o.playerId}`);
+    }
+  }
+  return set;
 }
 
 /**
@@ -166,20 +146,49 @@ export async function runAiTransferActivity(
     },
   });
 
+  // Pre-compute all cooldowns in a single query (was O(teams × players))
+  const cooldownSet = await buildCooldownSet(
+    prisma,
+    saveId,
+    currentWeek,
+    currentSeason,
+  );
+
+  // Pre-compute all pending upfronts per team in a single query
+  const pendingAgg = await prisma.transferOffer.findMany({
+    where: { saveId, status: "PENDING" },
+    select: {
+      fromTeamId: true,
+      offerType: true,
+      transferFee: true,
+      proposedSalary: true,
+      signingBonus: true,
+    },
+  });
+  const pendingUpfrontByTeam = new Map<string, number>();
+  for (const o of pendingAgg) {
+    const up =
+      o.offerType === "BUYOUT"
+        ? o.transferFee + o.signingBonus
+        : o.offerType === "FREE_AGENT_SIGNING"
+          ? o.proposedSalary * 4 + o.signingBonus
+          : o.signingBonus;
+    pendingUpfrontByTeam.set(
+      o.fromTeamId,
+      (pendingUpfrontByTeam.get(o.fromTeamId) ?? 0) + up,
+    );
+  }
+
   let offersCreated = 0;
 
   for (const team of aiTeams) {
     let offersThisWeek = 0;
-    let upfrontCommitted = await pendingUpfrontCost(prisma, team.id);
+    let upfrontCommitted = pendingUpfrontByTeam.get(team.id) ?? 0;
 
-    // Filter targets: exclude own players + cooldowned players
-    const eligibleTargets: Player[] = [];
-    for (const t of allTargets) {
-      if (t.teamId === team.id) continue;
-      const onCd = await isOnCooldown(prisma, team.id, t.id, currentWeek, currentSeason);
-      if (onCd) continue;
-      eligibleTargets.push(t);
-    }
+    // Filter targets: exclude own players + cooldowned players (in-memory lookups)
+    const eligibleTargets: Player[] = allTargets.filter(
+      (t) => t.teamId !== team.id && !cooldownSet.has(`${team.id}|${t.id}`),
+    );
 
     // Score + sort
     const scored = eligibleTargets
