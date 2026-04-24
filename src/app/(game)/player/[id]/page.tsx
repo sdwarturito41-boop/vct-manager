@@ -213,11 +213,11 @@ export default function PlayerPage() {
         </div>
       </section>
 
-      {/* ═══ Identity header (photo + name + core facts) ═══ */}
+      {/* ═══ Identity header (photo + name + core facts + mini radar) ═══ */}
       <section
         className="grid gap-6 px-10 py-6"
         style={{
-          gridTemplateColumns: "120px 1fr 280px",
+          gridTemplateColumns: "120px 1fr 260px 240px",
           borderBottom: `1px solid ${D.border}`,
         }}
       >
@@ -320,31 +320,23 @@ export default function PlayerPage() {
             </span>
           )}
         </div>
+
+        {/* Mini radar (FM-style top-right of header) */}
+        <RadarPanelMini attrs={attrs?.attrs} />
       </section>
 
-      {/* ═══ Profile summary (radar + role fit) ═══ */}
+      {/* ═══ Attributes (FM-style: roles left | tech/mental/phys center | manager sidebar right) ═══ */}
       <section
         className="grid gap-6 px-10 py-6"
         style={{
-          gridTemplateColumns: "1fr 1fr",
+          gridTemplateColumns: "220px 1fr 1fr 1fr 280px",
           borderBottom: `1px solid ${D.border}`,
         }}
       >
-        <RadarPanel attrs={attrs?.attrs} />
         <RoleFitPanel
           roleScores={attrs?.roleScores}
           currentRole={attrs?.playstyleRole as PlaystyleRoleValue | undefined}
         />
-      </section>
-
-      {/* ═══ Attributes + sidebar ═══ */}
-      <section
-        className="grid gap-6 px-10 py-6"
-        style={{
-          gridTemplateColumns: "1fr 1fr 1fr 320px",
-          borderBottom: `1px solid ${D.border}`,
-        }}
-      >
         <AttrGroup title="Technique" keys={GROUP_TECH} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
         <AttrGroup title="Mental" keys={GROUP_MENTAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
         <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
@@ -841,7 +833,7 @@ const RADAR_AXES: Array<{ label: string; keys: AttrKey[] }> = [
   { label: "Physique", keys: ["peakPerf", "staminaBO5", "movementSpeed", "mentalEndurance"] },
 ];
 
-function RadarPanel({ attrs }: { attrs?: Record<AttrKey, number> }) {
+function RadarPanelMini({ attrs }: { attrs?: Record<AttrKey, number> }) {
   // Average each axis. Missing attrs → 10 (neutral) so the shape stays convex.
   const values = RADAR_AXES.map((ax) => {
     if (!attrs) return 10;
@@ -849,10 +841,10 @@ function RadarPanel({ attrs }: { attrs?: Record<AttrKey, number> }) {
     return vals.reduce((s, v) => s + v, 0) / vals.length;
   });
 
-  const size = 280;
+  const size = 210;
   const cx = size / 2;
   const cy = size / 2;
-  const rMax = size / 2 - 44;
+  const rMax = size / 2 - 32;
   const axes = RADAR_AXES.length;
 
   // Polygon points (value) + reference rings at 5/10/15/20.
@@ -869,77 +861,71 @@ function RadarPanel({ attrs }: { attrs?: Record<AttrKey, number> }) {
 
   return (
     <div
-      className="rounded p-5"
-      style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+      className="flex flex-col items-center justify-center rounded"
+      style={{ background: D.card, border: `1px solid ${D.borderFaint}`, padding: 10 }}
     >
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>
-          Player Profile
-        </span>
-        <span className="text-[9px] uppercase tracking-[0.2em]" style={{ color: D.textFaint }}>
-          /20
-        </span>
-      </div>
-      <div className="flex items-center justify-center">
-        <svg width={size} height={size} style={{ overflow: "visible" }}>
-          {/* Reference rings */}
-          {ringVals.map((rv) => (
-            <polygon
-              key={rv}
-              points={Array.from({ length: axes }, (_, i) => pointFor(i, rv).join(",")).join(" ")}
-              fill="none"
-              stroke={rv === 20 ? D.borderStrong : D.borderFaint}
-              strokeWidth={rv === 20 ? 1 : 0.5}
-            />
-          ))}
-          {/* Axis spokes + labels */}
-          {RADAR_AXES.map((ax, i) => {
-            const [px, py] = pointFor(i, 20);
-            const angle = (Math.PI * 2 * i) / axes - Math.PI / 2;
-            const [lx, ly] = [cx + Math.cos(angle) * (rMax + 22), cy + Math.sin(angle) * (rMax + 22)];
-            return (
-              <g key={ax.label}>
-                <line x1={cx} y1={cy} x2={px} y2={py} stroke={D.borderFaint} strokeWidth={0.5} />
-                <text
-                  x={lx}
-                  y={ly}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={10}
-                  fontWeight={500}
-                  style={{ fill: D.textMuted, letterSpacing: "0.05em", textTransform: "uppercase" }}
-                >
-                  {ax.label}
-                </text>
-                <text
-                  x={lx}
-                  y={ly + 11}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={10}
-                  fontWeight={700}
-                  style={{ fill: D.textPrimary, fontVariantNumeric: "tabular-nums" }}
-                >
-                  {values[i].toFixed(1)}
-                </text>
-              </g>
-            );
-          })}
-          {/* Player polygon */}
+      <svg width={size} height={size} style={{ overflow: "visible" }}>
+        {/* Reference rings */}
+        {ringVals.map((rv) => (
           <polygon
-            points={polygonPts}
-            fill={`${D.red}33`}
-            stroke={D.red}
-            strokeWidth={1.5}
-            strokeLinejoin="round"
+            key={rv}
+            points={Array.from({ length: axes }, (_, i) => pointFor(i, rv).join(",")).join(" ")}
+            fill="none"
+            stroke={rv === 20 ? D.borderStrong : D.borderFaint}
+            strokeWidth={rv === 20 ? 1 : 0.5}
           />
-          {/* Vertex dots */}
-          {values.map((v, i) => {
-            const [px, py] = pointFor(i, v);
-            return <circle key={i} cx={px} cy={py} r={3} fill={D.red} />;
-          })}
-        </svg>
-      </div>
+        ))}
+        {/* Axis spokes + labels */}
+        {RADAR_AXES.map((ax, i) => {
+          const [px, py] = pointFor(i, 20);
+          const angle = (Math.PI * 2 * i) / axes - Math.PI / 2;
+          const labelR = rMax + 14;
+          const [lx, ly] = [cx + Math.cos(angle) * labelR, cy + Math.sin(angle) * labelR];
+          return (
+            <g key={ax.label}>
+              <line x1={cx} y1={cy} x2={px} y2={py} stroke={D.borderFaint} strokeWidth={0.5} />
+              <text
+                x={lx}
+                y={ly}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize={8.5}
+                fontWeight={500}
+                style={{ fill: D.textMuted, letterSpacing: "0.05em", textTransform: "uppercase" }}
+              >
+                {ax.label}
+              </text>
+            </g>
+          );
+        })}
+        {/* Player polygon */}
+        <polygon
+          points={polygonPts}
+          fill={`${D.red}33`}
+          stroke={D.red}
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+        />
+        {/* Vertex dots + values */}
+        {values.map((v, i) => {
+          const [px, py] = pointFor(i, v);
+          return (
+            <g key={i}>
+              <circle cx={px} cy={py} r={3} fill={D.red} />
+              <text
+                x={px}
+                y={py - 7}
+                textAnchor="middle"
+                fontSize={9}
+                fontWeight={700}
+                style={{ fill: D.textPrimary, fontVariantNumeric: "tabular-nums" }}
+              >
+                {v.toFixed(0)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
@@ -975,35 +961,25 @@ function RoleFitPanel({
   const top3Ids = new Set(entries.slice(0, 3).map(([r]) => r));
 
   return (
-    <div
-      className="rounded p-5"
-      style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>
-          Role Fit
-        </span>
-        <span className="text-[9px] uppercase tracking-[0.2em]" style={{ color: D.textFaint }}>
-          {entries.length} rated
-        </span>
+    <div>
+      <div className="text-[10px] font-medium uppercase tracking-[0.3em] mb-3" style={{ color: D.textSubtle }}>
+        Role & Duty
       </div>
       {entries.length === 0 ? (
         <div className="text-[11px] italic" style={{ color: D.textSubtle }}>
           No role scores available.
         </div>
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col">
           {entries.map(([role, { score, stars }]) => {
-            const pct = (score / 20) * 100;
             const isTop = top3Ids.has(role);
             const isCurrent = role === currentRole;
-            const barColor = isTop ? D.gold : D.textMuted;
             return (
               <div
                 key={role}
-                className="grid items-center gap-2 py-1"
+                className="grid items-center gap-1 py-[5px]"
                 style={{
-                  gridTemplateColumns: "110px 1fr 50px 42px",
+                  gridTemplateColumns: "1fr auto 28px",
                   borderBottom: `1px solid ${D.borderFaint}`,
                 }}
               >
@@ -1017,17 +993,17 @@ function RoleFitPanel({
                   {isCurrent && <span style={{ color: D.red, marginRight: 4 }}>▸</span>}
                   {ROLE_LABEL[role] ?? role}
                 </span>
-                <div className="h-1.5 rounded-full overflow-hidden" style={{ background: D.surface }}>
-                  <div className="h-full" style={{ width: `${pct}%`, background: barColor }} />
-                </div>
+                <span
+                  className="text-[10px] tracking-tighter"
+                  style={{ color: isTop ? D.gold : D.textFaint }}
+                >
+                  {renderStars(stars)}
+                </span>
                 <span
                   className="text-[11px] tabular-nums text-right"
                   style={{ color: isTop ? D.gold : D.textMuted, fontWeight: isTop ? 600 : 400 }}
                 >
                   {score.toFixed(1)}
-                </span>
-                <span className="text-[11px] text-right" style={{ color: isTop ? D.gold : D.textFaint }}>
-                  {renderStars(stars)}
                 </span>
               </div>
             );
