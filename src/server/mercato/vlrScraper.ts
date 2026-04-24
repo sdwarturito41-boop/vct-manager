@@ -4,15 +4,18 @@ import type { AgentStatsEntry, AgentStatsMap } from "./attributeTypes";
 
 // ── Config ─────────────────────────────────────────────────
 
-// Tune via env for broader/narrower scope. Defaults aim for maximum coverage:
-//   - No event_group filter → all VCT + GC + regional events count
-//   - timespan=all → career stats, so players who haven't played recently still appear
-// Narrow these if you want "only current form" (e.g. EVENT_GROUP=86 + TIMESPAN=60d).
-const EVENT_GROUP_ID = process.env.VLR_EVENT_GROUP_ID ?? "all";
-const TIMESPAN = process.env.VLR_TIMESPAN ?? "all";
-const MIN_ROUNDS = 1;
+// Default to VCT 2026 + 60d (the user's canonical window). Env overrides
+// let us target specific events without touching code.
+const EVENT_GROUP_ID = process.env.VLR_EVENT_GROUP_ID ?? "86";
+const TIMESPAN = process.env.VLR_TIMESPAN ?? "60d";
 const MIN_RATING = 0;
 const REQUEST_DELAY_MS = 800; // respectful pacing (~1.25 req/s)
+
+// Two-pass scrape: wide net (min_rounds=1) captures amateurs with short
+// samples; tight net (min_rounds=500) surfaces tier-1 pros who otherwise
+// sit below the 840 cap because tier-2 stompers inflate the top of the
+// list with unusually high ratings against weaker opposition.
+const MIN_ROUNDS_PASSES = [1, 500];
 
 const AGENTS: string[] = [
   "jett", "raze", "neon", "phoenix", "yoru", "reyna", "iso",
@@ -51,19 +54,20 @@ const AGENT_CANONICAL: Record<string, string> = {
   vyse: "Vyse",
 };
 
-export function buildVlrUrl(agent: string, region = "all", page = 1): string {
+export function buildVlrUrl(agent: string, region = "all", page = 1, minRounds = 1): string {
   const eg = EVENT_GROUP_ID === "all" ? "" : `event_group_id=${EVENT_GROUP_ID}&`;
   const pg = page > 1 ? `&page=${page}` : "";
-  return `https://www.vlr.gg/stats/?${eg}region=${region}&min_rounds=${MIN_ROUNDS}&min_rating=${MIN_RATING}&agent=${agent}&map_id=all&timespan=${TIMESPAN}${pg}`;
+  return `https://www.vlr.gg/stats/?${eg}region=${region}&min_rounds=${minRounds}&min_rating=${MIN_RATING}&agent=${agent}&map_id=all&timespan=${TIMESPAN}${pg}`;
 }
 
-function buildUrl(agent: string, region = "all", page = 1): string {
-  return buildVlrUrl(agent, region, page);
+function buildUrl(agent: string, region = "all", page = 1, minRounds = 1): string {
+  return buildVlrUrl(agent, region, page, minRounds);
 }
 
-// Scraping all 4 regions separately dodges VLR's per-query row cap, which
-// otherwise saturates with tier-2 high-rating stompers and buries tier-1 pros.
-const VLR_REGIONS = ["emea", "na", "ap", "cn"];
+// Valid VLR region codes (confirmed working with event_group_id=86 filter).
+// Each region is much smaller than "all" so we bypass the 840-row cap and
+// actually get tier-1 pros instead of just tier-2 stompers.
+const VLR_REGIONS = ["eu", "cn", "na", "br", "jp", "kr", "ap", "las"];
 
 /**
  * Scrapes the stats page across all 4 regions for the given agent and merges
@@ -73,19 +77,22 @@ const VLR_REGIONS = ["emea", "na", "ap", "cn"];
 async function fetchAllRegions(agent: string): Promise<ScrapedPlayer[]> {
   const byIgn = new Map<string, ScrapedPlayer>();
   for (const region of VLR_REGIONS) {
-    try {
-      const html = await fetchHtml(buildUrl(agent, region));
-      const rows = parseVlrStatsHtml(html);
-      for (const r of rows) {
-        const key = normalizeIgn(r.ign);
-        // Keep the sample with more rounds (more reliable stats)
-        const prev = byIgn.get(key);
-        if (!prev || r.rounds > prev.rounds) byIgn.set(key, r);
+    for (const minRounds of MIN_ROUNDS_PASSES) {
+      try {
+        const html = await fetchHtml(buildUrl(agent, region, 1, minRounds));
+        const rows = parseVlrStatsHtml(html);
+        for (const r of rows) {
+          const key = normalizeIgn(r.ign);
+          const prev = byIgn.get(key);
+          if (!prev || r.rounds > prev.rounds) byIgn.set(key, r);
+        }
+      } catch (err) {
+        console.warn(
+          `[vlr] region=${region} min_rounds=${minRounds} failed for agent=${agent}: ${String(err).slice(0, 100)}`,
+        );
       }
-    } catch (err) {
-      console.warn(`[vlr] region ${region} failed for agent=${agent}: ${String(err).slice(0, 120)}`);
+      await sleep(REQUEST_DELAY_MS);
     }
-    await sleep(REQUEST_DELAY_MS);
   }
   return Array.from(byIgn.values());
 }
@@ -226,11 +233,12 @@ export function parseVlrStatsHtml(html: string): ScrapedPlayer[] {
     const hs_pct = parsePct(get(12), 0);
     const cl_pct = parsePct(get(13), 0);
     const clutch = parseClutchPair(get(14));
-    const kills = parseNum(get(15), 0);
-    const deaths = parseNum(get(16), 0);
-    const assists = parseNum(get(17), 0);
-    const fk = parseNum(get(18), 0);
-    const fd = parseNum(get(19), 0);
+    // cells[15] is KMax (single-map best), NOT kills. Real K/D/A/FK/FD start at 16.
+    const kills = parseNum(get(16), 0);
+    const deaths = parseNum(get(17), 0);
+    const assists = parseNum(get(18), 0);
+    const fk = parseNum(get(19), 0);
+    const fd = parseNum(get(20), 0);
 
     rows.push({
       ign: ignText,
@@ -403,22 +411,27 @@ export async function runVlrScrape(
   });
 
   try {
-    // Pass 1 — global stats, scraped per-region to bypass the 835-row cap
+    // Pass 1 — global stats, scraped per-region (8 fetches) to bypass the
+    // 840-row cap. Union gives comprehensive coverage of tier-1 pros.
     const globalRows = await fetchAllRegions("all");
-    console.log(`[vlr] global total: ${globalRows.length} unique pros across 4 regions`);
+    console.log(`[vlr] global total: ${globalRows.length} unique pros across ${VLR_REGIONS.length} regions`);
 
-    // Pass 2 — per agent × per region (26 × 4 = 104 fetches)
+    // Pass 2 — per agent, single region=all fetch (26 fetches). The per-agent
+    // page is naturally smaller (filtered to one agent) so the 840 cap is
+    // rarely hit. Skip per-region iteration here to keep scrape time bounded.
     const byAgent = new Map<string, Map<string, ScrapedPlayer>>();
     let agentsOk = 0;
     for (const agent of AGENTS) {
+      await sleep(REQUEST_DELAY_MS);
       try {
-        const rows = await fetchAllRegions(agent);
+        const html = await fetchHtml(buildUrl(agent, "all"));
+        const rows = parseVlrStatsHtml(html);
         const bucket = new Map<string, ScrapedPlayer>();
         for (const r of rows) bucket.set(normalizeIgn(r.ign), r);
         byAgent.set(agent, bucket);
         agentsOk++;
       } catch (err) {
-        console.warn(`VLR scrape skipped agent=${agent}: ${String(err)}`);
+        console.warn(`VLR scrape skipped agent=${agent}: ${String(err).slice(0, 120)}`);
       }
     }
 

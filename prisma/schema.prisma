@@ -155,6 +155,11 @@ model Player {
   isIgl             Boolean    @default(false)
   lastScrapedAt     DateTime?
   scrapedRounds     Int        @default(0)
+  // Sheet-sourced (source of truth). attributes = 26 FM attrs (aim, crosshair, ...).
+  // roleScores = 12 playstyle role scores + stars. label = Elite/Very Good/... tier.
+  attributes        Json       @default("{}")
+  roleScores        Json       @default("{}")
+  label             String?
   createdAt     DateTime   @default(now())
 
   @@index([teamId])

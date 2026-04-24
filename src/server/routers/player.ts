@@ -368,13 +368,27 @@ export const playerRouter = router({
       };
       const synthesized = synthesizeMissingStats(raw);
       const role = p.playstyleRole ?? inferPlaystyleRole(synthesized);
-      const attrs = computeAttributes(synthesized, cache);
-      const overall = computeOverall(attrs, role);
+      const computed = computeAttributes(synthesized, cache);
+      // Sheet-sourced attrs (imported from the manager's spreadsheet) override
+      // the computed percentile-based ones when present — the sheet is the
+      // source of truth for the 26 FM attributes.
+      const stored = (p.attributes ?? {}) as Record<string, number>;
+      const attrs = Object.keys(stored).length > 0
+        ? { ...computed, ...stored }
+        : computed;
+      const overall = p.overall && p.overall > 1 ? p.overall : computeOverall(attrs, role);
       return {
         attrs,
         overall,
         playstyleRole: role,
         wasAutoAssigned: !p.playstyleRole,
+        agentStats: (p.agentStats ?? {}) as Record<string, {
+          rounds: number; rating: number; acs: number; kd: number; adr: number;
+          kast: number; kpr: number; apr: number; fkpr: number; fdpr: number;
+          hs: number; mastery: number;
+        }>,
+        roleScores: (p.roleScores ?? {}) as Record<string, { score: number; stars: number }>,
+        label: p.label ?? null,
       };
     }),
 

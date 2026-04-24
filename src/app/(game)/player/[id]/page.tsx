@@ -6,6 +6,7 @@ import { trpc } from "@/lib/trpc-client";
 import { D, roleColor } from "@/constants/design";
 import { formatCurrency, formatStat } from "@/lib/format";
 import { countryToFlag } from "@/lib/country-flag";
+import { ROLE_WEIGHTS } from "@/constants/role-weights";
 
 type AttrKey =
   | "aim" | "crosshair" | "entryTiming" | "peek" | "positioning"
@@ -329,9 +330,9 @@ export default function PlayerPage() {
           borderBottom: `1px solid ${D.border}`,
         }}
       >
-        <AttrGroup title="Technique" keys={GROUP_TECH} values={attrs?.attrs} />
-        <AttrGroup title="Mental" keys={GROUP_MENTAL} values={attrs?.attrs} />
-        <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={attrs?.attrs} />
+        <AttrGroup title="Technique" keys={GROUP_TECH} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+        <AttrGroup title="Mental" keys={GROUP_MENTAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+        <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
 
         {/* Right sidebar: role + overall + happiness */}
         <div className="flex flex-col gap-4">
@@ -448,6 +449,9 @@ export default function PlayerPage() {
           </div>
         </div>
       </section>
+
+      {/* ═══ Agents Mastered ═══ */}
+      <AgentsSection agentStats={attrs?.agentStats} />
 
       {/* ═══ Relationships ═══ */}
       <section
@@ -620,11 +624,14 @@ function AttrGroup({
   title,
   keys,
   values,
+  role,
 }: {
   title: string;
   keys: AttrKey[];
   values?: Record<AttrKey, number>;
+  role?: PlaystyleRoleValue;
 }) {
+  const weights = role ? ROLE_WEIGHTS[role] : undefined;
   return (
     <div>
       <div className="text-[10px] font-medium uppercase tracking-[0.3em] mb-3" style={{ color: D.textSubtle }}>
@@ -632,36 +639,175 @@ function AttrGroup({
       </div>
       <div className="flex flex-col gap-1.5">
         {keys.map((k) => (
-          <AttrRow key={k} label={ATTR_LABELS[k]} value={values?.[k] ?? 0} />
+          <AttrRow
+            key={k}
+            label={ATTR_LABELS[k]}
+            value={values?.[k] ?? 0}
+            weight={weights?.[k as keyof typeof weights] ?? 1}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function AttrRow({ label, value }: { label: string; value: number }) {
+// weight >= 1.5 → KEY (green tint, full intensity). weight ~1 → NORMAL.
+// weight < 1 → SECONDARY (muted, lower opacity). Used to guide the eye toward
+// the attributes that actually matter for the selected role.
+function emphasisFor(weight: number): "key" | "normal" | "muted" {
+  if (weight >= 1.5) return "key";
+  if (weight < 1) return "muted";
+  return "normal";
+}
+
+function AttrRow({ label, value, weight }: { label: string; value: number; weight: number }) {
   const v = Math.round(value);
   const pct = (v / 20) * 100;
-  const color = attrColor(v);
+  const baseColor = attrColor(v);
+  const emph = emphasisFor(weight);
+  const isKey = emph === "key";
+  const isMuted = emph === "muted";
   return (
     <div
       className="grid items-center gap-2 py-1"
       style={{
-        gridTemplateColumns: "1fr 28px 90px",
+        gridTemplateColumns: "10px 1fr 28px 90px",
         borderBottom: `1px solid ${D.borderFaint}`,
+        opacity: isMuted ? 0.55 : 1,
       }}
     >
-      <span className="text-[11px] truncate" style={{ color: D.textMuted }}>
+      <span
+        aria-hidden
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{ background: isKey ? D.green : "transparent" }}
+      />
+      <span
+        className="text-[11px] truncate"
+        style={{
+          color: isKey ? D.textPrimary : D.textMuted,
+          fontWeight: isKey ? 600 : 400,
+        }}
+      >
         {label}
       </span>
       <span
         className="text-[13px] font-medium tabular-nums text-right"
-        style={{ color }}
+        style={{ color: baseColor }}
       >
         {v}
       </span>
       <div className="h-1.5 rounded-full overflow-hidden" style={{ background: D.card }}>
-        <div className="h-full" style={{ width: `${pct}%`, background: color }} />
+        <div
+          className="h-full"
+          style={{
+            width: `${pct}%`,
+            background: isKey ? D.green : baseColor,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ═══ Agents Mastered ═══
+
+type AgentStat = {
+  rounds: number; rating: number; acs: number; kd: number; adr: number;
+  kast: number; kpr: number; apr: number; fkpr: number; fdpr: number;
+  hs: number; mastery: number;
+};
+
+// Role grouping for coloring — matches in-game classes.
+const AGENT_ROLE: Record<string, "duelist" | "initiator" | "controller" | "sentinel"> = {
+  jett: "duelist", phoenix: "duelist", raze: "duelist", yoru: "duelist",
+  neon: "duelist", reyna: "duelist", iso: "duelist", waylay: "duelist",
+  sova: "initiator", skye: "initiator", fade: "initiator", breach: "initiator",
+  kayo: "initiator", gekko: "initiator", tejo: "initiator",
+  brimstone: "controller", omen: "controller", viper: "controller",
+  astra: "controller", harbor: "controller", clove: "controller",
+  killjoy: "sentinel", sage: "sentinel", cypher: "sentinel",
+  chamber: "sentinel", deadlock: "sentinel", vyse: "sentinel",
+};
+
+const ROLE_TINT: Record<string, string> = {
+  duelist: "#ff4655",
+  initiator: "#e7c56a",
+  controller: "#7aa5e0",
+  sentinel: "#4cb07d",
+};
+
+function AgentsSection({ agentStats }: { agentStats?: Record<string, AgentStat> }) {
+  const entries = Object.entries(agentStats ?? {})
+    .filter(([, s]) => s && typeof s.mastery === "number")
+    .sort((a, b) => b[1].mastery - a[1].mastery);
+
+  if (entries.length === 0) return null;
+
+  return (
+    <section
+      className="px-10 py-6"
+      style={{ borderBottom: `1px solid ${D.border}` }}
+    >
+      <div className="text-[10px] font-medium uppercase tracking-[0.3em] mb-4" style={{ color: D.textSubtle }}>
+        Agents Mastered · {entries.length}
+      </div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+        {entries.map(([agent, s]) => (
+          <AgentCard key={agent} agent={agent} stats={s} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AgentCard({ agent, stats }: { agent: string; stats: AgentStat }) {
+  const role = AGENT_ROLE[agent] ?? "duelist";
+  const tint = ROLE_TINT[role];
+  const masteryPct = Math.max(0, Math.min(1, stats.mastery)) * 100;
+  return (
+    <div
+      className="rounded p-3"
+      style={{ background: D.card, border: `1px solid ${D.borderFaint}`, borderLeft: `3px solid ${tint}` }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[13px] font-semibold capitalize" style={{ color: D.textPrimary }}>
+          {agent}
+        </span>
+        <span
+          className="text-[9px] uppercase tracking-[0.2em] rounded px-1.5 py-0.5"
+          style={{ background: `${tint}22`, color: tint }}
+        >
+          {role}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 mb-2">
+        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: D.surface }}>
+          <div className="h-full" style={{ width: `${masteryPct}%`, background: tint }} />
+        </div>
+        <span className="text-[11px] tabular-nums font-medium" style={{ color: tint }}>
+          {Math.round(masteryPct)}%
+        </span>
+      </div>
+      <div
+        className="grid gap-y-0.5 text-[10px]"
+        style={{ gridTemplateColumns: "auto 1fr", color: D.textSubtle }}
+      >
+        <span>Rounds</span>
+        <span className="text-right tabular-nums" style={{ color: D.textMuted }}>
+          {stats.rounds}
+        </span>
+        <span>Rating</span>
+        <span className="text-right tabular-nums" style={{ color: D.textMuted }}>
+          {stats.rating.toFixed(2)}
+        </span>
+        <span>ACS</span>
+        <span className="text-right tabular-nums" style={{ color: D.textMuted }}>
+          {Math.round(stats.acs)}
+        </span>
+        <span>K:D</span>
+        <span className="text-right tabular-nums" style={{ color: D.textMuted }}>
+          {stats.kd.toFixed(2)}
+        </span>
       </div>
     </div>
   );
