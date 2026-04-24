@@ -1971,6 +1971,29 @@ export async function initializeSaveWorld(
         contractEndSeason: p.contractEndSeason,
         contractEndWeek: p.contractEndWeek,
         buyoutClause: p.buyoutClause,
+        // V4 mercato extended stats (from sheet / VLR import). Without these,
+        // save clones have default 1.0 ratings and broken overall / playstyle.
+        rating: p.rating,
+        kpr: p.kpr,
+        apr: p.apr,
+        fkpr: p.fkpr,
+        fdpr: p.fdpr,
+        clPct: p.clPct,
+        clTotal: p.clTotal,
+        kills: p.kills,
+        deaths: p.deaths,
+        vlrAssists: p.vlrAssists,
+        fk: p.fk,
+        fd: p.fd,
+        vlrRounds: p.vlrRounds,
+        agentStats: p.agentStats as object,
+        playstyleRole: p.playstyleRole,
+        overall: p.overall,
+        isIgl: p.isIgl,
+        // Sheet-sourced (source of truth for 26 FM attrs + 12 role scores + label).
+        attributes: p.attributes as object,
+        roleScores: p.roleScores as object,
+        label: p.label,
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
