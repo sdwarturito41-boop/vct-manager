@@ -325,18 +325,14 @@ export default function PlayerPage() {
         <RadarPanelMini attrs={attrs?.attrs} />
       </section>
 
-      {/* ═══ Attributes (FM-style: roles left | tech/mental/phys center | manager sidebar right) ═══ */}
+      {/* ═══ Attributes (FM-style: tech/mental/phys center | manager sidebar right) ═══ */}
       <section
         className="grid gap-6 px-10 py-6"
         style={{
-          gridTemplateColumns: "220px 1fr 1fr 1fr 280px",
+          gridTemplateColumns: "1fr 1fr 1fr 280px",
           borderBottom: `1px solid ${D.border}`,
         }}
       >
-        <RoleFitPanel
-          roleScores={attrs?.roleScores}
-          currentRole={attrs?.playstyleRole as PlaystyleRoleValue | undefined}
-        />
         <AttrGroup title="Technique" keys={GROUP_TECH} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
         <AttrGroup title="Mental" keys={GROUP_MENTAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
         <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
@@ -387,6 +383,12 @@ export default function PlayerPage() {
               </div>
             )}
           </div>
+
+          {/* Role ratings (stars only, all 12 playstyles) */}
+          <RoleStarsPanel
+            roleScores={attrs?.roleScores}
+            currentRole={attrs?.playstyleRole as PlaystyleRoleValue | undefined}
+          />
 
           {/* Mood / happiness */}
           {isOwnPlayer && (
@@ -947,7 +949,42 @@ const ROLE_LABEL: Record<string, string> = {
   SupportSent: "Support Sent",
 };
 
-function RoleFitPanel({
+// ═══ Stars (SVG, supports half-star via clipPath) ═══
+
+function StarRow({ count, size = 11, color }: { count: number; size?: number; color: string }) {
+  const capped = Math.max(0, Math.min(5, count));
+  // Star path in a 10x10 viewBox, centered at (5, 5).
+  const PATH =
+    "M5 0.5 L6.18 3.72 L9.55 3.91 L6.91 6.06 L7.81 9.35 L5 7.5 L2.19 9.35 L3.09 6.06 L0.45 3.91 L3.82 3.72 Z";
+  return (
+    <span className="inline-flex items-center gap-[1px]" aria-label={`${capped.toFixed(1)} stars`}>
+      {[0, 1, 2, 3, 4].map((i) => {
+        const fill = capped - i; // 1 = full, 0.5 = half, 0 = empty
+        const clipId = `star-clip-${i}-${Math.random().toString(36).slice(2, 8)}`;
+        return (
+          <svg key={i} width={size} height={size} viewBox="0 0 10 10">
+            {/* Empty outline */}
+            <path d={PATH} fill="none" stroke={color} strokeWidth={0.8} opacity={0.45} />
+            {fill > 0 && (
+              <>
+                <defs>
+                  <clipPath id={clipId}>
+                    <rect x={0} y={0} width={Math.min(1, fill) * 10} height={10} />
+                  </clipPath>
+                </defs>
+                <path d={PATH} fill={color} clipPath={`url(#${clipId})`} />
+              </>
+            )}
+          </svg>
+        );
+      })}
+    </span>
+  );
+}
+
+// ═══ Role Stars panel (sidebar, stars only, no score) ═══
+
+function RoleStarsPanel({
   roleScores,
   currentRole,
 }: {
@@ -955,71 +992,52 @@ function RoleFitPanel({
   currentRole?: PlaystyleRoleValue;
 }) {
   const entries = Object.entries(roleScores ?? {})
-    .filter(([, v]) => v && typeof v.score === "number")
-    .sort((a, b) => b[1].score - a[1].score);
+    .filter(([, v]) => v && typeof v.stars === "number")
+    .sort((a, b) => b[1].stars - a[1].stars);
+
+  if (entries.length === 0) return null;
 
   const top3Ids = new Set(entries.slice(0, 3).map(([r]) => r));
 
   return (
-    <div>
-      <div className="text-[10px] font-medium uppercase tracking-[0.3em] mb-3" style={{ color: D.textSubtle }}>
-        Role & Duty
+    <div
+      className="rounded p-4"
+      style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+    >
+      <div className="text-[9px] uppercase tracking-[0.25em] mb-3" style={{ color: D.textSubtle }}>
+        Role Ratings
       </div>
-      {entries.length === 0 ? (
-        <div className="text-[11px] italic" style={{ color: D.textSubtle }}>
-          No role scores available.
-        </div>
-      ) : (
-        <div className="flex flex-col">
-          {entries.map(([role, { score, stars }]) => {
-            const isTop = top3Ids.has(role);
-            const isCurrent = role === currentRole;
-            return (
-              <div
-                key={role}
-                className="grid items-center gap-1 py-[5px]"
+      <div className="flex flex-col">
+        {entries.map(([role, { stars }]) => {
+          const isTop = top3Ids.has(role);
+          const isCurrent = role === currentRole;
+          const color = isCurrent ? D.red : isTop ? D.gold : D.textMuted;
+          return (
+            <div
+              key={role}
+              className="grid items-center gap-2 py-[3px]"
+              style={{
+                gridTemplateColumns: "1fr auto",
+                borderBottom: `1px solid ${D.borderFaint}`,
+              }}
+            >
+              <span
+                className="text-[11px] truncate"
                 style={{
-                  gridTemplateColumns: "1fr auto 28px",
-                  borderBottom: `1px solid ${D.borderFaint}`,
+                  color: isCurrent ? D.red : isTop ? D.textPrimary : D.textMuted,
+                  fontWeight: isCurrent || isTop ? 600 : 400,
                 }}
               >
-                <span
-                  className="text-[11px] truncate"
-                  style={{
-                    color: isCurrent ? D.red : isTop ? D.textPrimary : D.textMuted,
-                    fontWeight: isCurrent || isTop ? 600 : 400,
-                  }}
-                >
-                  {isCurrent && <span style={{ color: D.red, marginRight: 4 }}>▸</span>}
-                  {ROLE_LABEL[role] ?? role}
-                </span>
-                <span
-                  className="text-[10px] tracking-tighter"
-                  style={{ color: isTop ? D.gold : D.textFaint }}
-                >
-                  {renderStars(stars)}
-                </span>
-                <span
-                  className="text-[11px] tabular-nums text-right"
-                  style={{ color: isTop ? D.gold : D.textMuted, fontWeight: isTop ? 600 : 400 }}
-                >
-                  {score.toFixed(1)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                {isCurrent && <span style={{ color: D.red, marginRight: 4 }}>▸</span>}
+                {ROLE_LABEL[role] ?? role}
+              </span>
+              <StarRow count={stars} size={10} color={color} />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
-}
-
-function renderStars(n: number): string {
-  // e.g. 3.5 → "★★★½". Cap at 5.
-  const capped = Math.max(0, Math.min(5, n));
-  const full = Math.floor(capped);
-  const half = capped - full >= 0.5;
-  return "★".repeat(full) + (half ? "½" : "");
 }
 
 function ActionButton({
