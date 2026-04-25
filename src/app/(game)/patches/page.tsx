@@ -22,20 +22,20 @@ export default function PatchesPage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div
-              className="text-[11px] font-medium uppercase tracking-[0.3em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Agent Balance
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[34px] font-medium leading-none "
               style={{ color: D.textPrimary }}
             >
               Patches
             </h1>
             {current ? (
               <div
-                className="mt-2 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.2em]"
+                className="mt-2 flex items-center gap-3 text-[11px] font-medium "
                 style={{ color: D.textMuted }}
               >
                 <span style={{ color: D.red }}>
@@ -46,7 +46,7 @@ export default function PatchesPage() {
               </div>
             ) : (
               <div
-                className="mt-2 text-[11px] font-medium uppercase tracking-[0.2em]"
+                className="mt-2 text-[11px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 No patch active
@@ -57,7 +57,7 @@ export default function PatchesPage() {
           <div className="flex items-center gap-6">
             <div className="flex flex-col items-end">
               <span
-                className="text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Buffed
@@ -71,7 +71,7 @@ export default function PatchesPage() {
             </div>
             <div className="flex flex-col items-end">
               <span
-                className="text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Nerfed
@@ -122,13 +122,13 @@ export default function PatchesPage() {
           style={{ borderBottom: `1px solid ${D.borderFaint}` }}
         >
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.3em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle }}
           >
             Patch History
           </span>
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+            className="text-[10px] font-medium tabular-nums"
             style={{ color: D.textMuted }}
           >
             {all.length} patches
@@ -175,7 +175,7 @@ function AgentColumn({
         style={{ borderBottom: `1px solid ${D.borderFaint}` }}
       >
         <span
-          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="text-[10px] font-medium "
           style={{ color }}
         >
           {title}
@@ -223,7 +223,7 @@ function AgentColumn({
                     {name}
                   </div>
                   <div
-                    className="text-[10px] uppercase tracking-[0.2em]"
+                    className="text-[10px] "
                     style={{ color: D.textSubtle }}
                   >
                     {a?.role ?? "—"}
@@ -269,20 +269,20 @@ function PatchRow({
       >
         <div className="flex items-center gap-6">
           <span
-            className="text-[22px] font-medium uppercase tracking-[0.05em]"
+            className="text-[22px] font-medium "
             style={{ color: D.textPrimary }}
           >
             S{patch.season}
           </span>
           <div className="flex flex-col">
             <span
-              className="text-[11px] font-medium uppercase tracking-[0.2em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textPrimary }}
             >
               {patch.stage.replace(/_/g, " ")}
             </span>
             <span
-              className="text-[10px] uppercase tracking-[0.2em]"
+              className="text-[10px] "
               style={{ color: D.textSubtle }}
             >
               {new Date(patch.createdAt).toLocaleDateString()}
@@ -316,7 +316,7 @@ function PatchRow({
             </span>
           </div>
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.2em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle }}
           >
             {open ? "Hide" : "View"}
@@ -368,7 +368,7 @@ function InlineAgentList({
       style={showBorder ? { borderRight: `1px solid ${D.borderFaint}` } : undefined}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color }}
       >
         {label}

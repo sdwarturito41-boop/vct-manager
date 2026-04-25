@@ -99,19 +99,19 @@ export default function SponsorsPage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div
-              className="text-[11px] font-medium uppercase tracking-[0.3em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Brand Partnerships
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[34px] font-medium leading-none "
               style={{ color: D.textPrimary }}
             >
               Sponsors
             </h1>
             <div
-              className="mt-2 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.2em]"
+              className="mt-2 flex items-center gap-3 text-[11px] font-medium "
               style={{ color: D.textMuted }}
             >
               <span style={{ color: activeCount > 0 ? D.red : D.textMuted }}>
@@ -161,13 +161,13 @@ export default function SponsorsPage() {
           style={{ borderBottom: `1px solid ${D.borderFaint}` }}
         >
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.35em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle }}
           >
             Active Sponsors
           </span>
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+            className="text-[10px] font-medium tabular-nums"
             style={{ color: D.textMuted }}
           >
             {activeCount}
@@ -200,7 +200,7 @@ export default function SponsorsPage() {
                 }
               >
                 <span
-                  className="inline-flex w-fit items-center rounded px-2 py-1 text-[10px] font-medium uppercase tracking-[0.2em]"
+                  className="inline-flex w-fit items-center rounded px-2 py-1 text-[10px] font-medium "
                   style={{
                     background: t.bg,
                     color: t.color,
@@ -217,7 +217,7 @@ export default function SponsorsPage() {
                     {s.name}
                   </div>
                   <div
-                    className="text-[10px] font-medium uppercase tracking-[0.2em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     Ends S{s.contractEndSeason} · W{s.contractEndWeek}
@@ -225,7 +225,7 @@ export default function SponsorsPage() {
                 </div>
                 <div className="flex flex-col">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     Weekly
@@ -239,7 +239,7 @@ export default function SponsorsPage() {
                 </div>
                 <div className="flex flex-col">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     Win Bonus
@@ -253,7 +253,7 @@ export default function SponsorsPage() {
                 </div>
                 <div className="flex flex-col">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     Champ Pts
@@ -268,7 +268,7 @@ export default function SponsorsPage() {
                 <button
                   onClick={() => dropMut.mutate({ sponsorId: s.id })}
                   disabled={dropMut.isPending}
-                  className="rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
+                  className="rounded px-4 py-2 text-[10px] font-medium transition-colors disabled:opacity-40"
                   style={{
                     background: "rgba(255,70,85,0.08)",
                     color: D.red,
@@ -293,13 +293,13 @@ export default function SponsorsPage() {
           }}
         >
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.35em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle }}
           >
             Available Offers
           </span>
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+            className="text-[10px] font-medium tabular-nums"
             style={{ color: D.textMuted }}
           >
             {offerCount}
@@ -333,7 +333,7 @@ export default function SponsorsPage() {
                 }
               >
                 <span
-                  className="inline-flex w-fit items-center rounded px-2 py-1 text-[10px] font-medium uppercase tracking-[0.2em]"
+                  className="inline-flex w-fit items-center rounded px-2 py-1 text-[10px] font-medium "
                   style={{
                     background: t.bg,
                     color: t.color,
@@ -352,7 +352,7 @@ export default function SponsorsPage() {
                 </div>
                 <div className="flex flex-col">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     Weekly
@@ -366,7 +366,7 @@ export default function SponsorsPage() {
                 </div>
                 <div className="flex flex-col">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     Win Bonus
@@ -380,7 +380,7 @@ export default function SponsorsPage() {
                 </div>
                 <div className="flex flex-col">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     Champ Pts
@@ -394,7 +394,7 @@ export default function SponsorsPage() {
                 </div>
                 <div className="flex flex-col">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     Duration
@@ -409,7 +409,7 @@ export default function SponsorsPage() {
                 <button
                   onClick={() => acceptMut.mutate({ offerId: o.id })}
                   disabled={acceptMut.isPending}
-                  className="rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
+                  className="rounded px-4 py-2 text-[10px] font-medium transition-colors disabled:opacity-40"
                   style={{
                     background: "rgba(255,70,85,0.12)",
                     color: D.red,
@@ -459,7 +459,7 @@ function MetricCell({
       style={last ? undefined : { borderRight: `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}

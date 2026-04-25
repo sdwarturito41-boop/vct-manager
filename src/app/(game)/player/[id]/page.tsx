@@ -3,7 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc-client";
-import { D, roleColor } from "@/constants/design";
+import { D, roleColor, attrColorFor, overallToStars } from "@/constants/design";
 import { formatCurrency, formatStat } from "@/lib/format";
 import { countryToFlag } from "@/lib/country-flag";
 import { ROLE_WEIGHTS } from "@/constants/role-weights";
@@ -79,26 +79,27 @@ const GROUP_PHYSICAL: AttrKey[] = [
   "mentalEndurance",
 ];
 
+// State colour mapping. Sentence-case labels per design system.
 const STATE_COLOR: Record<string, { bg: string; fg: string; label: string }> = {
-  HAPPY: { bg: "rgba(76,175,125,0.15)", fg: D.green, label: "Happy" },
-  CONCERNED: { bg: "rgba(198,155,58,0.15)", fg: D.gold, label: "Concerned" },
-  UNHAPPY: { bg: "rgba(255,140,80,0.15)", fg: "#ff8c50", label: "Unhappy" },
-  WANTS_TRANSFER: { bg: "rgba(255,70,85,0.15)", fg: D.red, label: "Wants Transfer" },
+  HAPPY: { bg: "rgba(29,158,117,0.12)", fg: D.green, label: "Happy" },
+  CONCERNED: { bg: "rgba(83,74,183,0.12)", fg: D.primary, label: "Concerned" },
+  UNHAPPY: { bg: "rgba(216,90,48,0.12)", fg: D.coral, label: "Unhappy" },
+  WANTS_TRANSFER: { bg: "rgba(216,90,48,0.18)", fg: D.coral, label: "Wants transfer" },
 };
 
 const TAG_LABEL: Record<string, string> = {
   UNDERPAID: "Underpaid",
   OVERPAID: "Overpaid",
-  CONTRACT_EXPIRING: "Contract Expiring",
-  TEAM_LOSING_STREAK: "Team Losing Streak",
-  TEAM_WINNING_STREAK: "Team Winning Streak",
-  RECENT_SIGNING: "Recent Signing",
-  TROPHY_WON: "Trophy Won",
-  MAJOR_OFFER_REJECTED: "Major Offer Rejected",
-  PLAYING_HOME_REGION: "Home Region",
-  DUO_BROKEN: "Duo Broken",
-  MENTOR_LOST: "Mentor Lost",
-  CLASH_ACTIVE: "Clash Active",
+  CONTRACT_EXPIRING: "Contract expiring",
+  TEAM_LOSING_STREAK: "Team losing streak",
+  TEAM_WINNING_STREAK: "Team winning streak",
+  RECENT_SIGNING: "Recent signing",
+  TROPHY_WON: "Trophy won",
+  MAJOR_OFFER_REJECTED: "Major offer rejected",
+  PLAYING_HOME_REGION: "Home region",
+  DUO_BROKEN: "Duo broken",
+  MENTOR_LOST: "Mentor lost",
+  CLASH_ACTIVE: "Clash active",
 };
 
 function stateFromScore(score: number): keyof typeof STATE_COLOR {
@@ -106,14 +107,6 @@ function stateFromScore(score: number): keyof typeof STATE_COLOR {
   if (score >= 40) return "CONCERNED";
   if (score >= 20) return "UNHAPPY";
   return "WANTS_TRANSFER";
-}
-
-function attrColor(v: number): string {
-  if (v >= 16) return "#4ac96a";
-  if (v >= 13) return "#d8c44a";
-  if (v >= 8) return "#d89a4a";
-  if (v >= 5) return "#d84a4a";
-  return "#555";
 }
 
 export default function PlayerPage() {
@@ -191,25 +184,23 @@ export default function PlayerPage() {
       >
         <button
           onClick={() => router.back()}
-          className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em]"
+          className="flex items-center gap-2 text-[11px] "
           style={{ color: D.textMuted }}
         >
           ← Back
         </button>
         <div className="flex items-center gap-3">
-          {attrs && (
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
-                Current Ability
-              </span>
-              <span
-                className="text-[28px] font-medium tabular-nums leading-none"
-                style={{ color: attrColor(Math.round(attrs.overall)) }}
-              >
-                {Math.round(attrs.overall)}
-              </span>
-            </div>
-          )}
+          {attrs && (() => {
+            const { stars, label } = overallToStars(attrs.overall);
+            return (
+              <div className="flex flex-col items-end">
+                <span className="text-[11px]" style={{ color: D.textMuted }}>
+                  {label}
+                </span>
+                <StarRow count={stars} size={18} color={D.gold} />
+              </div>
+            );
+          })()}
         </div>
       </section>
 
@@ -245,31 +236,31 @@ export default function PlayerPage() {
         {/* Identity + contract */}
         <div className="flex flex-col gap-3">
           <div>
-            <div className="text-[11px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>
+            <div className="text-[11px] font-medium " style={{ color: D.textSubtle }}>
               {countryToFlag(player.nationality)} {player.nationality} · {player.region} · Age {player.age}
             </div>
             <h1
-              className="mt-1 text-[40px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[40px] font-medium leading-none"
               style={{ color: D.textPrimary }}
             >
               {player.ign}
             </h1>
             <div className="mt-2 flex items-center gap-4 text-[12px]" style={{ color: D.textMuted }}>
               <span
-                className="font-medium uppercase tracking-[0.2em]"
+                className="font-medium "
                 style={{ color: roleColor(player.role) }}
               >
                 {player.role}
               </span>
               <span>{player.firstName} {player.lastName}</span>
               {attrs?.playstyleRole && (
-                <span className="uppercase tracking-[0.15em]" style={{ color: D.textSubtle }}>
+                <span className="" style={{ color: D.textSubtle }}>
                   {PLAYSTYLE_ROLES.find((r) => r.value === attrs.playstyleRole)?.label ?? attrs.playstyleRole}
                 </span>
               )}
               {player.isIgl && (
                 <span
-                  className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
+                  className="rounded px-1.5 py-0.5 text-[9px] font-medium "
                   style={{ background: "rgba(198,155,58,0.15)", color: D.gold }}
                 >
                   IGL
@@ -295,8 +286,8 @@ export default function PlayerPage() {
           className="flex flex-col gap-2 rounded-lg p-4"
           style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
         >
-          <span className="text-[10px] uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>
-            Current Club
+          <span className="text-[10px] " style={{ color: D.textSubtle }}>
+            Current club
           </span>
           {player.team ? (
             <div className="flex items-center gap-3">
@@ -309,14 +300,14 @@ export default function PlayerPage() {
                 <span className="text-[15px] font-medium" style={{ color: D.textPrimary }}>
                   {player.team.name}
                 </span>
-                <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textMuted }}>
+                <span className="text-[10px] " style={{ color: D.textMuted }}>
                   {player.team.tag} · {player.team.region}
                 </span>
               </div>
             </div>
           ) : (
             <span className="text-[13px]" style={{ color: D.textSubtle, fontStyle: "italic" }}>
-              Free Agent
+              Free agent
             </span>
           )}
         </div>
@@ -344,8 +335,8 @@ export default function PlayerPage() {
             className="rounded p-4"
             style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
           >
-            <div className="text-[9px] uppercase tracking-[0.25em] mb-2" style={{ color: D.textSubtle }}>
-              Playstyle Role
+            <div className="text-[9px] mb-2" style={{ color: D.textSubtle }}>
+              Playstyle role
             </div>
             {isOwnPlayer ? (
               <select
@@ -378,7 +369,7 @@ export default function PlayerPage() {
               </span>
             )}
             {attrs?.wasAutoAssigned && (
-              <div className="mt-1 text-[9px] uppercase tracking-[0.15em]" style={{ color: D.textSubtle, fontStyle: "italic" }}>
+              <div className="mt-1 text-[9px] " style={{ color: D.textSubtle, fontStyle: "italic" }}>
                 Auto-assigned from stats
               </div>
             )}
@@ -397,11 +388,11 @@ export default function PlayerPage() {
               style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[9px] uppercase tracking-[0.25em]" style={{ color: D.textSubtle }}>
-                  Player Mood
+                <span className="text-[9px] " style={{ color: D.textSubtle }}>
+                  Player mood
                 </span>
                 <span
-                  className="rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.2em]"
+                  className="rounded px-2 py-0.5 text-[10px] font-medium "
                   style={{ background: stateStyle.bg, color: stateStyle.fg }}
                 >
                   {stateStyle.label}
@@ -424,7 +415,7 @@ export default function PlayerPage() {
                   {happinessTags.map((t) => (
                     <span
                       key={t}
-                      className="rounded px-1.5 py-1 text-[9px] font-medium uppercase tracking-[0.15em]"
+                      className="rounded px-1.5 py-1 text-[9px] font-medium "
                       style={{
                         background: D.surface,
                         color: D.textPrimary,
@@ -444,8 +435,8 @@ export default function PlayerPage() {
             className="rounded p-4"
             style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
           >
-            <div className="text-[9px] uppercase tracking-[0.25em] mb-3" style={{ color: D.textSubtle }}>
-              Recent Form
+            <div className="text-[9px] mb-3" style={{ color: D.textSubtle }}>
+              Recent form
             </div>
             <div className="grid grid-cols-2 gap-2 text-[11px]" style={{ color: D.textPrimary }}>
               <MiniStat label="ACS" value={formatStat(player.acs, 0)} accent={D.gold} />
@@ -459,7 +450,7 @@ export default function PlayerPage() {
         </div>
       </section>
 
-      {/* ═══ Agents Mastered ═══ */}
+      {/* ═══ Agents mastered ═══ */}
       <AgentsSection agentStats={attrs?.agentStats} />
 
       {/* ═══ Relationships ═══ */}
@@ -467,7 +458,7 @@ export default function PlayerPage() {
         className="px-10 py-6"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
-        <div className="text-[10px] font-medium uppercase tracking-[0.3em] mb-4" style={{ color: D.textSubtle }}>
+        <div className="text-[10px] font-medium mb-4" style={{ color: D.textSubtle }}>
           Relationships
         </div>
         {relationsQuery.isLoading || !relations ? (
@@ -487,7 +478,7 @@ export default function PlayerPage() {
       {/* ═══ Action bar ═══ */}
       {isOwnPlayer && (
         <section className="px-10 py-6">
-          <div className="text-[10px] font-medium uppercase tracking-[0.3em] mb-3" style={{ color: D.textSubtle }}>
+          <div className="text-[10px] font-medium mb-3" style={{ color: D.textSubtle }}>
             Manager actions
           </div>
 
@@ -496,7 +487,7 @@ export default function PlayerPage() {
               className="flex items-center gap-3 rounded px-4 py-3"
               style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
             >
-              <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
+              <span className="text-[10px] " style={{ color: D.textSubtle }}>
                 New salary
               </span>
               <input
@@ -521,7 +512,7 @@ export default function PlayerPage() {
                   !raiseAmount ||
                   raiseAmount <= player.salary
                 }
-                className="ml-auto rounded px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] disabled:opacity-40"
+                className="ml-auto rounded px-3 py-1.5 text-[10px] font-medium disabled:opacity-40"
                 style={{
                   background: "rgba(76,175,125,0.12)",
                   color: D.green,
@@ -532,7 +523,7 @@ export default function PlayerPage() {
               </button>
               <button
                 onClick={() => setShowRaise(false)}
-                className="rounded px-3 py-1.5 text-[10px] uppercase tracking-[0.2em]"
+                className="rounded px-3 py-1.5 text-[10px] "
                 style={{ color: D.textMuted, border: `1px solid ${D.border}` }}
               >
                 Cancel
@@ -541,7 +532,7 @@ export default function PlayerPage() {
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <ActionButton
-                label={`Raise Salary${player.raisesUsedSeason >= 1 ? " (used)" : ""}`}
+                label={`Raise salary${player.raisesUsedSeason >= 1 ? " (used)" : ""}`}
                 disabled={player.raisesUsedSeason >= 1 || raiseMutation.isPending}
                 onClick={() => {
                   setRaiseAmount(Math.ceil(player.salary * 1.15));
@@ -549,7 +540,7 @@ export default function PlayerPage() {
                 }}
               />
               <ActionButton
-                label={`Pep Talk (${2 - player.pepTalksUsedSeason}/2)`}
+                label={`Pep talk (${2 - player.pepTalksUsedSeason}/2)`}
                 disabled={player.pepTalksUsedSeason >= 2 || pepTalkMutation.isPending}
                 onClick={() => pepTalkMutation.mutate({ playerId })}
               />
@@ -598,7 +589,7 @@ function HeaderMetric({
 }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[9px] uppercase tracking-[0.25em]" style={{ color: D.textSubtle }}>
+      <span className="text-[9px] " style={{ color: D.textSubtle }}>
         {label}
       </span>
       <span className="text-[15px] font-medium tabular-nums" style={{ color: accent ?? D.textPrimary }}>
@@ -619,7 +610,7 @@ function MiniStat({
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[10px] uppercase tracking-[0.15em]" style={{ color: D.textSubtle }}>
+      <span className="text-[10px] " style={{ color: D.textSubtle }}>
         {label}
       </span>
       <span className="font-medium tabular-nums" style={{ color: accent ?? D.textPrimary }}>
@@ -643,7 +634,7 @@ function AttrGroup({
   const weights = role ? ROLE_WEIGHTS[role] : undefined;
   return (
     <div>
-      <div className="text-[10px] font-medium uppercase tracking-[0.3em] mb-3" style={{ color: D.textSubtle }}>
+      <div className="text-[10px] font-medium mb-3" style={{ color: D.textSubtle }}>
         {title}
       </div>
       <div className="flex flex-col gap-1.5">
@@ -672,7 +663,7 @@ function emphasisFor(weight: number): "key" | "normal" | "muted" {
 function AttrRow({ label, value, weight }: { label: string; value: number; weight: number }) {
   const v = Math.round(value);
   const pct = (v / 20) * 100;
-  const baseColor = attrColor(v);
+  const baseColor = attrColorFor(v);
   const emph = emphasisFor(weight);
   const isKey = emph === "key";
   const isMuted = emph === "muted";
@@ -718,7 +709,7 @@ function AttrRow({ label, value, weight }: { label: string; value: number; weigh
   );
 }
 
-// ═══ Agents Mastered ═══
+// ═══ Agents mastered ═══
 
 type AgentStat = {
   rounds: number; rating: number; acs: number; kd: number; adr: number;
@@ -757,8 +748,8 @@ function AgentsSection({ agentStats }: { agentStats?: Record<string, AgentStat> 
       className="px-10 py-6"
       style={{ borderBottom: `1px solid ${D.border}` }}
     >
-      <div className="text-[10px] font-medium uppercase tracking-[0.3em] mb-4" style={{ color: D.textSubtle }}>
-        Agents Mastered · {entries.length}
+      <div className="text-[10px] font-medium mb-4" style={{ color: D.textSubtle }}>
+        Agents mastered · {entries.length}
       </div>
       <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
         {entries.map(([agent, s]) => (
@@ -783,7 +774,7 @@ function AgentCard({ agent, stats }: { agent: string; stats: AgentStat }) {
           {agent}
         </span>
         <span
-          className="text-[9px] uppercase tracking-[0.2em] rounded px-1.5 py-0.5"
+          className="text-[9px] rounded px-1.5 py-0.5"
           style={{ background: `${tint}22`, color: tint }}
         >
           {role}
@@ -893,7 +884,7 @@ function RadarPanelMini({ attrs }: { attrs?: Record<AttrKey, number> }) {
                 dominantBaseline="middle"
                 fontSize={8.5}
                 fontWeight={500}
-                style={{ fill: D.textMuted, letterSpacing: "0.05em", textTransform: "uppercase" }}
+                style={{ fill: D.textMuted, letterSpacing: "0.05em", textTransform: "" }}
               >
                 {ax.label}
               </text>
@@ -1004,8 +995,8 @@ function RoleStarsPanel({
       className="rounded p-4"
       style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
     >
-      <div className="text-[9px] uppercase tracking-[0.25em] mb-3" style={{ color: D.textSubtle }}>
-        Role Ratings
+      <div className="text-[9px] mb-3" style={{ color: D.textSubtle }}>
+        Role ratings
       </div>
       <div className="flex flex-col">
         {entries.map(([role, { stars }]) => {
@@ -1055,7 +1046,7 @@ function ActionButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="rounded px-3 py-2 text-[10px] font-medium uppercase tracking-[0.2em] disabled:cursor-not-allowed disabled:opacity-40"
+      className="rounded px-3 py-2 text-[10px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
       style={
         warning
           ? {
@@ -1099,7 +1090,7 @@ function RelationList({
   if (items.length === 0) return null;
   return (
     <div>
-      <div className="text-[9px] uppercase tracking-[0.2em] mb-2" style={{ color: D.textMuted }}>
+      <div className="text-[9px] mb-2" style={{ color: D.textMuted }}>
         {title}
       </div>
       <div className="flex flex-col gap-1.5">
@@ -1134,7 +1125,7 @@ function RelationList({
                 {r.otherPlayer.ign}
               </span>
               <span
-                className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.15em]"
+                className="rounded px-1.5 py-0.5 text-[9px] font-medium "
                 style={{ color, border: `1px solid ${color}40` }}
               >
                 {label}

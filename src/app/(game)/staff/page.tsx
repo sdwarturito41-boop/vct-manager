@@ -39,7 +39,7 @@ function StatBar({ label, value }: { label: string; value: number }) {
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
         <span
-          className="text-[10px] font-medium uppercase tracking-[0.25em]"
+          className="text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
           {label}
@@ -105,19 +105,19 @@ export default function StaffPage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div
-              className="text-[11px] font-medium uppercase tracking-[0.3em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Coaching Staff
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[34px] font-medium leading-none "
               style={{ color: D.textPrimary }}
             >
               Staff
             </h1>
             <div
-              className="mt-2 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.2em]"
+              className="mt-2 flex items-center gap-3 text-[11px] font-medium "
               style={{ color: D.textMuted }}
             >
               <span style={{ color: myCoach ? D.red : D.textMuted }}>
@@ -162,7 +162,7 @@ export default function StaffPage() {
           style={{ borderBottom: `1px solid ${D.border}` }}
         >
           <div
-            className="text-[10px] font-medium uppercase tracking-[0.35em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle }}
           >
             Current Coach
@@ -181,13 +181,13 @@ export default function StaffPage() {
             </div>
             <div>
               <div
-                className="text-[22px] font-medium uppercase tracking-[0.05em]"
+                className="text-[22px] font-medium "
                 style={{ color: D.textPrimary }}
               >
                 {myCoach.name}
               </div>
               <div
-                className="mt-1 text-[11px] font-medium uppercase tracking-[0.2em]"
+                className="mt-1 text-[11px] font-medium "
                 style={{ color: D.textMuted }}
               >
                 <span>{myCoach.nationality}</span>
@@ -202,7 +202,7 @@ export default function StaffPage() {
             <button
               onClick={() => fireMut.mutate()}
               disabled={fireMut.isPending}
-              className="rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
+              className="rounded px-4 py-2 text-[10px] font-medium transition-colors disabled:opacity-40"
               style={{
                 background: "rgba(255,70,85,0.08)",
                 color: D.red,
@@ -228,13 +228,13 @@ export default function StaffPage() {
           style={{ borderBottom: `1px solid ${D.borderFaint}` }}
         >
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.35em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle }}
           >
             Available Coaches
           </span>
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+            className="text-[10px] font-medium tabular-nums"
             style={{ color: D.textMuted }}
           >
             {offerCount} offers
@@ -260,31 +260,31 @@ export default function StaffPage() {
             >
               <span />
               <span
-                className="text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Name
               </span>
               <span
-                className="text-right text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-right text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Utility
               </span>
               <span
-                className="text-right text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-right text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Training
               </span>
               <span
-                className="text-right text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-right text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Scouting
               </span>
               <span
-                className="text-right text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-right text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Salary/wk
@@ -329,7 +329,7 @@ export default function StaffPage() {
                       {o.name}
                     </div>
                     <div
-                      className="text-[10px] font-medium uppercase tracking-[0.2em]"
+                      className="text-[10px] font-medium "
                       style={{ color: D.textSubtle }}
                     >
                       {o.nationality} · Age {o.age}
@@ -375,7 +375,7 @@ export default function StaffPage() {
                   <button
                     onClick={() => hireMut.mutate({ coachOfferId: o.id })}
                     disabled={hireMut.isPending}
-                    className="rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
+                    className="rounded px-4 py-2 text-[10px] font-medium transition-colors disabled:opacity-40"
                     style={{
                       background: "rgba(255,70,85,0.12)",
                       color: D.red,
@@ -426,7 +426,7 @@ function MetricCell({
       style={last ? undefined : { borderRight: `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}

@@ -18,22 +18,22 @@ const STATE_COLOR: Record<string, { bg: string; fg: string; label: string }> = {
   HAPPY: { bg: "rgba(76,175,125,0.15)", fg: D.green, label: "Happy" },
   CONCERNED: { bg: "rgba(198,155,58,0.15)", fg: D.gold, label: "Concerned" },
   UNHAPPY: { bg: "rgba(255,140,80,0.15)", fg: "#ff8c50", label: "Unhappy" },
-  WANTS_TRANSFER: { bg: "rgba(255,70,85,0.15)", fg: D.red, label: "Wants Transfer" },
+  WANTS_TRANSFER: { bg: "rgba(255,70,85,0.15)", fg: D.red, label: "Wants transfer" },
 };
 
 const TAG_LABEL: Record<string, string> = {
   UNDERPAID: "Underpaid",
   OVERPAID: "Overpaid",
-  CONTRACT_EXPIRING: "Contract Expiring",
-  TEAM_LOSING_STREAK: "Team Losing Streak",
-  TEAM_WINNING_STREAK: "Team Winning Streak",
-  RECENT_SIGNING: "Recent Signing",
-  TROPHY_WON: "Trophy Won",
-  MAJOR_OFFER_REJECTED: "Major Offer Rejected",
-  PLAYING_HOME_REGION: "Home Region",
-  DUO_BROKEN: "Duo Broken",
-  MENTOR_LOST: "Mentor Lost",
-  CLASH_ACTIVE: "Clash Active",
+  CONTRACT_EXPIRING: "Contract expiring",
+  TEAM_LOSING_STREAK: "Team losing streak",
+  TEAM_WINNING_STREAK: "Team winning streak",
+  RECENT_SIGNING: "Recent signing",
+  TROPHY_WON: "Trophy won",
+  MAJOR_OFFER_REJECTED: "Major offer rejected",
+  PLAYING_HOME_REGION: "Home region",
+  DUO_BROKEN: "Duo broken",
+  MENTOR_LOST: "Mentor lost",
+  CLASH_ACTIVE: "Clash active",
 };
 
 const RELATION_COLOR: Record<string, string> = {
@@ -163,20 +163,20 @@ export function PlayerDetailModal({
           )}
           <div>
             <div
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               {player.region} · Age {player.age} · {countryToFlag(player.nationality)} {player.nationality}
             </div>
             <h2
-              className="mt-1 text-[26px] font-medium uppercase tracking-[0.05em]"
+              className="mt-1 text-[26px] font-medium "
               style={{ color: D.textPrimary }}
             >
               {player.ign}
             </h2>
             <div className="mt-1 flex items-center gap-3">
               <span
-                className="text-[11px] font-medium uppercase tracking-[0.2em]"
+                className="text-[11px] font-medium "
                 style={{ color: roleColor(player.role) }}
               >
                 {player.role}
@@ -192,7 +192,7 @@ export function PlayerDetailModal({
         </div>
         <button
           onClick={onClose}
-          className="text-[11px] uppercase tracking-[0.2em]"
+          className="text-[11px] "
           style={{ color: D.textMuted }}
         >
           Close
@@ -207,13 +207,13 @@ export function PlayerDetailModal({
         >
           <div className="flex items-center justify-between">
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
-              Player Mood
+              Player mood
             </span>
             <span
-              className="rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.2em]"
+              className="rounded px-2 py-0.5 text-[10px] font-medium "
               style={{ background: stateStyle.bg, color: stateStyle.fg }}
             >
               {stateStyle.label}
@@ -244,7 +244,7 @@ export function PlayerDetailModal({
               {tags.map((t) => (
                 <span
                   key={t}
-                  className="rounded px-2 py-1 text-[10px] font-medium uppercase tracking-[0.15em]"
+                  className="rounded px-2 py-1 text-[10px] font-medium "
                   style={{
                     background: D.card,
                     color: D.textPrimary,
@@ -316,7 +316,7 @@ export function PlayerDetailModal({
               style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
             >
               <span
-                className="text-[10px] uppercase tracking-[0.2em]"
+                className="text-[10px] "
                 style={{ color: D.textSubtle }}
               >
                 New salary
@@ -343,7 +343,7 @@ export function PlayerDetailModal({
                   !raiseAmount ||
                   raiseAmount <= player.salary
                 }
-                className="ml-auto rounded px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
+                className="ml-auto rounded px-3 py-1.5 text-[10px] font-medium transition-colors disabled:opacity-40"
                 style={{
                   background: "rgba(76,175,125,0.12)",
                   color: D.green,
@@ -354,7 +354,7 @@ export function PlayerDetailModal({
               </button>
               <button
                 onClick={() => setShowRaise(false)}
-                className="rounded px-3 py-1.5 text-[10px] uppercase tracking-[0.2em]"
+                className="rounded px-3 py-1.5 text-[10px] "
                 style={{ color: D.textMuted, border: `1px solid ${D.border}` }}
               >
                 Cancel
@@ -363,7 +363,7 @@ export function PlayerDetailModal({
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <ActionButton
-                label={`Raise Salary${player.raisesUsedSeason >= 1 ? " (used)" : ""}`}
+                label={`Raise salary${player.raisesUsedSeason >= 1 ? " (used)" : ""}`}
                 disabled={player.raisesUsedSeason >= 1 || raiseMutation.isPending}
                 onClick={() => {
                   setRaiseAmount(Math.ceil(player.salary * 1.15));
@@ -371,7 +371,7 @@ export function PlayerDetailModal({
                 }}
               />
               <ActionButton
-                label={`Pep Talk (${2 - player.pepTalksUsedSeason}/2)`}
+                label={`Pep talk (${2 - player.pepTalksUsedSeason}/2)`}
                 disabled={
                   player.pepTalksUsedSeason >= 2 || pepTalkMutation.isPending
                 }
@@ -429,7 +429,7 @@ export function PlayerDetailModal({
         <div className="px-8 py-5">
           {onOpenOfferModal && (
             <ActionButton
-              label={player.teamId ? "Make Buyout Offer" : "Sign Free Agent"}
+              label={player.teamId ? "Make Buyout Offer" : "Sign Free agent"}
               warning
               onClick={onOpenOfferModal}
             />
@@ -483,7 +483,7 @@ function StatCell({
       style={{ borderRight: last ? undefined : `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.2em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}
@@ -518,7 +518,7 @@ function ActionButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="rounded px-3 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      className="rounded px-3 py-2 text-[10px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       style={
         warning
           ? {
@@ -572,7 +572,7 @@ function RelationshipsSection({
     return (
       <div className="px-8 py-5" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
         <div
-          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
           Relationships
@@ -587,7 +587,7 @@ function RelationshipsSection({
   return (
     <div className="px-8 py-5" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
       <div
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         Relationships
@@ -595,7 +595,7 @@ function RelationshipsSection({
 
       {relations.current.length > 0 && (
         <div className="mt-3 flex flex-col gap-2">
-          <span className="text-[9px] uppercase tracking-[0.2em]" style={{ color: D.textMuted }}>
+          <span className="text-[9px] " style={{ color: D.textMuted }}>
             Active
           </span>
           {relations.current.map((r) => (
@@ -606,7 +606,7 @@ function RelationshipsSection({
 
       {relations.historical.length > 0 && (
         <div className="mt-4 flex flex-col gap-2">
-          <span className="text-[9px] uppercase tracking-[0.2em]" style={{ color: D.textMuted }}>
+          <span className="text-[9px] " style={{ color: D.textMuted }}>
             Historical (decaying)
           </span>
           {relations.historical.slice(0, 5).map((r) => (
@@ -665,7 +665,7 @@ function RelationRowView({ r, active }: { r: RelationRow; active: boolean }) {
             {r.otherPlayer.ign}
           </span>
           <span
-            className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.15em]"
+            className="rounded px-1.5 py-0.5 text-[9px] font-medium "
             style={{ background: "transparent", color, border: `1px solid ${color}40` }}
           >
             {label}
@@ -831,7 +831,7 @@ function AttributesSection({
     >
       <div className="flex items-center justify-between mb-4">
         <span
-          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
           Attributes
@@ -847,7 +847,7 @@ function AttributesSection({
                 })
               }
               disabled={setRoleMutation.isPending}
-              className="rounded px-2 py-1 text-[11px] uppercase tracking-[0.15em] outline-none"
+              className="rounded px-2 py-1 text-[11px] outline-none"
               style={{
                 background: D.card,
                 color: D.textPrimary,
@@ -862,7 +862,7 @@ function AttributesSection({
             </select>
           ) : (
             <span
-              className="text-[11px] uppercase tracking-[0.15em]"
+              className="text-[11px] "
               style={{ color: D.textMuted }}
             >
               {PLAYSTYLE_ROLES.find((r) => r.value === data.playstyleRole)?.label ?? data.playstyleRole}
@@ -870,7 +870,7 @@ function AttributesSection({
           )}
           {data.wasAutoAssigned && (
             <span
-              className="text-[9px] uppercase tracking-[0.15em]"
+              className="text-[9px] "
               style={{ color: D.textSubtle, fontStyle: "italic" }}
             >
               auto
@@ -884,7 +884,7 @@ function AttributesSection({
               {overallRounded}
             </span>
             <span
-              className="text-[9px] uppercase tracking-[0.2em]"
+              className="text-[9px] "
               style={{ color: D.textSubtle }}
             >
               Overall
@@ -912,7 +912,7 @@ function AttrGroup({
   return (
     <div className="mb-3">
       <div
-        className="text-[9px] uppercase tracking-[0.25em] mb-1.5"
+        className="text-[9px] mb-1.5"
         style={{ color: D.textMuted }}
       >
         {title}

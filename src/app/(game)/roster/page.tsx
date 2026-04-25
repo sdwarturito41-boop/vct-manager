@@ -114,13 +114,13 @@ export default function RosterPage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div
-              className="text-[11px] font-medium uppercase tracking-[0.3em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textSubtle }}
             >
               {team.region} · {team.name}
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[34px] font-medium leading-none "
               style={{ color: D.textPrimary }}
             >
               Roster
@@ -128,7 +128,7 @@ export default function RosterPage() {
           </div>
           <Link
             href="/market"
-            className="rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors"
+            className="rounded px-4 py-2 text-[10px] font-medium transition-colors"
             style={{
               background: "rgba(255,70,85,0.1)",
               color: D.red,
@@ -242,7 +242,7 @@ function MetricCell({
       style={{ borderRight: last ? undefined : `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}
@@ -269,13 +269,13 @@ function SectionHeader({ label, count }: { label: string; count: number }) {
       style={{ borderBottom: `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}
       </span>
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+        className="text-[10px] font-medium tabular-nums"
         style={{ color: D.textMuted }}
       >
         {count} {count === 1 ? "player" : "players"}
@@ -287,7 +287,7 @@ function SectionHeader({ label, count }: { label: string; count: number }) {
 function RosterTableHeader() {
   return (
     <div
-      className="grid items-center gap-3 px-10 py-3 text-[10px] font-medium uppercase tracking-[0.2em]"
+      className="grid items-center gap-3 px-10 py-3 text-[10px] font-medium "
       style={{
         gridTemplateColumns:
           "48px minmax(180px,1.3fr) 100px 110px 60px repeat(4,minmax(60px,1fr)) 110px 120px 170px",
@@ -416,7 +416,7 @@ function RosterRow({
           )}
           {player.isTransferListed && (
             <span
-              className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
+              className="rounded px-1.5 py-0.5 text-[9px] font-medium "
               style={{
                 background: "rgba(255,70,85,0.1)",
                 color: D.red,
@@ -427,7 +427,7 @@ function RosterRow({
           )}
           {isMvp && (
             <span
-              className="rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
+              className="rounded px-1.5 py-0.5 text-[9px] font-medium "
               style={{
                 background: "rgba(198,155,58,0.15)",
                 color: D.gold,
@@ -447,7 +447,7 @@ function RosterRow({
 
       {/* Role */}
       <span
-        className="text-[11px] font-medium uppercase tracking-[0.15em]"
+        className="text-[11px] font-medium "
         style={{ color: rColor }}
       >
         {player.role}
@@ -455,7 +455,7 @@ function RosterRow({
 
       {/* Leadership */}
       <span
-        className="text-[11px] font-medium uppercase tracking-[0.15em]"
+        className="text-[11px] font-medium "
         style={{ color: D.textMuted }}
       >
         {player.leadershipRole ?? "—"}
@@ -505,7 +505,7 @@ function RosterRow({
 
       {/* Contract end */}
       <span
-        className="text-right text-[11px] tabular-nums uppercase tracking-[0.1em]"
+        className="text-right text-[11px] tabular-nums "
         style={{ color: D.textMuted }}
       >
         {player.contractEndSeason !== undefined &&
@@ -522,7 +522,7 @@ function RosterRow({
         <button
           onClick={onBench}
           disabled={togglePending}
-          className="rounded px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
+          className="rounded px-2.5 py-1 text-[10px] font-medium transition-colors disabled:opacity-40"
           style={{
             border: `1px solid ${D.border}`,
             color: D.textMuted,
@@ -533,7 +533,7 @@ function RosterRow({
         <button
           onClick={onRelease}
           disabled={sellPending}
-          className="rounded px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:opacity-40"
+          className="rounded px-2.5 py-1 text-[10px] font-medium transition-colors disabled:opacity-40"
           style={{
             background: "rgba(255,70,85,0.1)",
             color: D.red,
@@ -615,7 +615,7 @@ function TeamAttributeOverview() {
         style={{ borderRight: `1px solid ${D.borderFaint}` }}
       >
         <span
-          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
           Team Overall
@@ -635,7 +635,7 @@ function TeamAttributeOverview() {
         style={{ borderRight: `1px solid ${D.borderFaint}` }}
       >
         <span
-          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
           Strongest
@@ -662,7 +662,7 @@ function TeamAttributeOverview() {
         style={{ borderRight: `1px solid ${D.borderFaint}` }}
       >
         <span
-          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
           Weakest
@@ -686,7 +686,7 @@ function TeamAttributeOverview() {
       </div>
       <div className="flex flex-col gap-1 px-6 py-5">
         <span
-          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
           Top performer

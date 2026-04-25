@@ -15,7 +15,7 @@ export default async function LeaguePage() {
     return (
       <div className="flex items-center justify-center py-32">
         <p
-          className="text-[11px] font-medium uppercase tracking-[0.3em]"
+          className="text-[11px] font-medium "
           style={{ color: D.textSubtle }}
         >
           No active season.
@@ -234,19 +234,19 @@ export default async function LeaguePage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div
-              className="text-[11px] font-medium uppercase tracking-[0.3em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Season {season.number} · {team.region}
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[34px] font-medium leading-none "
               style={{ color: D.textPrimary }}
             >
               League
             </h1>
             <div
-              className="mt-3 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.2em]"
+              className="mt-3 flex items-center gap-3 text-[11px] font-medium "
               style={{ color: D.textMuted }}
             >
               <span style={{ color: D.red }}>{currentStageName}</span>
@@ -257,7 +257,7 @@ export default async function LeaguePage() {
 
           <div className="flex flex-col items-end">
             <span
-              className="rounded-full px-3 py-1 text-[10px] font-medium uppercase tracking-[0.25em]"
+              className="rounded-full px-3 py-1 text-[10px] font-medium "
               style={{
                 background: "rgba(255,70,85,0.12)",
                 color: D.red,
@@ -345,18 +345,18 @@ export default async function LeaguePage() {
                   }}
                 >
                   <span
-                    className="text-[14px] font-medium uppercase tracking-[0.3em]"
+                    className="text-[14px] font-medium "
                     style={{ color: r === team.region ? D.red : D.textPrimary }}
                   >
                     {r}
                     {r === team.region && (
-                      <span className="ml-3 text-[10px] tracking-[0.2em]" style={{ color: D.red }}>
+                      <span className="ml-3 text-[10px] " style={{ color: D.red }}>
                         · Your Region
                       </span>
                     )}
                   </span>
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.2em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textMuted }}
                   >
                     {groups.alpha.length + groups.omega.length} teams
@@ -383,12 +383,12 @@ export default async function LeaguePage() {
                       style={{ borderBottom: `1px solid ${D.borderFaint}` }}
                     >
                       <span
-                        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+                        className="text-[10px] font-medium "
                         style={{ color: D.gold }}
                       >
                         {r} Playoffs
                       </span>
-                      <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
+                      <span className="text-[10px] " style={{ color: D.textSubtle }}>
                         Double Elimination
                       </span>
                     </div>
@@ -430,7 +430,7 @@ export default async function LeaguePage() {
             }}
           >
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.25em]"
+              className="text-[10px] font-medium "
               style={{ color: D.gold }}
             >
               Kickoff Complete
@@ -453,13 +453,13 @@ function SectionHeader({ label, sub }: { label: string; sub: string }) {
       style={{ borderBottom: `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[11px] font-medium uppercase tracking-[0.3em]"
+        className="text-[11px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}
       </span>
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.2em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textMuted }}
       >
         {sub}
@@ -484,11 +484,11 @@ function SwissTable({
           borderBottom: `1px solid ${D.borderFaint}`,
         }}
       >
-        <span className="text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>#</span>
-        <span className="text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>Team</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>W</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>L</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>Status</span>
+        <span className="text-[9px] font-medium " style={{ color: D.textSubtle }}>#</span>
+        <span className="text-[9px] font-medium " style={{ color: D.textSubtle }}>Team</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>W</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>L</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>Status</span>
       </div>
       {standings.map((s, idx) => {
         const isUser = s.team.id === userTeamId;
@@ -515,7 +515,7 @@ function SwissTable({
                 <span className="truncate text-[13px] font-medium" style={{ color: isUser ? D.red : D.textPrimary }}>
                   {s.team.name}
                 </span>
-                <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
+                <span className="text-[10px] " style={{ color: D.textSubtle }}>
                   {s.team.tag}
                 </span>
               </div>
@@ -529,21 +529,21 @@ function SwissTable({
             <div className="flex justify-end">
               {s.advanced ? (
                 <span
-                  className="rounded px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
+                  className="rounded px-2 py-0.5 text-[9px] font-medium "
                   style={{ background: "rgba(76,175,125,0.15)", color: D.green }}
                 >
                   Advanced
                 </span>
               ) : s.eliminated ? (
                 <span
-                  className="rounded px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
+                  className="rounded px-2 py-0.5 text-[9px] font-medium "
                   style={{ background: "rgba(255,70,85,0.12)", color: D.red }}
                 >
                   Eliminated
                 </span>
               ) : (
                 <span
-                  className="rounded px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.2em]"
+                  className="rounded px-2 py-0.5 text-[9px] font-medium "
                   style={{ background: "rgba(255,255,255,0.04)", color: D.textMuted }}
                 >
                   Playing
@@ -572,12 +572,12 @@ function BracketRound({
     <div className="flex flex-col" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
       <div className="flex items-center justify-between px-10 py-3">
         <span
-          className="text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="text-[10px] font-medium "
           style={{ color: D.textPrimary }}
         >
           {label}
         </span>
-        <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
+        <span className="text-[10px] " style={{ color: D.textSubtle }}>
           {matches.length} {matches.length === 1 ? "match" : "matches"}
         </span>
       </div>
@@ -623,7 +623,7 @@ function BracketRound({
                     <span style={{ color: t2Won ? D.green : D.textMuted, fontWeight: 500 }}>{score.team2}</span>
                   </>
                 ) : (
-                  <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
+                  <span className="text-[10px] " style={{ color: D.textSubtle }}>
                     Upcoming
                   </span>
                 )}
@@ -661,13 +661,13 @@ function GroupHeader({ name, count }: { name: string; count: number }) {
       style={{ borderBottom: `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[11px] font-medium uppercase tracking-[0.3em]"
+        className="text-[11px] font-medium "
         style={{ color: D.textPrimary }}
       >
         {name}
       </span>
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.2em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {count} teams
@@ -696,11 +696,11 @@ function GroupTable({
           borderBottom: `1px solid ${D.borderFaint}`,
         }}
       >
-        <span className="text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>#</span>
-        <span className="text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>Team</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>W</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>L</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>Form</span>
+        <span className="text-[9px] font-medium " style={{ color: D.textSubtle }}>#</span>
+        <span className="text-[9px] font-medium " style={{ color: D.textSubtle }}>Team</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>W</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>L</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>Form</span>
       </div>
       {list.map((row, idx) => {
         const isUser = row.team.id === userTeamId;
@@ -731,7 +731,7 @@ function GroupTable({
                 <span className="truncate text-[13px] font-medium" style={{ color: isUser ? D.red : D.textPrimary }}>
                   {row.team.name}
                 </span>
-                <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
+                <span className="text-[10px] " style={{ color: D.textSubtle }}>
                   {row.team.tag}
                 </span>
               </div>
@@ -785,12 +785,12 @@ function ChampPtsTable({
           borderBottom: `1px solid ${D.borderFaint}`,
         }}
       >
-        <span className="text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>#</span>
-        <span className="text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>Team</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>W</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>L</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>Champ</span>
-        <span className="text-right text-[9px] font-medium uppercase tracking-[0.3em]" style={{ color: D.textSubtle }}>Form</span>
+        <span className="text-[9px] font-medium " style={{ color: D.textSubtle }}>#</span>
+        <span className="text-[9px] font-medium " style={{ color: D.textSubtle }}>Team</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>W</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>L</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>Champ</span>
+        <span className="text-right text-[9px] font-medium " style={{ color: D.textSubtle }}>Form</span>
       </div>
       {standings.map((t, idx) => {
         const isUser = t.id === userTeamId;
@@ -821,7 +821,7 @@ function ChampPtsTable({
                 <span className="truncate text-[13px] font-medium" style={{ color: isUser ? D.red : D.textPrimary }}>
                   {t.name}
                 </span>
-                <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
+                <span className="text-[10px] " style={{ color: D.textSubtle }}>
                   {t.tag}
                 </span>
               </div>

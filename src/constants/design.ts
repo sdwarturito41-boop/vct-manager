@@ -1,60 +1,109 @@
 /**
- * VCT Manager design tokens — aligned with the RoundByRoundScreen style.
- * Import this in any component that needs consistent styling.
+ * VALO.GG design tokens — v1.0 (Avril 2026).
  *
- * Rules:
- * - No gradients, no box-shadows (except drop-shadow on images, text-shadow over images)
- * - Flat dark surfaces only
- * - Weights: 500 and normal only (no 600/700)
- * - Uppercase tracking-[0.2-0.4em] for small labels
- * - Tabular-nums for all stats/numbers
- * - Radius: 8px cards, 4px small elements
- * - Fonts: Inter, system-ui fallback
+ * Hard rules (see docs/valogg_design_system.pdf):
+ * - No gradient, shadow, blur, glow, neon — flat surfaces only.
+ * - Inter font, weights 400 / 500 only (never 600/700).
+ * - Sizes: display 22 · heading 16 · body 13 · caption 11.
+ * - Sentence case in UI. No ALL CAPS, no Title Case, no letter-tracking.
+ * - Overall /20 is a hidden internal value. UI always shows stars + label.
+ * - Amber reserved exclusively for the star rating (★).
+ * - Teal = success / positive delta, Coral = failure / negative delta.
+ * - Missing data: "—" (em dash), never "N/A" or 0.
+ *
+ * Most older components import `D.red`, `D.gold`, `D.textPrimary` etc. Those
+ * names are preserved as aliases mapping to the new semantics so the whole
+ * app re-skins without editing every import:
+ *
+ *   D.red    → coral (negative / danger)
+ *   D.green  → teal (positive / success)
+ *   D.gold   → amber (star rating)
+ *   D.bg / surface / card → light surfaces (was dark).
  */
 
+// ── VALO.GG brand palette ───────────────────────────────────────
+
+export const INDIGO_600 = "#534AB7"; // primary accent
+export const INDIGO_900 = "#26215C"; // text on light indigo, VCT badges
+export const INDIGO_50 = "#EEEDFE";  // indigo hover / badge bg
+
+export const TEAL_400 = "#1D9E75";   // success
+export const CORAL_400 = "#D85A30";  // failure / alert
+export const AMBER_200 = "#EF9F27";  // stars ONLY
+
+// Dark surfaces — navigation bar area only.
+export const NAV_BG = "#0d0d12";
+export const NAV_CARD = "#1a1a24";
+export const NAV_BORDER = "#2C2C2A";
+
+// Light surfaces.
+const BG_PRIMARY = "#FFFFFF";        // page / cards
+const BG_SECONDARY = "#F6F5FA";      // muted rows, table headers
+const BG_SURFACE = "#FAFAFC";        // subtle panel tint
+const INK_PRIMARY = "#15141F";       // primary text
+const INK_MUTED = "#55556B";         // secondary text
+const INK_SUBTLE = "rgba(21,20,31,0.45)";
+const INK_FAINT = "rgba(21,20,31,0.2)";
+const HAIRLINE = "rgba(0,0,0,0.15)"; // 0.5px borders per spec
+const HAIRLINE_FAINT = "rgba(0,0,0,0.08)";
+
+// ── Token dictionary (D.*) — preserves legacy names as aliases ──
+
 export const D = {
-  // ── Surfaces ──
-  bg: "#0F0F14",           // page background
-  surface: "#16161E",      // panels, top/bottom bars
-  card: "#13131A",         // secondary cards
-  hoverBg: "rgba(255,255,255,0.02)",
-  floatBg: "rgba(15,15,20,0.65)",   // translucent floating panels over map
-  floatBorder: "rgba(255,255,255,0.08)",
+  // Surfaces
+  bg: BG_PRIMARY,
+  surface: BG_SURFACE,
+  card: BG_PRIMARY,
+  secondary: BG_SECONDARY,
+  hoverBg: "rgba(83,74,183,0.06)",
+  floatBg: "rgba(255,255,255,0.92)",
+  floatBorder: HAIRLINE,
 
-  // ── Accents ──
-  red: "#FF4655",          // primary, user team, alerts
-  green: "#4CAF7D",        // wins, good, ally
-  gold: "#C69B3A",         // MVP, ACS, gold tier
-  amber: "#EF9F27",        // force buy, warnings
-  blue: "#60A5FA",         // preview/focus
-  purple: "#8B5CF6",       // controller role
+  // Dark surfaces (nav only)
+  navBg: NAV_BG,
+  navCard: NAV_CARD,
+  navBorder: NAV_BORDER,
 
-  // ── Text ──
-  textPrimary: "#ECE8E1",
-  textMuted: "#6B6B80",
-  textSubtle: "rgba(236,232,225,0.35)",
-  textFaint: "rgba(236,232,225,0.15)",
+  // Brand
+  primary: INDIGO_600,
+  primaryDark: INDIGO_900,
+  primaryLight: INDIGO_50,
 
-  // ── Borders ──
-  border: "rgba(255,255,255,0.08)",
-  borderFaint: "rgba(255,255,255,0.04)",
-  borderStrong: "rgba(255,255,255,0.12)",
+  // Semantic accents (legacy aliases → new tokens)
+  red: CORAL_400,      // negative / alerts / defeat
+  green: TEAL_400,     // positive / wins / success
+  gold: AMBER_200,     // ★ rating exclusively
+  amber: AMBER_200,    // (same)
+  blue: INDIGO_600,    // "blue" in older code == primary
+  purple: INDIGO_600,  // controller role folded into primary
+  coral: CORAL_400,
+  teal: TEAL_400,
 
-  // ── Role colors (Valorant agent roles) ──
-  roleDuelist: "#FF4655",
-  roleInitiator: "#22C55E",
-  roleController: "#8B5CF6",
-  roleSentinel: "#3B82F6",
-  roleFlex: "#C69B3A",
+  // Text
+  textPrimary: INK_PRIMARY,
+  textMuted: INK_MUTED,
+  textSubtle: INK_SUBTLE,
+  textFaint: INK_FAINT,
 
-  // ── Eco types ──
-  ecoFullBuy: { bg: "rgba(76,175,125,0.1)", color: "#4CAF7D" },
-  ecoForceBuy: { bg: "rgba(239,159,39,0.1)", color: "#EF9F27" },
-  ecoEco: { bg: "rgba(255,70,85,0.1)", color: "#FF4655" },
-  ecoPistol: { bg: "rgba(255,255,255,0.05)", color: "#ECE8E1" },
+  // Borders (0.5px hairlines per spec)
+  border: HAIRLINE,
+  borderFaint: HAIRLINE_FAINT,
+  borderStrong: HAIRLINE,
+
+  // Role colours — restrained palette, no neon.
+  roleDuelist: CORAL_400,
+  roleInitiator: INDIGO_600,
+  roleController: TEAL_400,
+  roleSentinel: INDIGO_900,
+  roleFlex: AMBER_200,
+
+  // Eco types (kept for back-compat with match-day UIs).
+  ecoFullBuy: { bg: "rgba(29,158,117,0.1)", color: TEAL_400 },
+  ecoForceBuy: { bg: "rgba(239,159,39,0.1)", color: AMBER_200 },
+  ecoEco: { bg: "rgba(216,90,48,0.1)", color: CORAL_400 },
+  ecoPistol: { bg: "rgba(0,0,0,0.04)", color: INK_PRIMARY },
 } as const;
 
-/** Role → accent color lookup */
 export function roleColor(role: string): string {
   const r = role.toLowerCase();
   if (r === "duelist") return D.roleDuelist;
@@ -64,38 +113,60 @@ export function roleColor(role: string): string {
   return D.roleFlex;
 }
 
-/** Drop-shadow filter for glowing logos/icons over a map background */
-export function glowFilter(color: string, intensity = 0.5): string {
-  const hex = color.replace("#", "");
-  const alpha = Math.round(intensity * 255)
-    .toString(16)
-    .padStart(2, "0");
-  return `drop-shadow(0 0 20px #${hex}${alpha})`;
+// Glow / text-shadow helpers are kept as identity so legacy callers don't
+// crash, but they intentionally return nothing — the design system forbids
+// shadows and glows.
+export function glowFilter(_color: string, _intensity = 0.5): string {
+  return "none";
+}
+export const TEXT_SHADOW = "none";
+export const TEXT_SHADOW_SUBTLE = "none";
+
+// ── Star system ─────────────────────────────────────────────────
+
+/** Unicode glyphs used across the app. Empty is filled block per spec. */
+export const STAR_FULL = "★";
+export const STAR_EMPTY = "■";
+export const STAR_HALF = "½";
+
+/** Overall /20 → { stars: 0..5 in 0.5 steps, label }. Overall itself is hidden. */
+export function overallToStars(overall: number): { stars: number; label: string } {
+  if (overall >= 17.0) return { stars: 5, label: "World class" };
+  if (overall >= 14.5) return { stars: 4.5, label: "Elite" };
+  if (overall >= 12.0) return { stars: 4, label: "Very good" };
+  if (overall >= 9.5) return { stars: 3.5, label: "Good" };
+  if (overall >= 7.0) return { stars: 3, label: "Average" };
+  return { stars: 2.5, label: "Fringe" };
 }
 
-/** Text shadow preset for readable text over images */
-export const TEXT_SHADOW = "0 2px 10px rgba(0,0,0,0.9)";
-export const TEXT_SHADOW_SUBTLE = "0 1px 4px rgba(0,0,0,0.8)";
+/** Attribute /20 → colour. Teal >=14, Indigo >=9, Coral <9. */
+export function attrColorFor(value: number): string {
+  if (value >= 14) return TEAL_400;
+  if (value >= 9) return INDIGO_600;
+  return CORAL_400;
+}
 
-/** Standard label class suffixes (Tailwind-compatible strings) */
+// ── Label presets — re-expressed per VALO.GG (no more uppercase) ──
+// Legacy keys kept; classes now follow sentence case + 400/500 weights.
 export const LABELS = {
-  tiny: "text-[10px] font-medium uppercase tracking-[0.25em]",
-  small: "text-[11px] font-medium uppercase tracking-[0.2em]",
-  medium: "text-[13px] font-medium uppercase tracking-[0.05em]",
-  hero: "text-[22px] font-medium uppercase tracking-[0.05em]",
+  caption: "text-[11px] font-normal",     // 11 / 400
+  body: "text-[13px] font-normal",        // 13 / 400
+  heading: "text-[16px] font-medium",     // 16 / 500
+  display: "text-[22px] font-medium",     // 22 / 500
+  // Deprecated aliases kept to avoid breaking older imports.
+  tiny: "text-[11px] font-normal",
+  small: "text-[11px] font-normal",
+  medium: "text-[13px] font-normal",
+  hero: "text-[22px] font-medium",
 } as const;
 
-/** Common floating card style — use in inline style or spread as CSS props */
-export const FLOAT_CARD = {
-  background: D.floatBg,
-  backdropFilter: "blur(8px)",
-  border: `1px solid ${D.floatBorder}`,
-  borderRadius: 8,
+/** Standard card styling per spec (12px radius, 0.5px hairline, flat). */
+export const CARD_STYLE = {
+  background: BG_PRIMARY,
+  border: `0.5px solid ${HAIRLINE}`,
+  borderRadius: 12,
 } as const;
 
-/** Dense solid card (non-translucent) for content sections */
-export const SOLID_CARD = {
-  background: D.surface,
-  border: `1px solid ${D.borderFaint}`,
-  borderRadius: 8,
-} as const;
+/** Kept for back-compat. No backdrop-filter (blur is forbidden). */
+export const FLOAT_CARD = CARD_STYLE;
+export const SOLID_CARD = CARD_STYLE;

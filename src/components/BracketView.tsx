@@ -136,14 +136,14 @@ export function BracketView({ matches, userTeamId, region, isUserRegion, teamNam
       >
         <div className="flex items-center gap-3">
           <span
-            className="text-[22px] font-medium uppercase tracking-[0.05em]"
+            className="text-[22px] font-medium "
             style={{ color: D.textPrimary }}
           >
             {region}
           </span>
           {isUserRegion && (
             <span
-              className="rounded-full px-3 py-1 text-[10px] font-medium uppercase tracking-[0.25em]"
+              className="rounded-full px-3 py-1 text-[10px] font-medium "
               style={{
                 background: "rgba(255,70,85,0.12)",
                 color: D.red,
@@ -301,7 +301,7 @@ function UpperBracketGrid({ r1, r2, semi, final_, userTeamId }: {
 function Header({ x, text }: { x: number; text: string }) {
   return (
     <div
-      className="absolute text-[10px] font-medium uppercase tracking-[0.3em]"
+      className="absolute text-[10px] font-medium "
       style={{ left: x, top: 0, color: D.textSubtle }}
     >
       {text}
@@ -389,7 +389,7 @@ function GenericBracketGrid({ rounds, roundLabels, byRound, userTeamId }: {
           return (
             <div key={roundId}>
               <div
-                className="absolute text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="absolute text-[10px] font-medium "
                 style={{ left: x, top: 0, color: D.textSubtle }}
               >
                 {roundLabels[colIdx]}
@@ -427,13 +427,13 @@ function SectionHeader({ label, color, sub }: { label: string; color: string; su
   return (
     <div className="flex items-center gap-3">
       <span
-        className="text-[11px] font-medium uppercase tracking-[0.3em]"
+        className="text-[11px] font-medium "
         style={{ color }}
       >
         {label}
       </span>
       <span
-        className="text-[10px] uppercase tracking-[0.2em]"
+        className="text-[10px] "
         style={{ color: D.textSubtle }}
       >
         {sub}

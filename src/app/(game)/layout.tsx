@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { TRPCProvider } from "@/components/TRPCProvider";
 import { SidebarNav } from "@/components/SidebarNav";
+import { D } from "@/constants/design";
 
 export const dynamic = "force-dynamic";
 
@@ -41,9 +42,10 @@ export default async function GameLayout({
       <div
         className="flex h-screen overflow-hidden"
         style={{
-          background: "#0F0F14",
+          background: D.bg,
           fontFamily: "Inter, system-ui, sans-serif",
-          color: "#ECE8E1",
+          color: D.textPrimary,
+          fontWeight: 400,
         }}
       >
         <SidebarNav />

@@ -84,20 +84,20 @@ export default function TacticsPage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div
-              className="text-[11px] font-medium uppercase tracking-[0.3em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Team Doctrine
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[34px] font-medium leading-none "
               style={{ color: D.textPrimary }}
             >
               Tactics
             </h1>
             <div className="mt-3 flex items-center gap-3">
               <span
-                className="rounded-full px-3 py-1 text-[10px] font-medium uppercase tracking-[0.25em]"
+                className="rounded-full px-3 py-1 text-[10px] font-medium "
                 style={{
                   background: `${currentColor}14`,
                   color: currentColor,
@@ -107,7 +107,7 @@ export default function TacticsPage() {
                 {playstyle.playstyle}
               </span>
               <span
-                className="text-[11px] font-medium uppercase tracking-[0.2em]"
+                className="text-[11px] font-medium "
                 style={{ color: D.textMuted }}
               >
                 {PLAYSTYLE_INFO[playstyle.playstyle]?.tag}
@@ -117,7 +117,7 @@ export default function TacticsPage() {
 
           <div className="flex flex-col items-end">
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Change cost
@@ -144,7 +144,7 @@ export default function TacticsPage() {
           >
             <div className="flex flex-col gap-0.5">
               <span
-                className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                className="text-[10px] font-medium "
                 style={{ color: D.gold }}
               >
                 Locked this stage
@@ -165,7 +165,7 @@ export default function TacticsPage() {
             }}
           >
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.25em]"
+              className="text-[10px] font-medium "
               style={{ color: D.red }}
             >
               Error
@@ -205,7 +205,7 @@ export default function TacticsPage() {
       {/* ── Playstyle options ── */}
       <section className="px-10 py-8">
         <div
-          className="mb-5 text-[10px] font-medium uppercase tracking-[0.3em]"
+          className="mb-5 text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
           Available Playstyles
@@ -243,14 +243,14 @@ export default function TacticsPage() {
               >
                 <div className="flex items-center justify-between">
                   <span
-                    className="text-[11px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[11px] font-medium "
                     style={{ color: info?.color ?? D.textPrimary }}
                   >
                     {info?.label ?? ps}
                   </span>
                   {isCurrent && (
                     <span
-                      className="rounded px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.25em]"
+                      className="rounded px-2 py-0.5 text-[9px] font-medium "
                       style={{
                         background: `${info?.color ?? D.red}1A`,
                         color: info?.color ?? D.red,
@@ -296,7 +296,7 @@ export default function TacticsPage() {
                 <button
                   disabled={disabled}
                   onClick={() => setMutation.mutate({ playstyle: ps as typeof ps })}
-                  className="mt-5 rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors disabled:cursor-not-allowed"
+                  className="mt-5 rounded px-4 py-2 text-[10px] font-medium transition-colors disabled:cursor-not-allowed"
                   style={{
                     background: isCurrent ? "transparent" : D.card,
                     color: isCurrent
@@ -336,7 +336,7 @@ function MetricCell({
       style={{ borderRight: `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}

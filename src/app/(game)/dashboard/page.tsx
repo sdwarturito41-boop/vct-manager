@@ -91,20 +91,20 @@ export default async function DashboardPage() {
             )}
             <div>
               <div
-                className="text-[11px] font-medium uppercase tracking-[0.3em]"
+                className="text-[11px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 {team.region} · Season {season?.number ?? 1}
               </div>
               <h1
-                className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+                className="mt-1 text-[34px] font-medium leading-none "
                 style={{ color: D.textPrimary }}
               >
                 {team.name}
               </h1>
               {currentStage && season && (
                 <div
-                  className="mt-2 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.2em]"
+                  className="mt-2 flex items-center gap-3 text-[11px] font-medium "
                   style={{ color: D.textMuted }}
                 >
                   <span style={{ color: D.red }}>{currentStage.name}</span>
@@ -134,7 +134,7 @@ export default async function DashboardPage() {
           >
             <div className="flex flex-col gap-0.5">
               <span
-                className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                className="text-[10px] font-medium "
                 style={{ color: D.gold }}
               >
                 Off-season active
@@ -146,7 +146,7 @@ export default async function DashboardPage() {
             </div>
             <Link
               href="/market"
-              className="rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors"
+              className="rounded px-4 py-2 text-[10px] font-medium transition-colors"
               style={{
                 background: "rgba(198,155,58,0.15)",
                 color: D.gold,
@@ -178,7 +178,7 @@ export default async function DashboardPage() {
           style={{ borderBottom: `1px solid ${D.border}` }}
         >
           <div
-            className="text-[10px] font-medium uppercase tracking-[0.35em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle }}
           >
             Next Match · {nextMatch.stageId.replace(/_/g, " ")}
@@ -188,13 +188,13 @@ export default async function DashboardPage() {
             <div className="flex items-center justify-end gap-4">
               <div className="flex flex-col items-end">
                 <span
-                  className="text-[11px] font-medium uppercase tracking-[0.2em]"
+                  className="text-[11px] font-medium "
                   style={{ color: D.textSubtle }}
                 >
                   {nextMatch.team1.tag}
                 </span>
                 <span
-                  className="text-[22px] font-medium uppercase tracking-[0.05em]"
+                  className="text-[22px] font-medium "
                   style={{ color: nextMatch.team1Id === team.id ? D.red : D.textPrimary }}
                 >
                   {nextMatch.team1.name}
@@ -208,21 +208,21 @@ export default async function DashboardPage() {
             {/* Center: VS + metadata */}
             <div className="flex flex-col items-center gap-2">
               <span
-                className="text-[20px] font-medium uppercase tracking-[0.3em]"
+                className="text-[20px] font-medium "
                 style={{ color: D.textMuted }}
               >
                 VS
               </span>
               <div className="flex items-center gap-2">
                 <span
-                  className="text-[10px] font-medium uppercase tracking-[0.2em]"
+                  className="text-[10px] font-medium "
                   style={{ color: D.textSubtle }}
                 >
                   {nextMatch.format}
                 </span>
                 <span style={{ color: D.textFaint }}>·</span>
                 <span
-                  className="text-[10px] font-medium uppercase tracking-[0.15em]"
+                  className="text-[10px] font-medium "
                   style={{ color: D.textMuted }}
                 >
                   {dayNameFull(nextMatch.day)}
@@ -230,7 +230,7 @@ export default async function DashboardPage() {
               </div>
               {season && nextMatch.day <= season.currentDay && (
                 <span
-                  className="rounded-full px-3 py-1 text-[10px] font-medium uppercase tracking-[0.2em]"
+                  className="rounded-full px-3 py-1 text-[10px] font-medium "
                   style={{
                     background: "rgba(255,70,85,0.12)",
                     color: D.red,
@@ -249,13 +249,13 @@ export default async function DashboardPage() {
               )}
               <div className="flex flex-col items-start">
                 <span
-                  className="text-[11px] font-medium uppercase tracking-[0.2em]"
+                  className="text-[11px] font-medium "
                   style={{ color: D.textSubtle }}
                 >
                   {nextMatch.team2.tag}
                 </span>
                 <span
-                  className="text-[22px] font-medium uppercase tracking-[0.05em]"
+                  className="text-[22px] font-medium "
                   style={{ color: nextMatch.team2Id === team.id ? D.red : D.textPrimary }}
                 >
                   {nextMatch.team2.name}
@@ -272,14 +272,14 @@ export default async function DashboardPage() {
         <div className="flex flex-col" style={{ borderRight: `1px solid ${D.border}` }}>
           <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Active Roster
             </span>
             <Link
               href="/roster"
-              className="text-[10px] font-medium uppercase tracking-[0.2em] transition-colors"
+              className="text-[10px] font-medium transition-colors"
               style={{ color: D.textMuted }}
             >
               Manage →
@@ -327,7 +327,7 @@ export default async function DashboardPage() {
         <div className="flex flex-col" style={{ borderRight: `1px solid ${D.border}` }}>
           <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Recent Results
@@ -382,14 +382,14 @@ export default async function DashboardPage() {
         <div className="flex flex-col">
           <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Team Skills
             </span>
             <Link
               href="/training"
-              className="text-[10px] font-medium uppercase tracking-[0.2em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textMuted }}
             >
               Train →
@@ -407,7 +407,7 @@ export default async function DashboardPage() {
       {season && currentStage && (
         <section className="flex items-center justify-between px-10 py-4">
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.3em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle, textShadow: TEXT_SHADOW_SUBTLE }}
           >
             Season progress
@@ -421,7 +421,7 @@ export default async function DashboardPage() {
             </span>
             <Link
               href="/league"
-              className="font-medium uppercase tracking-[0.2em]"
+              className="font-medium "
               style={{ color: D.red }}
             >
               Standings →
@@ -444,7 +444,7 @@ function MetricCell({
       style={{ borderRight: `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}
@@ -468,7 +468,7 @@ function SkillRow({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center gap-3">
       <span
-        className="w-16 text-[10px] font-medium uppercase tracking-[0.2em]"
+        className="w-16 text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}

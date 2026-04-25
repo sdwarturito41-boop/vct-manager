@@ -100,20 +100,20 @@ export default function TrainingPage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div
-              className="text-[11px] font-medium uppercase tracking-[0.3em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Weekly Drills · $5k per session
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[34px] font-medium leading-none "
               style={{ color: D.textPrimary }}
             >
               Training
             </h1>
             {season && (
               <div
-                className="mt-2 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.2em]"
+                className="mt-2 flex items-center gap-3 text-[11px] font-medium "
                 style={{ color: D.textMuted }}
               >
                 <span style={{ color: atLimit ? D.red : D.textPrimary }}>
@@ -177,14 +177,14 @@ export default function TrainingPage() {
             style={{ borderBottom: `1px solid ${D.borderFaint}` }}
           >
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.35em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               New Session
             </span>
             {hasHighTrainingCoach && (
               <span
-                className="rounded px-2 py-1 text-[10px] font-medium uppercase tracking-[0.2em]"
+                className="rounded px-2 py-1 text-[10px] font-medium "
                 style={{
                   background: "rgba(198,155,58,0.1)",
                   color: D.gold,
@@ -200,7 +200,7 @@ export default function TrainingPage() {
             {/* Player select */}
             <div className="flex flex-col gap-2">
               <label
-                className="text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Player
@@ -229,7 +229,7 @@ export default function TrainingPage() {
             {/* Focus pills */}
             <div className="flex flex-col gap-2">
               <label
-                className="text-[10px] font-medium uppercase tracking-[0.3em]"
+                className="text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Focus
@@ -250,7 +250,7 @@ export default function TrainingPage() {
                       }}
                     >
                       <div
-                        className="text-[11px] font-medium uppercase tracking-[0.15em]"
+                        className="text-[11px] font-medium "
                         style={{ color: active ? D.bg : D.textPrimary }}
                       >
                         {f.label}
@@ -275,7 +275,7 @@ export default function TrainingPage() {
             {agentRequired && (
               <div className="flex flex-col gap-2">
                 <label
-                  className="text-[10px] font-medium uppercase tracking-[0.3em]"
+                  className="text-[10px] font-medium "
                   style={{ color: D.textSubtle }}
                 >
                   Agent
@@ -304,7 +304,7 @@ export default function TrainingPage() {
             {mapRequired && (
               <div className="flex flex-col gap-2">
                 <label
-                  className="text-[10px] font-medium uppercase tracking-[0.3em]"
+                  className="text-[10px] font-medium "
                   style={{ color: D.textSubtle }}
                 >
                   Map
@@ -353,7 +353,7 @@ export default function TrainingPage() {
                   mapName: mapName || undefined,
                 });
               }}
-              className="w-full rounded px-4 py-3 text-[11px] font-medium uppercase tracking-[0.25em] transition-colors disabled:opacity-40"
+              className="w-full rounded px-4 py-3 text-[11px] font-medium transition-colors disabled:opacity-40"
               style={{
                 background: canSubmit
                   ? "rgba(255,70,85,0.12)"
@@ -378,13 +378,13 @@ export default function TrainingPage() {
             style={{ borderBottom: `1px solid ${D.borderFaint}` }}
           >
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.35em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               This Week's Sessions
             </span>
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+              className="text-[10px] font-medium tabular-nums"
               style={{ color: D.textMuted }}
             >
               {sessions.length} / {max}
@@ -420,7 +420,7 @@ export default function TrainingPage() {
                       {s.player.ign}
                     </span>
                     <span
-                      className="text-[10px] font-medium uppercase tracking-[0.2em]"
+                      className="text-[10px] font-medium "
                       style={{ color: D.textSubtle }}
                     >
                       {s.focus.replace(/_/g, " ")}
@@ -437,7 +437,7 @@ export default function TrainingPage() {
                     )}
                     {s.mapName && (
                       <span
-                        className="text-[10px] font-medium uppercase tracking-[0.2em]"
+                        className="text-[10px] font-medium "
                         style={{ color: D.textSubtle }}
                       >
                         {s.mapName}
@@ -445,7 +445,7 @@ export default function TrainingPage() {
                     )}
                     {!s.agentName && !s.mapName && (
                       <span
-                        className="text-[10px] font-medium uppercase tracking-[0.2em]"
+                        className="text-[10px] font-medium "
                         style={{ color: D.textSubtle }}
                       >
                         Team drill
@@ -463,7 +463,7 @@ export default function TrainingPage() {
                     style={{ borderBottom: `1px solid ${D.borderFaint}` }}
                   >
                     <span
-                      className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                      className="text-[10px] font-medium "
                       style={{ color: D.textFaint }}
                     >
                       Slot {sessions.length + i + 1} · Empty
@@ -498,7 +498,7 @@ function MetricCell({
       style={last ? undefined : { borderRight: `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}

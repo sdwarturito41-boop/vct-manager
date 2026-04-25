@@ -83,13 +83,13 @@ export default function InboxPage() {
       >
         <div>
           <div
-            className="text-[11px] font-medium uppercase tracking-[0.3em]"
+            className="text-[11px] font-medium "
             style={{ color: D.textSubtle }}
           >
             Manager
           </div>
           <h1
-            className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+            className="mt-1 text-[34px] font-medium leading-none "
             style={{ color: D.textPrimary }}
           >
             Inbox
@@ -98,7 +98,7 @@ export default function InboxPage() {
         <div className="flex items-center gap-5">
           <div className="flex flex-col items-end">
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.25em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Unread
@@ -110,7 +110,7 @@ export default function InboxPage() {
           <button
             onClick={() => markAllRead.mutate()}
             disabled={unreadCount === 0 || markAllRead.isPending}
-            className="rounded px-4 py-2 text-[11px] font-medium uppercase tracking-[0.2em] transition-colors"
+            className="rounded px-4 py-2 text-[11px] font-medium transition-colors"
             style={{
               background: "transparent",
               border: `1px solid ${D.borderStrong}`,
@@ -132,7 +132,7 @@ export default function InboxPage() {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.15em] transition-colors"
+              className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11px] font-medium transition-colors"
               style={{
                 background: isActive ? "rgba(255,255,255,0.9)" : "transparent",
                 color: isActive ? "#0a0a14" : D.textMuted,
@@ -176,7 +176,7 @@ export default function InboxPage() {
                 >
                   <div className="flex items-center gap-2">
                     <span
-                      className="text-[9px] font-medium uppercase tracking-[0.2em]"
+                      className="text-[9px] font-medium "
                       style={{ color: catColor }}
                     >
                       {msg.category}
@@ -186,7 +186,7 @@ export default function InboxPage() {
                     )}
                     {msg.requiresAction && !msg.actionResolved && (
                       <span
-                        className="ml-auto rounded px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.15em]"
+                        className="ml-auto rounded px-1.5 py-0.5 text-[8px] font-medium "
                         style={{ background: "rgba(239,159,39,0.15)", color: D.amber, border: "1px solid rgba(239,159,39,0.3)" }}
                       >
                         Action
@@ -199,7 +199,7 @@ export default function InboxPage() {
                   <div className="flex items-center gap-2 text-[10px]" style={{ color: D.textSubtle }}>
                     <span>{msg.fromName}</span>
                     <span>·</span>
-                    <span className="uppercase tracking-[0.15em]">W{msg.week}</span>
+                    <span className="">W{msg.week}</span>
                   </div>
                 </button>
               );
@@ -219,13 +219,13 @@ export default function InboxPage() {
               <div className="flex flex-col gap-3 px-8 py-6" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
                 <div className="flex items-center gap-2">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.25em]"
+                    className="text-[10px] font-medium "
                     style={{ color: CATEGORY_COLORS[selected.category] ?? D.textMuted }}
                   >
                     {selected.category}
                   </span>
                   <span style={{ color: D.textFaint }}>·</span>
-                  <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: D.textSubtle }}>
+                  <span className="text-[10px] " style={{ color: D.textSubtle }}>
                     Week {selected.week} · Season {selected.season}
                   </span>
                 </div>
@@ -257,7 +257,7 @@ export default function InboxPage() {
                       <button
                         onClick={() => resolveAction.mutate({ messageId: selected.id, result: "accepted" })}
                         disabled={resolveAction.isPending}
-                        className="rounded px-5 py-2 text-[11px] font-medium uppercase tracking-[0.2em] transition-colors"
+                        className="rounded px-5 py-2 text-[11px] font-medium transition-colors"
                         style={{
                           background: "rgba(76,175,125,0.12)",
                           color: D.green,
@@ -269,7 +269,7 @@ export default function InboxPage() {
                       <button
                         onClick={() => resolveAction.mutate({ messageId: selected.id, result: "rejected" })}
                         disabled={resolveAction.isPending}
-                        className="rounded px-5 py-2 text-[11px] font-medium uppercase tracking-[0.2em] transition-colors"
+                        className="rounded px-5 py-2 text-[11px] font-medium transition-colors"
                         style={{
                           background: "rgba(255,70,85,0.1)",
                           color: D.red,
@@ -281,7 +281,7 @@ export default function InboxPage() {
                     </>
                   ) : selected.actionResolved ? (
                     <div
-                      className="rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em]"
+                      className="rounded px-4 py-2 text-[10px] font-medium "
                       style={{ background: "rgba(255,255,255,0.04)", color: D.textSubtle }}
                     >
                       Resolved: {selected.actionResult}
@@ -291,7 +291,7 @@ export default function InboxPage() {
                 <button
                   onClick={() => deleteMsg.mutate({ messageId: selected.id })}
                   disabled={deleteMsg.isPending}
-                  className="rounded px-4 py-2 text-[10px] font-medium uppercase tracking-[0.2em] transition-colors"
+                  className="rounded px-4 py-2 text-[10px] font-medium transition-colors"
                   style={{
                     background: "transparent",
                     color: D.textSubtle,

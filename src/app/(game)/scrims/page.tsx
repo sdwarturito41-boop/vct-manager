@@ -125,13 +125,13 @@ export default function ScrimsPage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div
-              className="text-[11px] font-medium uppercase tracking-[0.3em]"
+              className="text-[11px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Practice & Scouting
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium uppercase leading-none tracking-[0.05em]"
+              className="mt-1 text-[34px] font-medium leading-none "
               style={{ color: D.textPrimary }}
             >
               Scrims
@@ -183,7 +183,7 @@ export default function ScrimsPage() {
             style={{ borderBottom: `1px solid ${D.borderFaint}` }}
           >
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Request New Scrim
@@ -194,7 +194,7 @@ export default function ScrimsPage() {
             {/* Opponent */}
             <div>
               <label
-                className="mb-2 block text-[10px] font-medium uppercase tracking-[0.2em]"
+                className="mb-2 block text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Opponent
@@ -221,7 +221,7 @@ export default function ScrimsPage() {
             {/* Map pills */}
             <div>
               <label
-                className="mb-2 block text-[10px] font-medium uppercase tracking-[0.2em]"
+                className="mb-2 block text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Map
@@ -233,7 +233,7 @@ export default function ScrimsPage() {
                     <button
                       key={mapName}
                       onClick={() => setSelectedMap(mapName)}
-                      className="rounded px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.2em] transition-colors"
+                      className="rounded px-3 py-1.5 text-[11px] font-medium transition-colors"
                       style={{
                         background: active ? D.textPrimary : "transparent",
                         color: active ? D.bg : D.textMuted,
@@ -252,14 +252,14 @@ export default function ScrimsPage() {
             {/* Fake comp toggle pill */}
             <div>
               <label
-                className="mb-2 block text-[10px] font-medium uppercase tracking-[0.2em]"
+                className="mb-2 block text-[10px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Fake Comp
               </label>
               <button
                 onClick={() => setFakeComp(!fakeComp)}
-                className="w-full rounded px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-[0.2em] transition-colors"
+                className="w-full rounded px-3 py-2.5 text-left text-[11px] font-medium transition-colors"
                 style={{
                   background: fakeComp ? "rgba(198,155,58,0.15)" : "transparent",
                   color: fakeComp ? D.gold : D.textMuted,
@@ -302,7 +302,7 @@ export default function ScrimsPage() {
                 requestScrim.isPending ||
                 slotsFull
               }
-              className="rounded px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.25em] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded px-4 py-2.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
               style={{
                 background: "rgba(255,70,85,0.1)",
                 color: D.red,
@@ -325,14 +325,14 @@ export default function ScrimsPage() {
             style={{ borderBottom: `1px solid ${D.borderFaint}` }}
           >
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Scrim Results
             </span>
             {scrims && scrims.length > 0 && (
               <span
-                className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+                className="text-[10px] font-medium tabular-nums"
                 style={{ color: D.textMuted }}
               >
                 {scrims.length} total
@@ -349,7 +349,7 @@ export default function ScrimsPage() {
           ) : !scrims || scrims.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 py-20">
               <span
-                className="text-[11px] font-medium uppercase tracking-[0.3em]"
+                className="text-[11px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 No Scrims Yet
@@ -376,13 +376,13 @@ export default function ScrimsPage() {
             style={{ borderBottom: `1px solid ${D.borderFaint}` }}
           >
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.3em]"
+              className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
               Scouted Opponents
             </span>
             <span
-              className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+              className="text-[10px] font-medium tabular-nums"
               style={{ color: D.textMuted }}
             >
               {scouted.length}
@@ -425,7 +425,7 @@ export default function ScrimsPage() {
                     {s.team.name}
                   </span>
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.2em]"
+                    className="text-[10px] font-medium "
                     style={{ color: D.textSubtle }}
                   >
                     [{s.team.tag}]
@@ -454,13 +454,13 @@ export default function ScrimsPage() {
                 </div>
                 <div className="flex items-center gap-4">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+                    className="text-[10px] font-medium tabular-nums"
                     style={{ color: D.textMuted }}
                   >
                     {s.count}x
                   </span>
                   <span
-                    className="rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+                    className="rounded px-2 py-0.5 text-[10px] font-medium tabular-nums"
                     style={{
                       background:
                         s.reliability >= 0.75
@@ -507,7 +507,7 @@ function MetricCell({
       style={{ borderRight: last ? undefined : `1px solid ${D.borderFaint}` }}
     >
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.3em]"
+        className="text-[10px] font-medium "
         style={{ color: D.textSubtle }}
       >
         {label}
@@ -520,7 +520,7 @@ function MetricCell({
       </span>
       {sub && (
         <span
-          className="text-[10px] uppercase tracking-[0.2em]"
+          className="text-[10px] "
           style={{ color: D.textSubtle }}
         >
           {sub}
@@ -574,7 +574,7 @@ function ScrimRow({ scrim }: { scrim: ScrimEntry }) {
             {scrim.opponent.name}
           </span>
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.2em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textSubtle }}
           >
             [{scrim.opponent.tag}]
@@ -598,7 +598,7 @@ function ScrimRow({ scrim }: { scrim: ScrimEntry }) {
         />
         <div className="absolute inset-0 flex items-center justify-center">
           <span
-            className="text-[10px] font-medium uppercase tracking-[0.25em]"
+            className="text-[10px] font-medium "
             style={{ color: D.textPrimary, textShadow: TEXT_SHADOW_SUBTLE }}
           >
             {scrim.mapName}
@@ -610,7 +610,7 @@ function ScrimRow({ scrim }: { scrim: ScrimEntry }) {
       {isRefused ? (
         <div className="flex items-center">
           <span
-            className="rounded px-2 py-1 text-[10px] font-medium uppercase tracking-[0.2em]"
+            className="rounded px-2 py-1 text-[10px] font-medium "
             style={{
               background: "rgba(255,70,85,0.1)",
               color: D.red,
@@ -650,7 +650,7 @@ function ScrimRow({ scrim }: { scrim: ScrimEntry }) {
           <div className="flex items-center gap-5">
             <div className="flex flex-col gap-1">
               <span
-                className="text-[9px] font-medium uppercase tracking-[0.25em]"
+                className="text-[9px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 You {scrim.fakeComp && "· (fake shown)"}
@@ -679,7 +679,7 @@ function ScrimRow({ scrim }: { scrim: ScrimEntry }) {
             </div>
             <div className="flex flex-col gap-1">
               <span
-                className="text-[9px] font-medium uppercase tracking-[0.25em]"
+                className="text-[9px] font-medium "
                 style={{ color: D.textSubtle }}
               >
                 Them
@@ -716,7 +716,7 @@ function ScrimRow({ scrim }: { scrim: ScrimEntry }) {
       <div className="flex flex-col items-end gap-1">
         {result && (
           <span
-            className="rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.2em] tabular-nums"
+            className="rounded px-2 py-0.5 text-[10px] font-medium tabular-nums"
             style={{
               background:
                 reliabilityPct >= 75
@@ -737,7 +737,7 @@ function ScrimRow({ scrim }: { scrim: ScrimEntry }) {
         )}
         {scrim.fakeComp && !isRefused && (
           <span
-            className="text-[9px] font-medium uppercase tracking-[0.25em]"
+            className="text-[9px] font-medium "
             style={{ color: D.gold }}
           >
             Fake
@@ -745,7 +745,7 @@ function ScrimRow({ scrim }: { scrim: ScrimEntry }) {
         )}
         {isOutdated && !isRefused && (
           <span
-            className="text-[9px] font-medium uppercase tracking-[0.25em]"
+            className="text-[9px] font-medium "
             style={{ color: D.red }}
           >
             Outdated
