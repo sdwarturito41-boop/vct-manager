@@ -28,10 +28,7 @@ import {
   applyMentorStatGrowth,
   loadActivePairMaps,
 } from "@/server/mercato/relationships";
-import {
-  recomputeAllOveralls,
-  snapshotPlayerStats,
-} from "@/server/mercato/attributes";
+import { snapshotPlayerStats } from "@/server/mercato/attributes";
 
 function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
   // Only use top 5 players by ACS (active roster limit)
@@ -156,6 +153,25 @@ export const seasonRouter = router({
     // Track which rounds completed (for bracket progression)
     const completedRounds = new Set<string>();
 
+    // Phase 1 — simulate all AI matches in memory (CPU only). User matches are
+    // queued for veto and skipped. This used to be a sequential await-loop
+    // that fired ~6 round-trips per match against Neon; on 16 matches/day
+    // that totalled ~100 sequential queries (4-8 s on the pooler).
+    type AiResult = {
+      matchId: string;
+      team1Id: string;
+      team2Id: string;
+      stageId: string;
+      winnerId: string;
+      loserId: string;
+      score: { team1: number; team2: number };
+      maps: Array<Record<string, unknown>>;
+      team1Name: string;
+      team2Name: string;
+      isStage12Group: boolean;
+    };
+    const aiResults: AiResult[] = [];
+
     for (const match of todaysMatches) {
       if (match.team1.players.length === 0 || match.team2.players.length === 0) continue;
 
@@ -164,7 +180,6 @@ export const seasonRouter = router({
         (match.team1Id === userTeam.id || match.team2Id === userTeam.id);
 
       if (isUserMatch) {
-        // Don't auto-simulate user matches - they need veto first
         simulatedResults.push({
           matchId: match.id,
           team1Id: match.team1Id,
@@ -177,7 +192,7 @@ export const seasonRouter = router({
           stageId: match.stageId,
           needsVeto: true,
         });
-        continue; // Skip simulation for this match
+        continue;
       }
 
       const simTeam1 = buildSimTeam(match.team1);
@@ -196,55 +211,75 @@ export const seasonRouter = router({
         },
       );
 
-      await ctx.prisma.match.update({
-        where: { id: match.id },
-        data: {
-          isPlayed: true,
-          playedAt: new Date(),
-          winnerId: result.winnerId,
-          score: { team1: result.score.team1, team2: result.score.team2 },
-          maps: result.maps.map((m) => ({ ...m })) as unknown as import("@/generated/prisma/client").Prisma.InputJsonValue,
-        },
-      });
-
       const loserId = result.winnerId === match.team1Id ? match.team2Id : match.team1Id;
-      await ctx.prisma.$transaction([
-        ctx.prisma.team.update({
-          where: { id: result.winnerId },
-          data: { wins: { increment: 1 } },
-        }),
-        ctx.prisma.team.update({
-          where: { id: loserId },
-          data: { losses: { increment: 1 } },
-        }),
-      ]);
+      const isStage12Group =
+        match.stageId === "STAGE_1_ALPHA" ||
+        match.stageId === "STAGE_1_OMEGA" ||
+        match.stageId === "STAGE_2_ALPHA" ||
+        match.stageId === "STAGE_2_OMEGA";
 
-      completedRounds.add(match.stageId);
-
-      simulatedResults.push({
+      aiResults.push({
         matchId: match.id,
         team1Id: match.team1Id,
         team2Id: match.team2Id,
+        stageId: match.stageId,
+        winnerId: result.winnerId,
+        loserId,
+        score: result.score,
+        maps: result.maps.map((m) => ({ ...m })),
         team1Name: match.team1.name,
         team2Name: match.team2.name,
-        winnerId: result.winnerId,
-        score: result.score,
+        isStage12Group,
+      });
+      completedRounds.add(match.stageId);
+    }
+
+    // Phase 2 — fire all DB writes in parallel. On Neon's pooler this caps the
+    // round-trip latency at ~one query's worth instead of multiplying by N.
+    const playedAt = new Date();
+    if (aiResults.length > 0) {
+      await Promise.all(
+        aiResults.map((r) =>
+          ctx.prisma.$transaction([
+            ctx.prisma.match.update({
+              where: { id: r.matchId },
+              data: {
+                isPlayed: true,
+                playedAt,
+                winnerId: r.winnerId,
+                score: { team1: r.score.team1, team2: r.score.team2 },
+                maps: r.maps as unknown as import("@/generated/prisma/client").Prisma.InputJsonValue,
+              },
+            }),
+            ctx.prisma.team.update({
+              where: { id: r.winnerId },
+              data: {
+                wins: { increment: 1 },
+                ...(r.isStage12Group ? { champPts: { increment: 1 } } : {}),
+              },
+            }),
+            ctx.prisma.team.update({
+              where: { id: r.loserId },
+              data: { losses: { increment: 1 } },
+            }),
+          ]),
+        ),
+      );
+    }
+
+    for (const r of aiResults) {
+      simulatedResults.push({
+        matchId: r.matchId,
+        team1Id: r.team1Id,
+        team2Id: r.team2Id,
+        team1Name: r.team1Name,
+        team2Name: r.team2Name,
+        winnerId: r.winnerId,
+        score: r.score,
         isUserMatch: false,
-        stageId: match.stageId,
+        stageId: r.stageId,
         needsVeto: false,
       });
-
-      // ── Stage 1/2 group stage: +1 champ pt per match win ──
-      if (
-        (match.stageId === "STAGE_1_ALPHA" || match.stageId === "STAGE_1_OMEGA" ||
-         match.stageId === "STAGE_2_ALPHA" || match.stageId === "STAGE_2_OMEGA") &&
-        result.winnerId
-      ) {
-        await ctx.prisma.team.update({
-          where: { id: result.winnerId },
-          data: { champPts: { increment: 1 } },
-        });
-      }
     }
 
     // Progress bracket/Swiss — check completion PER REGION for Kickoff, globally for international
@@ -632,8 +667,12 @@ export const seasonRouter = router({
       await runRelationshipsTick(ctx.prisma, ctx.save.id, newWeek, season.number);
       await applyMentorStatGrowth(ctx.prisma, ctx.save.id);
 
-      // Mercato V4 — recompute FM-style overalls (consumes mentor-bumped stats)
-      await recomputeAllOveralls(ctx.prisma, ctx.save.id);
+      // Mercato V4 — recomputeAllOveralls is intentionally disabled now that
+      // attributes/overall/playstyleRole come from the imported sheet (source
+      // of truth). Re-running it every week was both expensive (~290 UPDATEs)
+      // and destructive (it overwrote the manager's chosen playstyle role
+      // with a percentile-derived guess). Mentor stat bumps still surface in
+      // base stats; overall is recomputed on-demand by player.attributes.
 
       // V4.1 — weekly snapshot of player stats for historical variance
       await snapshotPlayerStats(ctx.prisma, ctx.save.id, newWeek, season.number);
@@ -785,6 +824,57 @@ export const seasonRouter = router({
         week: newWeek,
         currentDay: newDay,
       });
+    }
+
+    // ── Self-heal bracket progression ──
+    // Belt-and-suspenders: scan every stage that's 100% played and re-run its
+    // progress function. The progress functions are idempotent (early-return
+    // when the successor stage already exists), so this is safe to call every
+    // tick. Catches edge cases where the per-resolve dispatch missed a round
+    // (older saves, races, code paths bypassing the dispatcher).
+    {
+      const allMatches = await ctx.prisma.match.findMany({
+        where: { season: season.number },
+        select: {
+          stageId: true,
+          isPlayed: true,
+          team1: { select: { region: true } },
+        },
+      });
+      const counts = new Map<string, { played: number; total: number; region: string }>();
+      for (const m of allMatches) {
+        const key = `${m.stageId}::${m.team1.region}`;
+        const cur = counts.get(key) ?? { played: 0, total: 0, region: m.team1.region };
+        cur.total++;
+        if (m.isPlayed) cur.played++;
+        counts.set(key, cur);
+      }
+      for (const [key, c] of counts) {
+        if (c.played !== c.total || c.total === 0) continue;
+        const [stageId] = key.split("::");
+        const isInternational =
+          stageId.startsWith("MASTERS_") ||
+          stageId.startsWith("EWC_") ||
+          stageId.startsWith("CHAMPIONS_");
+        const isSwiss = stageId.includes("_SWISS_R");
+        try {
+          if (isSwiss) {
+            await progressSwiss(ctx.prisma, stageId, season.number, newDay);
+          } else if (isInternational && !isSwiss) {
+            await progressMastersBracket(ctx.prisma, stageId, season.number, newDay);
+          } else if (stageId.startsWith("KICKOFF")) {
+            await progressBracket(ctx.prisma, stageId, c.region as Region, season.number, newDay);
+          } else if (stageId === "STAGE_1_ALPHA" || stageId === "STAGE_1_OMEGA") {
+            await progressRegionalStage(ctx.prisma, "STAGE_1", c.region as Region, season.number, newDay);
+          } else if (stageId === "STAGE_2_ALPHA" || stageId === "STAGE_2_OMEGA") {
+            await progressRegionalStage(ctx.prisma, "STAGE_2", c.region as Region, season.number, newDay);
+          } else if (stageId.includes("_PO_")) {
+            await progressRegionalPlayoffs(ctx.prisma, stageId, c.region as Region, season.number, newDay);
+          }
+        } catch {
+          // Ignore — a single bad round shouldn't break the whole advance-day.
+        }
+      }
     }
 
     return {
