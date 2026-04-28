@@ -7,7 +7,13 @@ import { loadActivePairMaps } from "@/server/mercato/relationships";
 import type { SimTeam, AgentPick } from "@/server/simulation/engine";
 import { VALORANT_AGENTS } from "@/constants/agents";
 import type { Player, Team, Region } from "@/generated/prisma/client";
-import { progressBracket } from "@/server/schedule/generate";
+import {
+  progressBracket,
+  progressMastersBracket,
+  progressRegionalStage,
+  progressRegionalPlayoffs,
+  progressSwiss,
+} from "@/server/schedule/generate";
 
 function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
   const top5 = [...team.players].sort((a, b) => b.acs - a.acs).slice(0, 5);
@@ -544,35 +550,95 @@ export const matchRouter = router({
         });
       }
 
-      // 3. Check bracket progression
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
+      // 3. Check bracket progression. Mirrors the dispatcher in season.ts so
+      // that Masters/Regional Playoffs/Swiss rounds also progress after the
+      // user resolves their own match (previously only KICKOFF was advanced).
+      const season = await ctx.prisma.season.findFirst({
+        where: { isActive: true, saveId: ctx.save.id },
+      });
 
       if (season) {
-        const allRoundMatches = await ctx.prisma.match.findMany({
-          where: { stageId: match.stageId, season: season.number },
-          include: { team1: { select: { region: true } } },
-        });
+        const stageId = match.stageId;
+        const isInternational =
+          stageId.startsWith("MASTERS_") ||
+          stageId.startsWith("EWC_") ||
+          stageId.startsWith("CHAMPIONS_");
+        const isSwiss = stageId.includes("_SWISS_R");
+        const isMastersBracket = isInternational && !isSwiss;
 
-        // Group by region
-        const byRegion = new Map<string, { played: number; total: number }>();
-        for (const m of allRoundMatches) {
-          const r = m.team1.region;
-          const cur = byRegion.get(r) ?? { played: 0, total: 0 };
-          cur.total++;
-          if (m.isPlayed) cur.played++;
-          byRegion.set(r, cur);
-        }
+        if (isSwiss) {
+          const swissRoundMatches = await ctx.prisma.match.findMany({
+            where: { stageId, season: season.number },
+          });
+          const allPlayed =
+            swissRoundMatches.length > 0 && swissRoundMatches.every((m) => m.isPlayed);
+          if (allPlayed) {
+            await progressSwiss(ctx.prisma, stageId, season.number, season.currentDay);
+          }
+        } else if (isMastersBracket) {
+          const bracketMatches = await ctx.prisma.match.findMany({
+            where: { stageId, season: season.number },
+          });
+          const allPlayed =
+            bracketMatches.length > 0 && bracketMatches.every((m) => m.isPlayed);
+          if (allPlayed) {
+            await progressMastersBracket(ctx.prisma, stageId, season.number, season.currentDay);
+          }
+        } else {
+          // Regional rounds (Kickoff / Stage 1-2 group / Stage 1-2 playoffs).
+          const allRoundMatches = await ctx.prisma.match.findMany({
+            where: { stageId, season: season.number },
+            include: { team1: { select: { region: true } } },
+          });
 
-        // Progress each region whose round is fully complete
-        for (const [region, counts] of byRegion) {
-          if (counts.played === counts.total && counts.total > 0) {
-            await progressBracket(
-              ctx.prisma,
-              match.stageId,
-              region as Region,
-              season.number,
-              season.currentDay
-            );
+          const byRegion = new Map<string, { played: number; total: number }>();
+          for (const m of allRoundMatches) {
+            const r = m.team1.region;
+            const cur = byRegion.get(r) ?? { played: 0, total: 0 };
+            cur.total++;
+            if (m.isPlayed) cur.played++;
+            byRegion.set(r, cur);
+          }
+
+          for (const [region, counts] of byRegion) {
+            if (counts.played !== counts.total || counts.total === 0) continue;
+
+            if (stageId.startsWith("KICKOFF")) {
+              await progressBracket(
+                ctx.prisma,
+                stageId,
+                region as Region,
+                season.number,
+                season.currentDay,
+              );
+            }
+            if (stageId === "STAGE_1_ALPHA" || stageId === "STAGE_1_OMEGA") {
+              await progressRegionalStage(
+                ctx.prisma,
+                "STAGE_1",
+                region as Region,
+                season.number,
+                season.currentDay,
+              );
+            }
+            if (stageId === "STAGE_2_ALPHA" || stageId === "STAGE_2_OMEGA") {
+              await progressRegionalStage(
+                ctx.prisma,
+                "STAGE_2",
+                region as Region,
+                season.number,
+                season.currentDay,
+              );
+            }
+            if (stageId.includes("_PO_")) {
+              await progressRegionalPlayoffs(
+                ctx.prisma,
+                stageId,
+                region as Region,
+                season.number,
+                season.currentDay,
+              );
+            }
           }
         }
       }
