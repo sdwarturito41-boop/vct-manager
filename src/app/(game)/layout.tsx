@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { TRPCProvider } from "@/components/TRPCProvider";
-import { SidebarNav } from "@/components/SidebarNav";
+import { TopNav } from "@/components/TopNav";
 import { D } from "@/constants/design";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +40,7 @@ export default async function GameLayout({
   return (
     <TRPCProvider>
       <div
-        className="flex h-screen overflow-hidden"
+        className="flex h-screen flex-col overflow-hidden"
         style={{
           background: D.bg,
           fontFamily: "Inter, system-ui, sans-serif",
@@ -48,8 +48,8 @@ export default async function GameLayout({
           fontWeight: 400,
         }}
       >
-        <SidebarNav />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <TopNav />
+        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
     </TRPCProvider>
   );

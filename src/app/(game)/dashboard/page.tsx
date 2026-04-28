@@ -1,9 +1,6 @@
 import { serverTrpc } from "@/lib/trpc-server";
 import { prisma } from "@/lib/prisma";
-import { formatCurrency } from "@/lib/format";
-import { formatGameDate } from "@/lib/game-date";
 import { VCT_STAGES } from "@/constants/vct-format";
-import { AdvanceDayButton } from "@/components/AdvanceDayButton";
 import { TRPCError } from "@trpc/server";
 import Link from "next/link";
 import { D } from "@/constants/design";
@@ -116,14 +113,8 @@ export default async function DashboardPage() {
     matches
       .filter((m) => !m.isPlayed && m.day > 0)
       .sort((a, b) => a.day - b.day)[0] ?? null;
-  const pendingMatch = season
-    ? matches.find((m) => !m.isPlayed && m.day > 0 && m.day <= season.currentDay)
-    : null;
-  const pendingOpponent = pendingMatch
-    ? pendingMatch.team1Id === team.id
-      ? pendingMatch.team2.tag
-      : pendingMatch.team1.tag
-    : null;
+  // The advance-day Continue button now lives in the global TopNav, so the
+  // dashboard no longer needs to track the pending user match here.
 
   // Fetch full opponent roster for the matchup card.
   const opponentTeamId = nextMatch
@@ -203,93 +194,8 @@ export default async function DashboardPage() {
   const winProb = winProbability(myAvg, oppAvg);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden" style={{ background: D.bg }}>
-      {/* ─── Top header (52px) ─── */}
-      <header
-        className="flex shrink-0 items-center justify-between px-6"
-        style={{
-          height: 52,
-          background: D.surface,
-          borderBottom: `1px solid ${D.border}`,
-        }}
-      >
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            {team.logoUrl ? (
-              <img src={team.logoUrl} alt={team.name} className="h-8 w-8 object-contain" />
-            ) : (
-              <div
-                className="flex h-8 w-8 items-center justify-center rounded-full"
-                style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-              >
-                <span className="text-[12px]" style={{ color: D.textPrimary }}>
-                  {team.name.slice(0, 2)}
-                </span>
-              </div>
-            )}
-            <span className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
-              {team.name}
-            </span>
-          </div>
-
-          <nav className="flex items-center gap-5">
-            {(
-              [
-                ["Portal", true],
-                ["Squad", false],
-                ["Recruitment", false],
-                ["Match day", false],
-                ["Club", false],
-                ["Career", false],
-              ] as const
-            ).map(([label, active]) => (
-              <span
-                key={label}
-                className="relative py-3 text-[13px]"
-                style={{
-                  color: active ? D.textPrimary : D.textMuted,
-                  fontWeight: active ? 500 : 400,
-                }}
-              >
-                {label}
-                {active && (
-                  <span
-                    className="absolute bottom-0 left-0 right-0"
-                    style={{ height: 2, background: D.primary }}
-                  />
-                )}
-              </span>
-            ))}
-          </nav>
-        </div>
-
-        <div className="flex items-center gap-4">
-          {season && (
-            <span className="text-[12px] tabular-nums" style={{ color: D.textMuted }}>
-              {formatGameDate(season.currentDay)}
-            </span>
-          )}
-          <span
-            className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] tabular-nums"
-            style={{
-              background: "rgba(29,158,117,0.12)",
-              color: D.teal,
-              border: `1px solid rgba(29,158,117,0.25)`,
-            }}
-          >
-            <span style={{ width: 6, height: 6, borderRadius: 999, background: D.teal }} />
-            {formatCurrency(team.budget)}
-          </span>
-          <div style={{ minWidth: 140 }}>
-            <AdvanceDayButton
-              pendingMatchId={pendingMatch?.id}
-              pendingOpponent={pendingOpponent}
-            />
-          </div>
-        </div>
-      </header>
-
-      {/* ─── Sub-navigation ─── */}
+    <div className="flex h-full flex-col overflow-hidden" style={{ background: D.bg }}>
+      {/* Page-specific sub-nav (the global TopNav lives in the layout). */}
       <nav
         className="flex shrink-0 items-center gap-5 px-6"
         style={{
