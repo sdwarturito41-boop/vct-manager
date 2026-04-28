@@ -195,45 +195,6 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden" style={{ background: D.bg }}>
-      {/* Page-specific sub-nav (the global TopNav lives in the layout). */}
-      <nav
-        className="flex shrink-0 items-center gap-5 px-6"
-        style={{
-          height: 36,
-          background: D.surface,
-          borderBottom: `1px solid ${D.border}`,
-        }}
-      >
-        {(
-          [
-            ["Overview", true],
-            ["Messages", false],
-            ["Calendar", false],
-            ["News site", false],
-            ["Fixture schedule", false],
-            ["Standings", false],
-            ["More", false],
-          ] as const
-        ).map(([label, active]) => (
-          <span
-            key={label}
-            className="relative py-2 text-[12px]"
-            style={{
-              color: active ? D.primary : D.textMuted,
-              fontWeight: active ? 500 : 400,
-            }}
-          >
-            {label}
-            {active && (
-              <span
-                className="absolute -bottom-0 left-0 right-0"
-                style={{ height: 2, background: D.primary }}
-              />
-            )}
-          </span>
-        ))}
-      </nav>
-
       {/* ─── 3-column body ─── */}
       <div
         className="grid min-h-0 flex-1"

@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { TRPCProvider } from "@/components/TRPCProvider";
 import { TopNav } from "@/components/TopNav";
+import { SubNav } from "@/components/SubNav";
 import { D } from "@/constants/design";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,7 @@ export default async function GameLayout({
         }}
       >
         <TopNav />
+        <SubNav />
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
     </TRPCProvider>

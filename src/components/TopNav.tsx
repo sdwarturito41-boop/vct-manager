@@ -9,20 +9,11 @@ import { formatCurrency } from "@/lib/format";
 import { formatGameDate } from "@/lib/game-date";
 import { AdvanceDayButton } from "@/components/AdvanceDayButton";
 
-// Top navigation matching the FM portal layout. Replaces the old sidebar nav.
-// Each main tab maps to one or more app routes; the active tab is determined
-// by the current pathname so the same component works on every page.
-const TABS = [
-  { label: "Portal", href: "/dashboard", paths: ["/dashboard"] },
-  { label: "Squad", href: "/roster", paths: ["/roster", "/training", "/tactics", "/player"] },
-  { label: "Recruitment", href: "/market", paths: ["/market"] },
-  { label: "Match day", href: "/scrims", paths: ["/scrims", "/league", "/season"] },
-  { label: "Club", href: "/staff", paths: ["/staff", "/sponsors"] },
-  { label: "Career", href: "/inbox", paths: ["/inbox", "/patches"] },
-] as const;
+import { MAIN_TABS, activeMainTab } from "@/constants/nav";
 
 export function TopNav() {
   const pathname = usePathname();
+  const active = activeMainTab(pathname);
   const { data: team } = trpc.team.get.useQuery(undefined, { retry: false });
   const { data: season } = trpc.season.getCurrent.useQuery(undefined, { retry: false });
   const { data: unreadCount = 0 } = trpc.message.unreadCount.useQuery(undefined, {
@@ -62,19 +53,17 @@ export function TopNav() {
 
         {/* Main tabs */}
         <nav className="flex items-center gap-5">
-          {TABS.map((tab) => {
-            const active = tab.paths.some(
-              (p) => pathname === p || pathname.startsWith(p + "/"),
-            );
+          {MAIN_TABS.map((tab) => {
+            const isActive = active?.label === tab.label;
             const showBadge = tab.label === "Career" && unreadCount > 0;
             return (
               <Link
                 key={tab.label}
                 href={tab.href}
-                className="relative flex items-center gap-1.5 py-[18px] text-[13px] transition-colors"
+                className="relative flex items-center gap-1.5 py-4.5 text-[13px] transition-colors"
                 style={{
-                  color: active ? "#ffffff" : "rgba(255,255,255,0.55)",
-                  fontWeight: active ? 500 : 400,
+                  color: isActive ? "#ffffff" : "rgba(255,255,255,0.55)",
+                  fontWeight: isActive ? 500 : 400,
                 }}
               >
                 {tab.label}
@@ -91,7 +80,7 @@ export function TopNav() {
                     {unreadCount}
                   </span>
                 )}
-                {active && (
+                {isActive && (
                   <span
                     className="absolute bottom-0 left-0 right-0"
                     style={{ height: 2, background: D.primary }}
