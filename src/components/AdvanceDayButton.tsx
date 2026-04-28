@@ -44,6 +44,13 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
   } | null>(null);
 
   const { data: userTeam } = trpc.team.get.useQuery(undefined, { retry: false });
+  // Server-side source of truth: do we have a match to play right now?
+  // Survives refreshes — `pendingFromAdvance` only catches the moment after
+  // an advanceDay tick, which is lost on navigation.
+  const { data: serverPending } = trpc.match.getPendingUserMatch.useQuery(
+    undefined,
+    { retry: false },
+  );
 
   const mutation = trpc.season.advanceDay.useMutation({
     onSuccess: (data) => {
@@ -91,8 +98,14 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
   }
 
   // Determine which CTA to render: play user match (if any) vs continue.
-  const matchToPlay = pendingMatchId ?? pendingFromAdvance?.matchId;
-  const buttonOpponent = pendingOpponent ?? pendingFromAdvance?.opponent ?? null;
+  // Priority: explicit prop → just-advanced state → server-confirmed pending.
+  const matchToPlay =
+    pendingMatchId ?? pendingFromAdvance?.matchId ?? serverPending?.matchId;
+  const buttonOpponent =
+    pendingOpponent ??
+    pendingFromAdvance?.opponent ??
+    serverPending?.opponent ??
+    null;
 
   return (
     <>

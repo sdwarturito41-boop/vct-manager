@@ -60,6 +60,44 @@ async function applyActivePatch(
 }
 
 export const matchRouter = router({
+  // Returns the user team's earliest pending past/today match (if any). The
+  // TopNav uses this to render a "Play match" CTA whenever the user has
+  // something to play — without depending on a transient frontend state from
+  // a recent advanceDay call.
+  getPendingUserMatch: saveProcedure.query(async ({ ctx }) => {
+    const userTeam = await ctx.prisma.team.findFirst({
+      where: { saveId: ctx.save.id, isPlayerTeam: true },
+      select: { id: true },
+    });
+    if (!userTeam) return null;
+
+    const season = await ctx.prisma.season.findFirst({
+      where: { isActive: true, saveId: ctx.save.id },
+      select: { currentDay: true },
+    });
+    if (!season) return null;
+
+    const match = await ctx.prisma.match.findFirst({
+      where: {
+        saveId: ctx.save.id,
+        isPlayed: false,
+        day: { gt: 0, lte: season.currentDay },
+        OR: [{ team1Id: userTeam.id }, { team2Id: userTeam.id }],
+      },
+      orderBy: { day: "asc" },
+      select: {
+        id: true,
+        team1: { select: { name: true, tag: true } },
+        team2: { select: { name: true, tag: true } },
+      },
+    });
+    if (!match) return null;
+    return {
+      matchId: match.id,
+      opponent: `${match.team1.name} vs ${match.team2.name}`,
+    };
+  }),
+
   simulate: saveProcedure
     .input(z.object({ matchId: z.string() }))
     .mutation(async ({ ctx, input }) => {
