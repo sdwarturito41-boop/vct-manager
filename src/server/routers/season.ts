@@ -69,11 +69,14 @@ export const seasonRouter = router({
     // Block only if user has an unplayed match on or BEFORE current day (in the past).
     // If the match is scheduled for today or future, advance is allowed — when newDay
     // reaches the match day, the Play Match button will appear.
-    const userTeam = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+    const userTeam = await ctx.prisma.team.findFirst({
+      where: { saveId: ctx.save.id, isPlayerTeam: true },
+    });
     const newDay = season.currentDay + 1;
     if (userTeam) {
       const pendingMatch = await ctx.prisma.match.findFirst({
         where: {
+          saveId: ctx.save.id,
           isPlayed: false,
           day: { gt: 0, lte: season.currentDay }, // only past/today matches block
           OR: [{ team1Id: userTeam.id }, { team2Id: userTeam.id }],
@@ -113,6 +116,7 @@ export const seasonRouter = router({
     const stagePrefix = season.currentStage;
     const todaysMatches = await ctx.prisma.match.findMany({
       where: {
+        saveId: ctx.save.id,
         day: { gt: 0, lte: newDay },
         season: season.number,
         isPlayed: false,
@@ -133,6 +137,10 @@ export const seasonRouter = router({
       team2Id: string;
       team1Name: string;
       team2Name: string;
+      team1Tag: string;
+      team2Tag: string;
+      team1LogoUrl: string | null;
+      team2LogoUrl: string | null;
       winnerId: string;
       score: { team1: number; team2: number };
       isUserMatch: boolean;
@@ -168,6 +176,10 @@ export const seasonRouter = router({
       maps: Array<Record<string, unknown>>;
       team1Name: string;
       team2Name: string;
+      team1Tag: string;
+      team2Tag: string;
+      team1LogoUrl: string | null;
+      team2LogoUrl: string | null;
       isStage12Group: boolean;
     };
     const aiResults: AiResult[] = [];
@@ -186,6 +198,10 @@ export const seasonRouter = router({
           team2Id: match.team2Id,
           team1Name: match.team1.name,
           team2Name: match.team2.name,
+          team1Tag: match.team1.tag,
+          team2Tag: match.team2.tag,
+          team1LogoUrl: match.team1.logoUrl,
+          team2LogoUrl: match.team2.logoUrl,
           winnerId: "",
           score: { team1: 0, team2: 0 },
           isUserMatch: true,
@@ -229,6 +245,10 @@ export const seasonRouter = router({
         maps: result.maps.map((m) => ({ ...m })),
         team1Name: match.team1.name,
         team2Name: match.team2.name,
+        team1Tag: match.team1.tag,
+        team2Tag: match.team2.tag,
+        team1LogoUrl: match.team1.logoUrl,
+        team2LogoUrl: match.team2.logoUrl,
         isStage12Group,
       });
       completedRounds.add(match.stageId);
@@ -274,6 +294,10 @@ export const seasonRouter = router({
         team2Id: r.team2Id,
         team1Name: r.team1Name,
         team2Name: r.team2Name,
+        team1Tag: r.team1Tag,
+        team2Tag: r.team2Tag,
+        team1LogoUrl: r.team1LogoUrl,
+        team2LogoUrl: r.team2LogoUrl,
         winnerId: r.winnerId,
         score: r.score,
         isUserMatch: false,
@@ -292,25 +316,25 @@ export const seasonRouter = router({
       if (isSwiss) {
         // Swiss progression: check if all matches in this round are done
         const swissRoundMatches = await ctx.prisma.match.findMany({
-          where: { stageId: roundId, season: season.number },
+          where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
         });
         const allPlayed = swissRoundMatches.length > 0 && swissRoundMatches.every((m) => m.isPlayed);
         if (allPlayed) {
-          await progressSwiss(ctx.prisma, roundId, season.number, newDay);
+          await progressSwiss(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
         }
       } else if (isMastersBracket) {
         // International bracket progression (Masters/EWC/Champions)
         const bracketMatches = await ctx.prisma.match.findMany({
-          where: { stageId: roundId, season: season.number },
+          where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
         });
         const allPlayed = bracketMatches.length > 0 && bracketMatches.every((m) => m.isPlayed);
         if (allPlayed) {
-          await progressMastersBracket(ctx.prisma, roundId, season.number, newDay);
+          await progressMastersBracket(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
         }
       } else {
         // Kickoff: regional bracket progression — check completion PER REGION
         const allRoundMatches = await ctx.prisma.match.findMany({
-          where: { stageId: roundId, season: season.number },
+          where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
           include: { team1: { select: { region: true } } },
         });
 
@@ -327,18 +351,18 @@ export const seasonRouter = router({
           if (counts.played === counts.total && counts.total > 0) {
             // Kickoff bracket progression
             if (roundId.startsWith("KICKOFF")) {
-              await progressBracket(ctx.prisma, roundId, region as Region, season.number, newDay);
+              await progressBracket(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
             }
             // Regional stage group phase completion → create playoffs
             if (roundId === "STAGE_1_ALPHA" || roundId === "STAGE_1_OMEGA") {
-              await progressRegionalStage(ctx.prisma, "STAGE_1", region as Region, season.number, newDay);
+              await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_1", region as Region, season.number, newDay);
             }
             if (roundId === "STAGE_2_ALPHA" || roundId === "STAGE_2_OMEGA") {
-              await progressRegionalStage(ctx.prisma, "STAGE_2", region as Region, season.number, newDay);
+              await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_2", region as Region, season.number, newDay);
             }
             // Regional playoffs round progression
             if (roundId.includes("_PO_")) {
-              await progressRegionalPlayoffs(ctx.prisma, roundId, region as Region, season.number, newDay);
+              await progressRegionalPlayoffs(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
             }
           }
         }
@@ -404,6 +428,7 @@ export const seasonRouter = router({
     if (season.currentStage === "KICKOFF") {
       const kickoffFinals = await ctx.prisma.match.findMany({
         where: {
+          saveId: ctx.save.id,
           stageId: { in: ["KICKOFF_UB_FINAL", "KICKOFF_MID_FINAL", "KICKOFF_LB_FINAL"] },
           season: season.number,
         },
@@ -415,7 +440,7 @@ export const seasonRouter = router({
           data: { currentStage: "MASTERS_1" },
         });
         // Initialize Masters Swiss R1
-        await initializeMasters(ctx.prisma, season.number, "MASTERS_1", "KICKOFF");
+        await initializeMasters(ctx.prisma, ctx.save.id, season.number, "MASTERS_1", "KICKOFF");
         await generateMetaPatch(ctx.prisma, season.number, "MASTERS_1");
       }
     }
@@ -423,14 +448,14 @@ export const seasonRouter = router({
     // MASTERS_1 → STAGE_1
     if (season.currentStage === "MASTERS_1") {
       const grandFinal = await ctx.prisma.match.findFirst({
-        where: { stageId: "MASTERS_1_GRAND_FINAL", season: season.number, isPlayed: true },
+        where: { saveId: ctx.save.id, stageId: "MASTERS_1_GRAND_FINAL", season: season.number, isPlayed: true },
       });
       if (grandFinal) {
         await ctx.prisma.season.update({
           where: { id: season.id },
           data: { currentStage: "STAGE_1" },
         });
-        await initializeRegionalStage(ctx.prisma, season.number, "STAGE_1");
+        await initializeRegionalStage(ctx.prisma, ctx.save.id, season.number, "STAGE_1");
         await generateMetaPatch(ctx.prisma, season.number, "STAGE_1");
       }
     }
@@ -439,7 +464,7 @@ export const seasonRouter = router({
     // Transition when all 4 regional Grand Finals are played (one per region)
     if (season.currentStage === "STAGE_1") {
       const gfMatches = await ctx.prisma.match.findMany({
-        where: { stageId: "STAGE_1_PO_GF", season: season.number },
+        where: { saveId: ctx.save.id, stageId: "STAGE_1_PO_GF", season: season.number },
       });
       // We need 4 GFs (one per region) all played
       const allGfDone = gfMatches.length >= 4 && gfMatches.every((m) => m.isPlayed);
@@ -448,7 +473,7 @@ export const seasonRouter = router({
           where: { id: season.id },
           data: { currentStage: "MASTERS_2" },
         });
-        await initializeMasters(ctx.prisma, season.number, "MASTERS_2", "STAGE_1");
+        await initializeMasters(ctx.prisma, ctx.save.id, season.number, "MASTERS_2", "STAGE_1");
         await generateMetaPatch(ctx.prisma, season.number, "MASTERS_2");
       }
     }
@@ -456,14 +481,14 @@ export const seasonRouter = router({
     // MASTERS_2 → STAGE_2
     if (season.currentStage === "MASTERS_2") {
       const grandFinal = await ctx.prisma.match.findFirst({
-        where: { stageId: "MASTERS_2_GRAND_FINAL", season: season.number, isPlayed: true },
+        where: { saveId: ctx.save.id, stageId: "MASTERS_2_GRAND_FINAL", season: season.number, isPlayed: true },
       });
       if (grandFinal) {
         await ctx.prisma.season.update({
           where: { id: season.id },
           data: { currentStage: "STAGE_2" },
         });
-        await initializeRegionalStage(ctx.prisma, season.number, "STAGE_2");
+        await initializeRegionalStage(ctx.prisma, ctx.save.id, season.number, "STAGE_2");
         await generateMetaPatch(ctx.prisma, season.number, "STAGE_2");
       }
     }
@@ -471,7 +496,7 @@ export const seasonRouter = router({
     // STAGE_2 → EWC
     if (season.currentStage === "STAGE_2") {
       const gfMatches = await ctx.prisma.match.findMany({
-        where: { stageId: "STAGE_2_PO_GF", season: season.number },
+        where: { saveId: ctx.save.id, stageId: "STAGE_2_PO_GF", season: season.number },
       });
       const allDone = gfMatches.length >= 4 && gfMatches.every((m) => m.isPlayed);
       if (allDone) {
@@ -479,7 +504,7 @@ export const seasonRouter = router({
           where: { id: season.id },
           data: { currentStage: "EWC" },
         });
-        await initializeInternationalEvent(ctx.prisma, season.number, "EWC", 2, "STAGE_2");
+        await initializeInternationalEvent(ctx.prisma, ctx.save.id, season.number, "EWC", 2, "STAGE_2");
         await generateMetaPatch(ctx.prisma, season.number, "EWC");
       }
     }
@@ -487,7 +512,7 @@ export const seasonRouter = router({
     // EWC → CHAMPIONS
     if (season.currentStage === "EWC") {
       const grandFinal = await ctx.prisma.match.findFirst({
-        where: { stageId: "EWC_GRAND_FINAL", season: season.number, isPlayed: true },
+        where: { saveId: ctx.save.id, stageId: "EWC_GRAND_FINAL", season: season.number, isPlayed: true },
       });
       if (grandFinal) {
         await ctx.prisma.season.update({
@@ -495,7 +520,7 @@ export const seasonRouter = router({
           data: { currentStage: "CHAMPIONS" },
         });
         // Champions: 4 teams per region
-        await initializeInternationalEvent(ctx.prisma, season.number, "CHAMPIONS", 4, "STAGE_2");
+        await initializeInternationalEvent(ctx.prisma, ctx.save.id, season.number, "CHAMPIONS", 4, "STAGE_2");
         await generateMetaPatch(ctx.prisma, season.number, "CHAMPIONS");
       }
     }
@@ -504,7 +529,7 @@ export const seasonRouter = router({
     let justEnteredOffseason = false;
     if (season.currentStage === "CHAMPIONS") {
       const grandFinal = await ctx.prisma.match.findFirst({
-        where: { stageId: "CHAMPIONS_GRAND_FINAL", season: season.number, isPlayed: true },
+        where: { saveId: ctx.save.id, stageId: "CHAMPIONS_GRAND_FINAL", season: season.number, isPlayed: true },
       });
       if (grandFinal) {
         await ctx.prisma.season.update({
@@ -539,6 +564,10 @@ export const seasonRouter = router({
 
     // During OFFSEASON: AI teams sign free agents with good stats at random
     if (season.currentStage === "OFFSEASON" || justEnteredOffseason) {
+      // FAs in this save are players without a team but whose previous team belonged
+      // to this save. After contract expiry above we set teamId=null, so we have to
+      // identify "this save's FAs" via their region + the templates that exist here.
+      // Simpler: take FAs from the global pool but restrict signing to this save's teams.
       const freeAgents = await ctx.prisma.player.findMany({
         where: { teamId: null, isRetired: false },
         orderBy: { acs: "desc" },
@@ -551,11 +580,12 @@ export const seasonRouter = router({
         if (signs >= maxSigns) break;
         if (Math.random() > 0.35) continue; // ~35% chance per tick per FA
 
-        // Pick a random AI team in the same region that has budget + <7 players
+        // Pick a random AI team in this save + same region with budget + <7 players
         const aiTeams = await ctx.prisma.team.findMany({
           where: {
+            saveId: ctx.save.id,
             region: fa.region,
-            userId: { not: ctx.userId },
+            isPlayerTeam: false,
           },
           include: { players: true },
         });
@@ -622,6 +652,7 @@ export const seasonRouter = router({
       // at least 56 days after that.
       const finalMatch = await ctx.prisma.match.findFirst({
         where: {
+          saveId: ctx.save.id,
           stageId: "CHAMPIONS_GRAND_FINAL",
           season: season.number,
           isPlayed: true,
@@ -630,7 +661,7 @@ export const seasonRouter = router({
       });
       const finalDay = finalMatch?.day ?? 0;
       if (finalDay > 0 && newDay - finalDay >= 56) {
-        seasonRolledOver = await rollOffSeason(ctx.prisma, season.id, season.number);
+        seasonRolledOver = await rollOffSeason(ctx.prisma, ctx.save.id, season.id, season.number);
       }
     }
 
@@ -777,6 +808,7 @@ export const seasonRouter = router({
     }> = [];
     if (dayOfWeek(newDay) === 1) {
       const allTeams = await ctx.prisma.team.findMany({
+        where: { saveId: ctx.save.id },
         include: {
           players: { where: { isActive: true }, select: { salary: true } },
           coach: { select: { salary: true } },
@@ -834,7 +866,7 @@ export const seasonRouter = router({
     // (older saves, races, code paths bypassing the dispatcher).
     {
       const allMatches = await ctx.prisma.match.findMany({
-        where: { season: season.number },
+        where: { saveId: ctx.save.id, season: season.number },
         select: {
           stageId: true,
           isPlayed: true,
@@ -859,17 +891,17 @@ export const seasonRouter = router({
         const isSwiss = stageId.includes("_SWISS_R");
         try {
           if (isSwiss) {
-            await progressSwiss(ctx.prisma, stageId, season.number, newDay);
+            await progressSwiss(ctx.prisma, ctx.save.id, stageId, season.number, newDay);
           } else if (isInternational && !isSwiss) {
-            await progressMastersBracket(ctx.prisma, stageId, season.number, newDay);
+            await progressMastersBracket(ctx.prisma, ctx.save.id, stageId, season.number, newDay);
           } else if (stageId.startsWith("KICKOFF")) {
-            await progressBracket(ctx.prisma, stageId, c.region as Region, season.number, newDay);
+            await progressBracket(ctx.prisma, ctx.save.id, stageId, c.region as Region, season.number, newDay);
           } else if (stageId === "STAGE_1_ALPHA" || stageId === "STAGE_1_OMEGA") {
-            await progressRegionalStage(ctx.prisma, "STAGE_1", c.region as Region, season.number, newDay);
+            await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_1", c.region as Region, season.number, newDay);
           } else if (stageId === "STAGE_2_ALPHA" || stageId === "STAGE_2_OMEGA") {
-            await progressRegionalStage(ctx.prisma, "STAGE_2", c.region as Region, season.number, newDay);
+            await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_2", c.region as Region, season.number, newDay);
           } else if (stageId.includes("_PO_")) {
-            await progressRegionalPlayoffs(ctx.prisma, stageId, c.region as Region, season.number, newDay);
+            await progressRegionalPlayoffs(ctx.prisma, ctx.save.id, stageId, c.region as Region, season.number, newDay);
           }
         } catch {
           // Ignore — a single bad round shouldn't break the whole advance-day.

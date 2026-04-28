@@ -568,26 +568,26 @@ export const matchRouter = router({
 
         if (isSwiss) {
           const swissRoundMatches = await ctx.prisma.match.findMany({
-            where: { stageId, season: season.number },
+            where: { saveId: ctx.save.id, stageId, season: season.number },
           });
           const allPlayed =
             swissRoundMatches.length > 0 && swissRoundMatches.every((m) => m.isPlayed);
           if (allPlayed) {
-            await progressSwiss(ctx.prisma, stageId, season.number, season.currentDay);
+            await progressSwiss(ctx.prisma, ctx.save.id, stageId, season.number, season.currentDay);
           }
         } else if (isMastersBracket) {
           const bracketMatches = await ctx.prisma.match.findMany({
-            where: { stageId, season: season.number },
+            where: { saveId: ctx.save.id, stageId, season: season.number },
           });
           const allPlayed =
             bracketMatches.length > 0 && bracketMatches.every((m) => m.isPlayed);
           if (allPlayed) {
-            await progressMastersBracket(ctx.prisma, stageId, season.number, season.currentDay);
+            await progressMastersBracket(ctx.prisma, ctx.save.id, stageId, season.number, season.currentDay);
           }
         } else {
           // Regional rounds (Kickoff / Stage 1-2 group / Stage 1-2 playoffs).
           const allRoundMatches = await ctx.prisma.match.findMany({
-            where: { stageId, season: season.number },
+            where: { saveId: ctx.save.id, stageId, season: season.number },
             include: { team1: { select: { region: true } } },
           });
 
@@ -606,6 +606,7 @@ export const matchRouter = router({
             if (stageId.startsWith("KICKOFF")) {
               await progressBracket(
                 ctx.prisma,
+                ctx.save.id,
                 stageId,
                 region as Region,
                 season.number,
@@ -615,6 +616,7 @@ export const matchRouter = router({
             if (stageId === "STAGE_1_ALPHA" || stageId === "STAGE_1_OMEGA") {
               await progressRegionalStage(
                 ctx.prisma,
+                ctx.save.id,
                 "STAGE_1",
                 region as Region,
                 season.number,
@@ -624,6 +626,7 @@ export const matchRouter = router({
             if (stageId === "STAGE_2_ALPHA" || stageId === "STAGE_2_OMEGA") {
               await progressRegionalStage(
                 ctx.prisma,
+                ctx.save.id,
                 "STAGE_2",
                 region as Region,
                 season.number,
@@ -633,6 +636,7 @@ export const matchRouter = router({
             if (stageId.includes("_PO_")) {
               await progressRegionalPlayoffs(
                 ctx.prisma,
+                ctx.save.id,
                 stageId,
                 region as Region,
                 season.number,

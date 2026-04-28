@@ -11,18 +11,23 @@ import {
 const prisma = new PrismaClient();
 
 (async () => {
-  const seasons = await prisma.season.findMany({ where: { isActive: true } });
-  if (seasons.length === 0) {
-    console.log("No active season.");
+  // Iterate per save — bracket progression is now save-scoped, so we run the
+  // self-heal pass against each save's matches independently.
+  const saves = await prisma.save.findMany({
+    include: { seasons: { where: { isActive: true } } },
+  });
+  if (saves.length === 0) {
+    console.log("No saves found.");
     return;
   }
 
-  for (const season of seasons) {
-    console.log(`\nSeason ${season.number} (currentDay=${season.currentDay})`);
+  for (const save of saves) {
+    const season = save.seasons[0];
+    if (!season) continue;
+    console.log(`\nSave ${save.id} | Season ${season.number} (currentDay=${season.currentDay})`);
 
-    // All matches for this season grouped by stage and region.
     const matches = await prisma.match.findMany({
-      where: { season: season.number },
+      where: { saveId: save.id, season: season.number },
       include: { team1: { select: { region: true } } },
     });
 
@@ -35,8 +40,6 @@ const prisma = new PrismaClient();
       byStageRegion.set(key, cur);
     }
 
-    // Find stages fully played → run progression. If next stage already exists
-    // the progress functions are idempotent (they early-return).
     let progressed = 0;
     for (const [key, counts] of byStageRegion) {
       if (counts.played !== counts.total || counts.total === 0) continue;
@@ -50,14 +53,15 @@ const prisma = new PrismaClient();
 
       try {
         if (isSwiss) {
-          await progressSwiss(prisma, stageId, season.number, season.currentDay);
+          await progressSwiss(prisma, save.id, stageId, season.number, season.currentDay);
           console.log(`  ✓ Swiss progress: ${stageId}`);
         } else if (isInternational && !isSwiss) {
-          await progressMastersBracket(prisma, stageId, season.number, season.currentDay);
+          await progressMastersBracket(prisma, save.id, stageId, season.number, season.currentDay);
           console.log(`  ✓ Masters bracket: ${stageId}`);
         } else if (stageId.startsWith("KICKOFF")) {
           await progressBracket(
             prisma,
+            save.id,
             stageId,
             region as Region,
             season.number,
@@ -67,6 +71,7 @@ const prisma = new PrismaClient();
         } else if (stageId === "STAGE_1_ALPHA" || stageId === "STAGE_1_OMEGA") {
           await progressRegionalStage(
             prisma,
+            save.id,
             "STAGE_1",
             region as Region,
             season.number,
@@ -76,6 +81,7 @@ const prisma = new PrismaClient();
         } else if (stageId === "STAGE_2_ALPHA" || stageId === "STAGE_2_OMEGA") {
           await progressRegionalStage(
             prisma,
+            save.id,
             "STAGE_2",
             region as Region,
             season.number,
@@ -85,6 +91,7 @@ const prisma = new PrismaClient();
         } else if (stageId.includes("_PO_")) {
           await progressRegionalPlayoffs(
             prisma,
+            save.id,
             stageId,
             region as Region,
             season.number,
@@ -100,9 +107,8 @@ const prisma = new PrismaClient();
       }
     }
 
-    // Count newly-created matches.
     const fresh = await prisma.match.count({
-      where: { season: season.number, isPlayed: false, day: { gt: 0 } },
+      where: { saveId: save.id, season: season.number, isPlayed: false, day: { gt: 0 } },
     });
     console.log(`  → ${progressed} progressions run, ${fresh} unplayed matches scheduled`);
   }

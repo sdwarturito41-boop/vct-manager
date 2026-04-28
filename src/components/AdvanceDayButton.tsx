@@ -18,6 +18,10 @@ interface MatchResult {
   team2Id: string;
   team1Name: string;
   team2Name: string;
+  team1Tag: string;
+  team2Tag: string;
+  team1LogoUrl: string | null;
+  team2LogoUrl: string | null;
   winnerId: string;
   score: { team1: number; team2: number };
   isUserMatch: boolean;
@@ -294,16 +298,21 @@ function SimulationModal({
                       borderBottom: `1px solid ${D.borderFaint}`,
                     }}
                   >
-                    <span
-                      className="truncate text-right"
-                      style={{
-                        color:
-                          r.winnerId === r.team1Id ? D.textPrimary : D.textMuted,
-                        fontWeight: r.winnerId === r.team1Id ? 500 : 400,
-                      }}
-                    >
-                      {r.team1Name}
-                    </span>
+                    {/* Home — logo right, name truncated, right-aligned */}
+                    <div className="flex items-center justify-end gap-1.5 min-w-0">
+                      <span
+                        className="truncate"
+                        style={{
+                          color:
+                            r.winnerId === r.team1Id ? D.textPrimary : D.textMuted,
+                          fontWeight: r.winnerId === r.team1Id ? 500 : 400,
+                        }}
+                      >
+                        {r.team1Tag || r.team1Name}
+                      </span>
+                      <TeamCrest logo={r.team1LogoUrl} fallback={r.team1Tag || r.team1Name} />
+                    </div>
+                    {/* Score */}
                     <span
                       className="text-center tabular-nums"
                       style={{
@@ -313,16 +322,20 @@ function SimulationModal({
                     >
                       {r.score.team1}–{r.score.team2}
                     </span>
-                    <span
-                      className="truncate"
-                      style={{
-                        color:
-                          r.winnerId === r.team2Id ? D.textPrimary : D.textMuted,
-                        fontWeight: r.winnerId === r.team2Id ? 500 : 400,
-                      }}
-                    >
-                      {r.team2Name}
-                    </span>
+                    {/* Away — logo left, name */}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <TeamCrest logo={r.team2LogoUrl} fallback={r.team2Tag || r.team2Name} />
+                      <span
+                        className="truncate"
+                        style={{
+                          color:
+                            r.winnerId === r.team2Id ? D.textPrimary : D.textMuted,
+                          fontWeight: r.winnerId === r.team2Id ? 500 : 400,
+                        }}
+                      >
+                        {r.team2Tag || r.team2Name}
+                      </span>
+                    </div>
                     <span
                       className="rounded text-center text-[10px] font-medium"
                       style={{
@@ -374,6 +387,33 @@ function SimulationModal({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+
+// ─── TeamCrest helper ───────────────────────────────────────────────
+
+function TeamCrest({ logo, fallback }: { logo: string | null; fallback: string }) {
+  if (logo) {
+    return (
+      <img
+        src={logo}
+        alt={fallback}
+        className="h-5 w-5 shrink-0 object-contain"
+      />
+    );
+  }
+  return (
+    <div
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[8px] font-medium"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.borderFaint}`,
+        color: D.textMuted,
+      }}
+    >
+      {fallback.slice(0, 2)}
     </div>
   );
 }

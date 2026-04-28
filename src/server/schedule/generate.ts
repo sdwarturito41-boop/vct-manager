@@ -122,9 +122,9 @@ function getNextWeekBroadcastDays(region: Region, afterDay: number, count: numbe
 }
 
 // Find the last scheduled match day for a region to avoid overlapping
-async function getLastScheduledDay(prisma: PrismaClient, region: Region, season: number): Promise<number> {
+async function getLastScheduledDay(prisma: PrismaClient, saveId: string, region: Region, season: number): Promise<number> {
   const lastMatch = await prisma.match.findFirst({
-    where: { season, day: { gt: 0 }, team1: { region } },
+    where: { saveId, season, day: { gt: 0 }, team1: { region } },
     orderBy: { day: "desc" },
   });
   return lastMatch?.day ?? 0;
@@ -168,9 +168,9 @@ function assignDaysWeek(
 
 interface WL { winner: string; loser: string }
 
-async function getResults(prisma: PrismaClient, stageId: string, season: number, region: Region): Promise<WL[]> {
+async function getResults(prisma: PrismaClient, saveId: string, stageId: string, season: number, region: Region): Promise<WL[]> {
   const matches = await prisma.match.findMany({
-    where: { stageId, season, isPlayed: true },
+    where: { saveId, stageId, season, isPlayed: true },
     include: { team1: { select: { id: true, region: true } } },
     orderBy: { day: "asc" },
   });
@@ -183,7 +183,7 @@ async function getResults(prisma: PrismaClient, stageId: string, season: number,
 }
 
 async function getResultsByTeams(
-  prisma: PrismaClient, stageId: string, season: number,
+  prisma: PrismaClient, saveId: string, stageId: string, season: number,
   teamPairs: [string, string][], nameToId: Map<string, string>,
 ): Promise<WL[]> {
   const results: WL[] = [];
@@ -193,7 +193,7 @@ async function getResultsByTeams(
     if (!aId || !bId) { results.push({ winner: "", loser: "" }); continue; }
     const match = await prisma.match.findFirst({
       where: {
-        stageId, season, isPlayed: true,
+        saveId, stageId, season, isPlayed: true,
         OR: [{ team1Id: aId, team2Id: bId }, { team1Id: bId, team2Id: aId }],
       },
     });
@@ -207,16 +207,16 @@ async function getResultsByTeams(
 }
 
 async function createMatchesOnNextSlots(
-  prisma: PrismaClient, pairs: [string, string][],
+  prisma: PrismaClient, saveId: string, pairs: [string, string][],
   stageId: string, region: Region, afterDay: number, season: number,
   format: MatchFormat = "BO3",
 ) {
   const valid = pairs.filter(([a, b]) => a && b);
   if (valid.length === 0) return;
 
-  // Find all already-scheduled days + counts for this region
+  // Find all already-scheduled days + counts for this region (within this save)
   const existingMatches = await prisma.match.findMany({
-    where: { season, day: { gt: 0 }, team1: { region } },
+    where: { saveId, season, day: { gt: 0 }, team1: { region } },
     select: { day: true },
   });
   const dayUsage = new Map<number, number>();
@@ -242,6 +242,7 @@ async function createMatchesOnNextSlots(
   }
 
   const data = valid.map(([team1Id, team2Id], idx) => ({
+    saveId,
     team1Id, team2Id, stageId, format,
     day: scheduledDays[idx],
     week: Math.ceil(scheduledDays[idx] / 7),
@@ -250,10 +251,10 @@ async function createMatchesOnNextSlots(
   await prisma.match.createMany({ data });
 }
 
-async function stageExistsForRegion(prisma: PrismaClient, stageId: string, season: number, region: Region) {
+async function stageExistsForRegion(prisma: PrismaClient, saveId: string, stageId: string, season: number, region: Region) {
   const count = await prisma.match.count({
     where: {
-      stageId, season,
+      saveId, stageId, season,
       team1: { region },
     },
   });
@@ -306,9 +307,12 @@ export async function initializeSeasonForTeam(
 // ── Bracket progression ──
 
 export async function progressBracket(
-  prisma: PrismaClient, completedStageId: string, region: Region, seasonNumber: number, currentDay: number,
+  prisma: PrismaClient, saveId: string, completedStageId: string, region: Region, seasonNumber: number, currentDay: number,
 ) {
-  const allTeams = await prisma.team.findMany({ select: { id: true, name: true } });
+  // CRITICAL: filter teams by saveId — without this, multi-save name collisions
+  // make nameToId resolve to teams from another save and the QF lookup returns
+  // empty winners (so no progressed matches get created).
+  const allTeams = await prisma.team.findMany({ where: { saveId }, select: { id: true, name: true } });
   const nameToId = new Map(allTeams.map((t) => [t.name, t.id]));
   const seed = KICKOFF_SEEDS[region];
   const S = seasonNumber;
@@ -317,12 +321,12 @@ export async function progressBracket(
   const days = MATCH_DAYS[region];
 
   const cm = (pairs: [string, string][], stageId: string, format: MatchFormat = "BO3") =>
-    createMatchesOnNextSlots(prisma, pairs, stageId, R, D, S, format);
+    createMatchesOnNextSlots(prisma, saveId, pairs, stageId, R, D, S, format);
 
   // ── UB R1 done → create UB QF ──
   if (completedStageId === "KICKOFF_UB_R1") {
-    if (await stageExistsForRegion(prisma, "KICKOFF_UB_QF", S, R)) return;
-    const r1Results = await getResultsByTeams(prisma, "KICKOFF_UB_R1", S, seed.round1Matchups, nameToId);
+    if (await stageExistsForRegion(prisma, saveId, "KICKOFF_UB_QF", S, R)) return;
+    const r1Results = await getResultsByTeams(prisma, saveId, "KICKOFF_UB_R1", S, seed.round1Matchups, nameToId);
     const pairs: [string, string][] = seed.qfPairings.map(([byeName, r1Idx]) => {
       const byeId = nameToId.get(byeName)!;
       return [byeId, r1Results[r1Idx].winner];
@@ -332,9 +336,9 @@ export async function progressBracket(
 
   // ── UB QF done → create UB SF + MID R1 ──
   if (completedStageId === "KICKOFF_UB_QF") {
-    const r1Results = await getResultsByTeams(prisma, "KICKOFF_UB_R1", S, seed.round1Matchups, nameToId);
+    const r1Results = await getResultsByTeams(prisma, saveId, "KICKOFF_UB_R1", S, seed.round1Matchups, nameToId);
     const qfMatches: [string, string][] = seed.qfPairings.map(([byeName, r1Idx]) => [byeName, seed.round1Matchups[r1Idx][0]]);
-    const qfResultsRaw = await getResults(prisma, "KICKOFF_UB_QF", S, R);
+    const qfResultsRaw = await getResults(prisma, saveId, "KICKOFF_UB_QF", S, R);
     // Map QF results to bracket position by bye team
     const qfResults: WL[] = seed.qfPairings.map(([byeName]) => {
       const byeId = nameToId.get(byeName)!;
@@ -342,7 +346,7 @@ export async function progressBracket(
     });
 
     // UB SF: top half (QF 0+1 winners) and bottom half (QF 2+3 winners)
-    if (!await stageExistsForRegion(prisma, "KICKOFF_UB_SF", S, R)) {
+    if (!await stageExistsForRegion(prisma, saveId, "KICKOFF_UB_SF", S, R)) {
       await cm([
         [qfResults[0].winner, qfResults[1].winner],
         [qfResults[2].winner, qfResults[3].winner],
@@ -350,7 +354,7 @@ export async function progressBracket(
     }
 
     // MID R1: QF[3-i] loser vs R1[i] loser (reversed to avoid rematches)
-    if (!await stageExistsForRegion(prisma, "KICKOFF_MID_R1", S, R)) {
+    if (!await stageExistsForRegion(prisma, saveId, "KICKOFF_MID_R1", S, R)) {
       const midR1Pairs: [string, string][] = [0, 1, 2, 3].map((i) => [qfResults[3 - i].loser, r1Results[i].loser]);
       await cm(midR1Pairs, "KICKOFF_MID_R1");
     }
@@ -358,30 +362,31 @@ export async function progressBracket(
 
   // ── UB SF done → create UB FINAL ──
   if (completedStageId === "KICKOFF_UB_SF") {
-    if (await stageExistsForRegion(prisma, "KICKOFF_UB_FINAL", S, R)) return;
-    const sfResults = await getResults(prisma, "KICKOFF_UB_SF", S, R);
+    if (await stageExistsForRegion(prisma, saveId, "KICKOFF_UB_FINAL", S, R)) return;
+    const sfResults = await getResults(prisma, saveId, "KICKOFF_UB_SF", S, R);
     if (sfResults.length >= 2) {
       // UB Final: teams known NOW but scheduled LATER (when LB SF completes)
       // day: 0 = not yet scheduled, visible in bracket but not playable
       await prisma.match.createMany({ data: [{
+        saveId,
         team1Id: sfResults[0].winner, team2Id: sfResults[1].winner,
         stageId: "KICKOFF_UB_FINAL", format: "BO5", day: 0, week: 0, season: S,
       }] });
     }
     // UB SF losers are needed for MID QF — check if MID R2 is done
-    await tryCreateMidQF(prisma, R, S, D);
+    await tryCreateMidQF(prisma, saveId, R, S, D);
   }
 
   // ── MID R1 done → create MID R2 + LB R1 ──
   if (completedStageId === "KICKOFF_MID_R1") {
-    const midR1 = await getResults(prisma, "KICKOFF_MID_R1", S, R);
-    if (!await stageExistsForRegion(prisma, "KICKOFF_MID_R2", S, R) && midR1.length >= 4) {
+    const midR1 = await getResults(prisma, saveId, "KICKOFF_MID_R1", S, R);
+    if (!await stageExistsForRegion(prisma, saveId, "KICKOFF_MID_R2", S, R) && midR1.length >= 4) {
       await cm([
         [midR1[0].winner, midR1[1].winner],
         [midR1[2].winner, midR1[3].winner],
       ], "KICKOFF_MID_R2");
     }
-    if (!await stageExistsForRegion(prisma, "KICKOFF_LB_R1", S, R) && midR1.length >= 4) {
+    if (!await stageExistsForRegion(prisma, saveId, "KICKOFF_LB_R1", S, R) && midR1.length >= 4) {
       await cm([
         [midR1[0].loser, midR1[1].loser],
         [midR1[2].loser, midR1[3].loser],
@@ -391,52 +396,52 @@ export async function progressBracket(
 
   // ── MID R2 done → try create MID QF (needs UB SF losers too) ──
   if (completedStageId === "KICKOFF_MID_R2") {
-    await tryCreateMidQF(prisma, R, S, D);
+    await tryCreateMidQF(prisma, saveId, R, S, D);
     // MID R2 losers needed for LB R2 — check if LB R1 is done
-    await tryCreateLBR2(prisma, R, S, D);
+    await tryCreateLBR2(prisma, saveId, R, S, D);
   }
 
   // ── MID QF done → create MID SF ──
   if (completedStageId === "KICKOFF_MID_QF") {
-    if (await stageExistsForRegion(prisma, "KICKOFF_MID_SF", S, R)) return;
-    const midQF = await getResults(prisma, "KICKOFF_MID_QF", S, R);
+    if (await stageExistsForRegion(prisma, saveId, "KICKOFF_MID_SF", S, R)) return;
+    const midQF = await getResults(prisma, saveId, "KICKOFF_MID_QF", S, R);
     if (midQF.length >= 2) {
       await cm([[midQF[0].winner, midQF[1].winner]], "KICKOFF_MID_SF");
     }
     // MID QF losers needed for LB R3
-    await tryCreateLBR3(prisma, R, S, D);
+    await tryCreateLBR3(prisma, saveId, R, S, D);
   }
 
   // ── MID SF done → try create MID FINAL (needs UB FINAL loser) ──
   if (completedStageId === "KICKOFF_MID_SF") {
-    await tryCreateMidFinal(prisma, R, S, D);
+    await tryCreateMidFinal(prisma, saveId, R, S, D);
   }
 
   // ── UB FINAL done → try create MID FINAL ──
   if (completedStageId === "KICKOFF_UB_FINAL") {
-    await tryCreateMidFinal(prisma, R, S, D);
+    await tryCreateMidFinal(prisma, saveId, R, S, D);
   }
 
   // ── LB R1 done → try create LB R2 (needs MID R2 losers) ──
   if (completedStageId === "KICKOFF_LB_R1") {
-    await tryCreateLBR2(prisma, R, S, D);
+    await tryCreateLBR2(prisma, saveId, R, S, D);
   }
 
   // ── LB R2 done → try create LB R3 (needs MID QF losers) ──
   if (completedStageId === "KICKOFF_LB_R2") {
-    await tryCreateLBR3(prisma, R, S, D);
+    await tryCreateLBR3(prisma, saveId, R, S, D);
   }
 
   // ── LB R3 done → try create LB QF (both LB R3 winners) ──
   if (completedStageId === "KICKOFF_LB_R3") {
-    await tryCreateLBQF(prisma, R, S, D);
+    await tryCreateLBQF(prisma, saveId, R, S, D);
   }
 
   // ── LB QF done → create LB SF (LB QF winner vs Mid SF loser) ──
   if (completedStageId === "KICKOFF_LB_QF") {
-    if (await stageExistsForRegion(prisma, "KICKOFF_LB_SF", S, R)) return;
-    const lbQF = await getResults(prisma, "KICKOFF_LB_QF", S, R);
-    const midSF = await getResults(prisma, "KICKOFF_MID_SF", S, R);
+    if (await stageExistsForRegion(prisma, saveId, "KICKOFF_LB_SF", S, R)) return;
+    const lbQF = await getResults(prisma, saveId, "KICKOFF_LB_QF", S, R);
+    const midSF = await getResults(prisma, saveId, "KICKOFF_MID_SF", S, R);
     if (lbQF.length >= 1 && midSF.length >= 1) {
       await cm([[lbQF[0].winner, midSF[0].loser]], "KICKOFF_LB_SF");
     }
@@ -446,7 +451,7 @@ export async function progressBracket(
   if (completedStageId === "KICKOFF_LB_SF") {
     // Now schedule UB Final: find it (day: 0) and give it a real day
     const ubFinal = await prisma.match.findFirst({
-      where: { stageId: "KICKOFF_UB_FINAL", season: S, day: 0, team1: { region: R } },
+      where: { saveId, stageId: "KICKOFF_UB_FINAL", season: S, day: 0, team1: { region: R } },
     });
     if (ubFinal) {
       const finalDays = getNextWeekBroadcastDays(R, D, 1, 1);
@@ -459,89 +464,91 @@ export async function progressBracket(
 
   // ── UB FINAL done → create MID FINAL (UB Final loser vs Mid SF winner), next day ──
   if (completedStageId === "KICKOFF_UB_FINAL") {
-    await tryCreateMidFinal(prisma, R, S, D);
+    await tryCreateMidFinal(prisma, saveId, R, S, D);
   }
 
   // ── MID FINAL done → create LB FINAL (Mid Final loser vs LB SF winner), next day ──
   if (completedStageId === "KICKOFF_MID_FINAL") {
-    await tryCreateLBFinal(prisma, R, S, D);
+    await tryCreateLBFinal(prisma, saveId, R, S, D);
   }
 }
 
 // ── Deferred match creation (waits for multiple dependencies) ──
 
-async function tryCreateMidQF(prisma: PrismaClient, R: Region, S: number, D: number) {
-  if (await stageExistsForRegion(prisma, "KICKOFF_MID_QF", S, R)) return;
-  const midR2 = await getResults(prisma, "KICKOFF_MID_R2", S, R);
-  const ubSF = await getResults(prisma, "KICKOFF_UB_SF", S, R);
+async function tryCreateMidQF(prisma: PrismaClient, saveId: string, R: Region, S: number, D: number) {
+  if (await stageExistsForRegion(prisma, saveId, "KICKOFF_MID_QF", S, R)) return;
+  const midR2 = await getResults(prisma, saveId, "KICKOFF_MID_R2", S, R);
+  const ubSF = await getResults(prisma, saveId, "KICKOFF_UB_SF", S, R);
   if (midR2.length >= 2 && ubSF.length >= 2) {
     // M18: L(UB_SF match 0) vs W(MID_R2 match 0)
     // M19: L(UB_SF match 1) vs W(MID_R2 match 1)
-    await createMatchesOnNextSlots(prisma, [
+    await createMatchesOnNextSlots(prisma, saveId, [
       [ubSF[0].loser, midR2[0].winner],
       [ubSF[1].loser, midR2[1].winner],
     ], "KICKOFF_MID_QF", R, D, S);
   }
 }
 
-async function tryCreateLBR2(prisma: PrismaClient, R: Region, S: number, D: number) {
-  if (await stageExistsForRegion(prisma, "KICKOFF_LB_R2", S, R)) return;
-  const lbR1 = await getResults(prisma, "KICKOFF_LB_R1", S, R);
-  const midR2 = await getResults(prisma, "KICKOFF_MID_R2", S, R);
+async function tryCreateLBR2(prisma: PrismaClient, saveId: string, R: Region, S: number, D: number) {
+  if (await stageExistsForRegion(prisma, saveId, "KICKOFF_LB_R2", S, R)) return;
+  const lbR1 = await getResults(prisma, saveId, "KICKOFF_LB_R1", S, R);
+  const midR2 = await getResults(prisma, saveId, "KICKOFF_MID_R2", S, R);
   if (lbR1.length >= 2 && midR2.length >= 2) {
     // Mid R2 losers reversed: L(MidR2[1]) vs W(LBR1[0]), L(MidR2[0]) vs W(LBR1[1])
-    await createMatchesOnNextSlots(prisma, [
+    await createMatchesOnNextSlots(prisma, saveId, [
       [midR2[1].loser, lbR1[0].winner],
       [midR2[0].loser, lbR1[1].winner],
     ], "KICKOFF_LB_R2", R, D, S);
   }
 }
 
-async function tryCreateLBR3(prisma: PrismaClient, R: Region, S: number, D: number) {
-  if (await stageExistsForRegion(prisma, "KICKOFF_LB_R3", S, R)) return;
-  const lbR2 = await getResults(prisma, "KICKOFF_LB_R2", S, R);
-  const midQF = await getResults(prisma, "KICKOFF_MID_QF", S, R);
+async function tryCreateLBR3(prisma: PrismaClient, saveId: string, R: Region, S: number, D: number) {
+  if (await stageExistsForRegion(prisma, saveId, "KICKOFF_LB_R3", S, R)) return;
+  const lbR2 = await getResults(prisma, saveId, "KICKOFF_LB_R2", S, R);
+  const midQF = await getResults(prisma, saveId, "KICKOFF_MID_QF", S, R);
   if (lbR2.length >= 2 && midQF.length >= 2) {
-    await createMatchesOnNextSlots(prisma, [
+    await createMatchesOnNextSlots(prisma, saveId, [
       [midQF[0].loser, lbR2[0].winner],
       [midQF[1].loser, lbR2[1].winner],
     ], "KICKOFF_LB_R3", R, D, S);
   }
 }
 
-async function tryCreateLBQF(prisma: PrismaClient, R: Region, S: number, D: number) {
-  if (await stageExistsForRegion(prisma, "KICKOFF_LB_QF", S, R)) return;
-  const lbR3 = await getResults(prisma, "KICKOFF_LB_R3", S, R);
+async function tryCreateLBQF(prisma: PrismaClient, saveId: string, R: Region, S: number, D: number) {
+  if (await stageExistsForRegion(prisma, saveId, "KICKOFF_LB_QF", S, R)) return;
+  const lbR3 = await getResults(prisma, saveId, "KICKOFF_LB_R3", S, R);
   if (lbR3.length >= 2) {
     // LB QF: both LB R3 winners face each other
-    await createMatchesOnNextSlots(prisma, [
+    await createMatchesOnNextSlots(prisma, saveId, [
       [lbR3[0].winner, lbR3[1].winner],
     ], "KICKOFF_LB_QF", R, D, S);
   }
 }
 
-async function tryCreateMidFinal(prisma: PrismaClient, R: Region, S: number, D: number) {
-  if (await stageExistsForRegion(prisma, "KICKOFF_MID_FINAL", S, R)) return;
-  const midSF = await getResults(prisma, "KICKOFF_MID_SF", S, R);
-  const ubFinal = await getResults(prisma, "KICKOFF_UB_FINAL", S, R);
+async function tryCreateMidFinal(prisma: PrismaClient, saveId: string, R: Region, S: number, D: number) {
+  if (await stageExistsForRegion(prisma, saveId, "KICKOFF_MID_FINAL", S, R)) return;
+  const midSF = await getResults(prisma, saveId, "KICKOFF_MID_SF", S, R);
+  const ubFinal = await getResults(prisma, saveId, "KICKOFF_UB_FINAL", S, R);
   if (midSF.length >= 1 && ubFinal.length >= 1) {
     // Mid Final = day after UB Final (consecutive finals)
     const day = D + 1;
     await prisma.match.createMany({ data: [{
+      saveId,
       team1Id: ubFinal[0].loser, team2Id: midSF[0].winner,
       stageId: "KICKOFF_MID_FINAL", format: "BO5", day, week: Math.ceil(day / 7), season: S,
     }] });
   }
 }
 
-async function tryCreateLBFinal(prisma: PrismaClient, R: Region, S: number, D: number) {
-  if (await stageExistsForRegion(prisma, "KICKOFF_LB_FINAL", S, R)) return;
-  const lbSF = await getResults(prisma, "KICKOFF_LB_SF", S, R);
-  const midFinal = await getResults(prisma, "KICKOFF_MID_FINAL", S, R);
+async function tryCreateLBFinal(prisma: PrismaClient, saveId: string, R: Region, S: number, D: number) {
+  if (await stageExistsForRegion(prisma, saveId, "KICKOFF_LB_FINAL", S, R)) return;
+  const lbSF = await getResults(prisma, saveId, "KICKOFF_LB_SF", S, R);
+  const midFinal = await getResults(prisma, saveId, "KICKOFF_MID_FINAL", S, R);
   if (lbSF.length >= 1 && midFinal.length >= 1) {
     // LB Final = day after Mid Final (consecutive finals)
     const day = D + 1;
     await prisma.match.createMany({ data: [{
+      saveId,
       team1Id: midFinal[0].loser, team2Id: lbSF[0].winner,
       stageId: "KICKOFF_LB_FINAL", format: "BO5", day, week: Math.ceil(day / 7), season: S,
     }] });
@@ -555,16 +562,16 @@ async function tryCreateLBFinal(prisma: PrismaClient, R: Region, S: number, D: n
 const INTERNATIONAL_BROADCAST_DAYS = MATCH_DAYS.EMEA; // Tue-Fri for international events
 
 async function createMatchesOnInternationalSlots(
-  prisma: PrismaClient, pairs: [string, string][],
+  prisma: PrismaClient, saveId: string, pairs: [string, string][],
   stageId: string, afterDay: number, season: number,
   format: MatchFormat = "BO3",
 ) {
   const valid = pairs.filter(([a, b]) => a && b);
   if (valid.length === 0) return;
 
-  // Find all already-scheduled days + counts for international matches
+  // Find all already-scheduled days + counts for international matches (within this save)
   const existingMatches = await prisma.match.findMany({
-    where: { season, day: { gt: afterDay }, stageId: { startsWith: stageId.split("_")[0] } },
+    where: { saveId, season, day: { gt: afterDay }, stageId: { startsWith: stageId.split("_")[0] } },
     select: { day: true },
   });
   const dayUsage = new Map<number, number>();
@@ -588,6 +595,7 @@ async function createMatchesOnInternationalSlots(
   }
 
   const data = valid.map(([team1Id, team2Id], idx) => ({
+    saveId,
     team1Id, team2Id, stageId, format,
     day: scheduledDays[idx],
     week: Math.ceil(scheduledDays[idx] / 7),
@@ -605,12 +613,12 @@ async function createMatchesOnInternationalSlots(
  * Top 3 = winners of UB Final, Mid Final, LB Final.
  */
 async function getKickoffQualifiers(
-  prisma: PrismaClient, region: Region, season: number,
+  prisma: PrismaClient, saveId: string, region: Region, season: number,
 ): Promise<string[]> {
   const qualifiers: string[] = [];
   for (const stageId of ["KICKOFF_UB_FINAL", "KICKOFF_MID_FINAL", "KICKOFF_LB_FINAL"]) {
     const match = await prisma.match.findFirst({
-      where: { stageId, season, isPlayed: true, team1: { region } },
+      where: { saveId, stageId, season, isPlayed: true, team1: { region } },
     });
     if (match?.winnerId) qualifiers.push(match.winnerId);
   }
@@ -627,13 +635,14 @@ async function getKickoffQualifiers(
  */
 export async function initializeMasters(
   prisma: PrismaClient,
+  saveId: string,
   seasonNumber: number,
   stagePrefix: string = "MASTERS_1",
   qualifyingStagePrefix: string = "KICKOFF",
 ): Promise<{ matchesScheduled: number }> {
   // Check if already initialized
   const existing = await prisma.match.count({
-    where: { stageId: { startsWith: `${stagePrefix}_SWISS` }, season: seasonNumber },
+    where: { saveId, stageId: { startsWith: `${stagePrefix}_SWISS` }, season: seasonNumber },
   });
   if (existing > 0) return { matchesScheduled: 0 };
 
@@ -643,10 +652,10 @@ export async function initializeMasters(
   for (const region of ALL_REGIONS) {
     let teamIds: string[];
     if (qualifyingStagePrefix === "KICKOFF") {
-      teamIds = await getKickoffQualifiers(prisma, region, seasonNumber);
+      teamIds = await getKickoffQualifiers(prisma, saveId, region, seasonNumber);
     } else {
       // For STAGE_1 / STAGE_2 qualification: top 3 by wins in that stage
-      teamIds = await getStageTopTeams(prisma, region, seasonNumber, qualifyingStagePrefix, 3);
+      teamIds = await getStageTopTeams(prisma, saveId, region, seasonNumber, qualifyingStagePrefix, 3);
     }
     teamIds.forEach((id, idx) => {
       qualifiedTeams.push({ teamId: id, region, seed: idx + 1 });
@@ -670,13 +679,13 @@ export async function initializeMasters(
 
   // Find last Kickoff match day to schedule after it
   const lastKickoffMatch = await prisma.match.findFirst({
-    where: { season: seasonNumber, stageId: { startsWith: qualifyingStagePrefix } },
+    where: { saveId, season: seasonNumber, stageId: { startsWith: qualifyingStagePrefix } },
     orderBy: { day: "desc" },
   });
   const afterDay = lastKickoffMatch?.day ?? 0;
 
   await createMatchesOnInternationalSlots(
-    prisma, pairs, `${stagePrefix}_SWISS_R1`, afterDay, seasonNumber,
+    prisma, saveId, pairs, `${stagePrefix}_SWISS_R1`, afterDay, seasonNumber,
   );
 
   return { matchesScheduled: pairs.length };
@@ -701,6 +710,7 @@ interface SwissRecord {
  */
 export async function progressSwiss(
   prisma: PrismaClient,
+  saveId: string,
   completedRoundStageId: string, // e.g. "MASTERS_1_SWISS_R1"
   seasonNumber: number,
   currentDay: number,
@@ -714,6 +724,7 @@ export async function progressSwiss(
   // Get all Swiss matches played so far for this tournament
   const allSwissMatches = await prisma.match.findMany({
     where: {
+      saveId,
       season: seasonNumber,
       stageId: { startsWith: `${stagePrefix}_SWISS_R` },
       isPlayed: true,
@@ -768,14 +779,14 @@ export async function progressSwiss(
   // If all teams are resolved (advanced or eliminated), Swiss is complete
   if (stillPlaying.length === 0) {
     // Create bracket matches
-    await createMastersBracket(prisma, stagePrefix, seasonNumber, currentDay, advanced);
+    await createMastersBracket(prisma, saveId, stagePrefix, seasonNumber, currentDay, advanced);
     return { advanced, eliminated, nextRoundCreated: true };
   }
 
   // Check if next round already exists
   const nextRoundStageId = `${stagePrefix}_SWISS_R${roundNum + 1}`;
   const nextRoundExists = await prisma.match.count({
-    where: { stageId: nextRoundStageId, season: seasonNumber },
+    where: { saveId, stageId: nextRoundStageId, season: seasonNumber },
   });
   if (nextRoundExists > 0) {
     return { advanced, eliminated, nextRoundCreated: false };
@@ -834,7 +845,7 @@ export async function progressSwiss(
 
   if (nextPairs.length > 0) {
     await createMatchesOnInternationalSlots(
-      prisma, nextPairs, nextRoundStageId, currentDay, seasonNumber,
+      prisma, saveId, nextPairs, nextRoundStageId, currentDay, seasonNumber,
     );
   }
 
@@ -851,6 +862,7 @@ export async function progressSwiss(
  */
 async function createMastersBracket(
   prisma: PrismaClient,
+  saveId: string,
   stagePrefix: string,
   seasonNumber: number,
   afterDay: number,
@@ -858,13 +870,14 @@ async function createMastersBracket(
 ) {
   // Already created?
   const existing = await prisma.match.count({
-    where: { stageId: { startsWith: `${stagePrefix}_UB_QF` }, season: seasonNumber },
+    where: { saveId, stageId: { startsWith: `${stagePrefix}_UB_QF` }, season: seasonNumber },
   });
   if (existing > 0) return;
 
   // Get Swiss records for seeding
   const allSwissMatches = await prisma.match.findMany({
     where: {
+      saveId,
       season: seasonNumber,
       stageId: { startsWith: `${stagePrefix}_SWISS_R` },
       isPlayed: true,
@@ -909,7 +922,7 @@ async function createMastersBracket(
   ];
 
   await createMatchesOnInternationalSlots(
-    prisma, ubQfPairs, `${stagePrefix}_UB_QF`, afterDay, seasonNumber,
+    prisma, saveId, ubQfPairs, `${stagePrefix}_UB_QF`, afterDay, seasonNumber,
   );
 }
 
@@ -919,6 +932,7 @@ async function createMastersBracket(
  */
 export async function progressMastersBracket(
   prisma: PrismaClient,
+  saveId: string,
   completedStageId: string,
   seasonNumber: number,
   currentDay: number,
@@ -929,7 +943,7 @@ export async function progressMastersBracket(
 
   async function getIntlResults(stageId: string): Promise<WL[]> {
     const matches = await prisma.match.findMany({
-      where: { stageId, season: S, isPlayed: true },
+      where: { saveId, stageId, season: S, isPlayed: true },
       orderBy: { day: "asc" },
     });
     return matches.map((m) => ({
@@ -939,12 +953,12 @@ export async function progressMastersBracket(
   }
 
   async function intlStageExists(stageId: string): Promise<boolean> {
-    const count = await prisma.match.count({ where: { stageId, season: S } });
+    const count = await prisma.match.count({ where: { saveId, stageId, season: S } });
     return count > 0;
   }
 
   const cm = (pairs: [string, string][], stageId: string, format: MatchFormat = "BO3") =>
-    createMatchesOnInternationalSlots(prisma, pairs, stageId, D, S, format);
+    createMatchesOnInternationalSlots(prisma, saveId, pairs, stageId, D, S, format);
 
   // ── UB QF done → UB SF + LB R1 ──
   if (completedStageId === `${stagePrefix}_UB_QF`) {
@@ -970,17 +984,18 @@ export async function progressMastersBracket(
     const sf = await getIntlResults(`${stagePrefix}_UB_SF`);
     if (sf.length >= 2 && !await intlStageExists(`${stagePrefix}_UB_FINAL`)) {
       await prisma.match.createMany({ data: [{
+        saveId,
         team1Id: sf[0].winner, team2Id: sf[1].winner,
         stageId: `${stagePrefix}_UB_FINAL`, format: "BO3", day: 0, week: 0, season: S,
       }] });
     }
     // Try LB R2
-    await tryMastersLBR2(prisma, stagePrefix, S, D);
+    await tryMastersLBR2(prisma, saveId, stagePrefix, S, D);
   }
 
   // ── LB R1 done → try LB R2 (needs UB SF losers) ──
   if (completedStageId === `${stagePrefix}_LB_R1`) {
-    await tryMastersLBR2(prisma, stagePrefix, S, D);
+    await tryMastersLBR2(prisma, saveId, stagePrefix, S, D);
   }
 
   // ── LB R2 done → LB R3 (needs UB SF losers vs LB R2 winners) ──
@@ -1007,7 +1022,7 @@ export async function progressMastersBracket(
   if (completedStageId === `${stagePrefix}_LB_SF`) {
     // Schedule UB Final
     const ubFinal = await prisma.match.findFirst({
-      where: { stageId: `${stagePrefix}_UB_FINAL`, season: S, day: 0 },
+      where: { saveId, stageId: `${stagePrefix}_UB_FINAL`, season: S, day: 0 },
     });
     if (ubFinal) {
       const nextDays = getNextWeekBroadcastDays("EMEA", D, 1, 1);
@@ -1025,6 +1040,7 @@ export async function progressMastersBracket(
     if (ubFinal.length >= 1 && lbSF.length >= 1 && !await intlStageExists(`${stagePrefix}_LB_FINAL`)) {
       const day = D + 1;
       await prisma.match.createMany({ data: [{
+        saveId,
         team1Id: ubFinal[0].loser, team2Id: lbSF[0].winner,
         stageId: `${stagePrefix}_LB_FINAL`, format: "BO3", day, week: Math.ceil(day / 7), season: S,
       }] });
@@ -1038,6 +1054,7 @@ export async function progressMastersBracket(
     if (ubFinal.length >= 1 && lbFinal.length >= 1 && !await intlStageExists(`${stagePrefix}_GRAND_FINAL`)) {
       const day = D + 1;
       await prisma.match.createMany({ data: [{
+        saveId,
         team1Id: ubFinal[0].winner, team2Id: lbFinal[0].winner,
         stageId: `${stagePrefix}_GRAND_FINAL`, format: "BO5", day, week: Math.ceil(day / 7), season: S,
       }] });
@@ -1045,15 +1062,15 @@ export async function progressMastersBracket(
   }
 }
 
-async function tryMastersLBR2(prisma: PrismaClient, stagePrefix: string, S: number, D: number) {
-  const count = await prisma.match.count({ where: { stageId: `${stagePrefix}_LB_R2`, season: S } });
+async function tryMastersLBR2(prisma: PrismaClient, saveId: string, stagePrefix: string, S: number, D: number) {
+  const count = await prisma.match.count({ where: { saveId, stageId: `${stagePrefix}_LB_R2`, season: S } });
   if (count > 0) return;
   const lbR1Matches = await prisma.match.findMany({
-    where: { stageId: `${stagePrefix}_LB_R1`, season: S, isPlayed: true },
+    where: { saveId, stageId: `${stagePrefix}_LB_R1`, season: S, isPlayed: true },
     orderBy: { day: "asc" },
   });
   const ubSFMatches = await prisma.match.findMany({
-    where: { stageId: `${stagePrefix}_UB_SF`, season: S, isPlayed: true },
+    where: { saveId, stageId: `${stagePrefix}_UB_SF`, season: S, isPlayed: true },
     orderBy: { day: "asc" },
   });
   if (lbR1Matches.length >= 2 && ubSFMatches.length >= 2) {
@@ -1061,7 +1078,7 @@ async function tryMastersLBR2(prisma: PrismaClient, stagePrefix: string, S: numb
       winner: m.winnerId!, loser: m.winnerId === m.team1Id ? m.team2Id : m.team1Id,
     }));
     // LB R2: LB R1 winners face each other (UB SF losers go to LB R3)
-    await createMatchesOnInternationalSlots(prisma,
+    await createMatchesOnInternationalSlots(prisma, saveId,
       [[lbR1[0].winner, lbR1[1].winner]],
       `${stagePrefix}_LB_R2`, D, S,
     );
@@ -1120,16 +1137,17 @@ function roundRobinSchedule(teamIds: string[]): string[][][] {
  */
 export async function initializeRegionalStage(
   prisma: PrismaClient,
+  saveId: string,
   seasonNumber: number,
   stageId: string, // "STAGE_1" or "STAGE_2"
 ): Promise<{ matchesScheduled: number }> {
   const existing = await prisma.match.count({
-    where: { stageId: { startsWith: stageId }, season: seasonNumber },
+    where: { saveId, stageId: { startsWith: stageId }, season: seasonNumber },
   });
   if (existing > 0) return { matchesScheduled: 0 };
 
   const lastMatch = await prisma.match.findFirst({
-    where: { season: seasonNumber },
+    where: { saveId, season: seasonNumber },
     orderBy: { day: "desc" },
   });
   const afterDay = lastMatch?.day ?? 0;
@@ -1139,7 +1157,7 @@ export async function initializeRegionalStage(
 
   for (const region of ALL_REGIONS) {
     const teams = await prisma.team.findMany({
-      where: { region },
+      where: { saveId, region },
       select: { id: true, prestige: true },
       orderBy: { prestige: "desc" },
     });
@@ -1161,6 +1179,7 @@ export async function initializeRegionalStage(
 
     const broadcastDays = MATCH_DAYS[region];
     const matchData: Array<{
+      saveId: string;
       team1Id: string; team2Id: string; stageId: string;
       format: MatchFormat; day: number; week: number; season: number;
     }> = [];
@@ -1186,12 +1205,14 @@ export async function initializeRegionalStage(
 
         if (aPair) {
           matchData.push({
+            saveId,
             team1Id: aPair[0], team2Id: aPair[1],
             stageId: `${stageId}_ALPHA`, format: "BO3", day, week, season: seasonNumber,
           });
         }
         if (oPair) {
           matchData.push({
+            saveId,
             team1Id: oPair[0], team2Id: oPair[1],
             stageId: `${stageId}_OMEGA`, format: "BO3", day, week, season: seasonNumber,
           });
@@ -1225,6 +1246,7 @@ export async function initializeRegionalStage(
  */
 export async function progressRegionalStage(
   prisma: PrismaClient,
+  saveId: string,
   stageId: string, // STAGE_1 or STAGE_2
   region: Region,
   seasonNumber: number,
@@ -1235,10 +1257,10 @@ export async function progressRegionalStage(
 
   // Check if group phase complete for this region
   const alphaMatches = await prisma.match.findMany({
-    where: { stageId: `${stageId}_ALPHA`, season: S, team1: { region: R } },
+    where: { saveId, stageId: `${stageId}_ALPHA`, season: S, team1: { region: R } },
   });
   const omegaMatches = await prisma.match.findMany({
-    where: { stageId: `${stageId}_OMEGA`, season: S, team1: { region: R } },
+    where: { saveId, stageId: `${stageId}_OMEGA`, season: S, team1: { region: R } },
   });
   const alphaDone = alphaMatches.length > 0 && alphaMatches.every((m) => m.isPlayed);
   const omegaDone = omegaMatches.length > 0 && omegaMatches.every((m) => m.isPlayed);
@@ -1246,7 +1268,7 @@ export async function progressRegionalStage(
 
   // Check if playoffs already started
   const playoffs = await prisma.match.count({
-    where: { stageId: { startsWith: `${stageId}_PO_` }, season: S, team1: { region: R } },
+    where: { saveId, stageId: { startsWith: `${stageId}_PO_` }, season: S, team1: { region: R } },
   });
   if (playoffs > 0) return;
 
@@ -1282,7 +1304,7 @@ export async function progressRegionalStage(
   //   LB Final: LB R2 winners
   //   Grand Final (BO5): UB Final winner vs LB Final winner
   const cm = (pairs: [string, string][], stage: string, format: MatchFormat = "BO3") =>
-    createMatchesOnNextSlots(prisma, pairs, stage, R, currentDay, S, format);
+    createMatchesOnNextSlots(prisma, saveId, pairs, stage, R, currentDay, S, format);
 
   // UB QF and LB R1 start simultaneously (4th seeds enter immediately in LB R1)
   await cm([[a2, b3], [b2, a3]], `${stageId}_PO_UB_QF`);
@@ -1307,6 +1329,7 @@ export async function progressRegionalStage(
  */
 export async function progressRegionalPlayoffs(
   prisma: PrismaClient,
+  saveId: string,
   completedStageId: string,
   region: Region,
   seasonNumber: number,
@@ -1318,7 +1341,7 @@ export async function progressRegionalPlayoffs(
 
   async function results(stageId: string): Promise<Array<{ winner: string; loser: string }>> {
     const matches = await prisma.match.findMany({
-      where: { stageId, season: S, isPlayed: true, team1: { region: R } },
+      where: { saveId, stageId, season: S, isPlayed: true, team1: { region: R } },
       orderBy: { day: "asc" },
     });
     return matches.map((m) => ({
@@ -1329,7 +1352,7 @@ export async function progressRegionalPlayoffs(
 
   async function exists(stageId: string): Promise<boolean> {
     const n = await prisma.match.count({
-      where: { stageId, season: S, team1: { region: R } },
+      where: { saveId, stageId, season: S, team1: { region: R } },
     });
     return n > 0;
   }
@@ -1339,7 +1362,7 @@ export async function progressRegionalPlayoffs(
   async function getGroupSeeds(count: number): Promise<{ alpha: string[]; omega: string[] }> {
     async function topN(stageId: string): Promise<string[]> {
       const matches = await prisma.match.findMany({
-        where: { stageId, season: S, team1: { region: R }, isPlayed: true },
+        where: { saveId, stageId, season: S, team1: { region: R }, isPlayed: true },
       });
       const wins = new Map<string, number>();
       const ids = new Set<string>();
@@ -1362,7 +1385,7 @@ export async function progressRegionalPlayoffs(
   }
 
   const cm = (pairs: [string, string][], stage: string, format: MatchFormat = "BO3") =>
-    createMatchesOnNextSlots(prisma, pairs, stage, R, currentDay, S, format);
+    createMatchesOnNextSlots(prisma, saveId, pairs, stage, R, currentDay, S, format);
 
   // ── UB QF done → UB SF (with A1/B1 byes) + LB R1 (4th seeds enter here) ──
   if (completedStageId === `${prefix}_PO_UB_QF`) {
@@ -1393,12 +1416,12 @@ export async function progressRegionalPlayoffs(
     if (sf.length >= 2 && !await exists(`${prefix}_PO_UB_FINAL`)) {
       await cm([[sf[0].winner, sf[1].winner]], `${prefix}_PO_UB_FINAL`);
     }
-    await tryRegionalLBR2(prisma, prefix, R, S, currentDay);
+    await tryRegionalLBR2(prisma, saveId, prefix, R, S, currentDay);
   }
 
   // ── LB R1 done → try LB R2 ──
   if (completedStageId === `${prefix}_PO_LB_R1`) {
-    await tryRegionalLBR2(prisma, prefix, R, S, currentDay);
+    await tryRegionalLBR2(prisma, saveId, prefix, R, S, currentDay);
   }
 
   // ── LB R2 done → LB Final (winners of 2 LB R2 matches) ──
@@ -1422,22 +1445,23 @@ export async function progressRegionalPlayoffs(
 /** Try to create LB R2 (needs both LB R1 winners + both UB SF losers). Creates 2 matches. */
 async function tryRegionalLBR2(
   prisma: PrismaClient,
+  saveId: string,
   prefix: string,
   region: Region,
   season: number,
   currentDay: number,
 ): Promise<void> {
   const count = await prisma.match.count({
-    where: { stageId: `${prefix}_PO_LB_R2`, season, team1: { region } },
+    where: { saveId, stageId: `${prefix}_PO_LB_R2`, season, team1: { region } },
   });
   if (count > 0) return;
 
   const sf = await prisma.match.findMany({
-    where: { stageId: `${prefix}_PO_UB_SF`, season, team1: { region }, isPlayed: true },
+    where: { saveId, stageId: `${prefix}_PO_UB_SF`, season, team1: { region }, isPlayed: true },
     orderBy: { day: "asc" },
   });
   const lbR1 = await prisma.match.findMany({
-    where: { stageId: `${prefix}_PO_LB_R1`, season, team1: { region }, isPlayed: true },
+    where: { saveId, stageId: `${prefix}_PO_LB_R1`, season, team1: { region }, isPlayed: true },
     orderBy: { day: "asc" },
   });
   // Need both SF matches + both LB R1 matches played
@@ -1450,6 +1474,7 @@ async function tryRegionalLBR2(
   // Cross-bracket to avoid immediate rematch: W(LB R1-1) vs L(UB SF2), W(LB R1-2) vs L(UB SF1)
   await createMatchesOnNextSlots(
     prisma,
+    saveId,
     [[lbR1Winner1, sf2Loser], [lbR1Winner2, sf1Loser]],
     `${prefix}_PO_LB_R2`, region, currentDay, season, "BO3",
   );
@@ -1459,7 +1484,7 @@ async function tryRegionalLBR2(
  * Get top N teams from a regional stage by number of match wins.
  */
 async function getStageTopTeams(
-  prisma: PrismaClient, region: Region, season: number, stageId: string, count: number,
+  prisma: PrismaClient, saveId: string, region: Region, season: number, stageId: string, count: number,
 ): Promise<string[]> {
   // For STAGE_1/STAGE_2 we qualify via playoffs bracket:
   //   #1 = UB Final winner
@@ -1467,10 +1492,10 @@ async function getStageTopTeams(
   //   #3 = Grand Final loser (= 3rd place)
   if (stageId === "STAGE_1" || stageId === "STAGE_2") {
     const ubFinal = await prisma.match.findFirst({
-      where: { stageId: `${stageId}_PO_UB_FINAL`, season, isPlayed: true, team1: { region } },
+      where: { saveId, stageId: `${stageId}_PO_UB_FINAL`, season, isPlayed: true, team1: { region } },
     });
     const gf = await prisma.match.findFirst({
-      where: { stageId: `${stageId}_PO_GF`, season, isPlayed: true, team1: { region } },
+      where: { saveId, stageId: `${stageId}_PO_GF`, season, isPlayed: true, team1: { region } },
     });
 
     const qualified: string[] = [];
@@ -1486,6 +1511,7 @@ async function getStageTopTeams(
     // Fallback: if playoffs incomplete, just return qualified so far + fill with group leaders
     const grpMatches = await prisma.match.findMany({
       where: {
+        saveId,
         season,
         isPlayed: true,
         team1: { region },
@@ -1508,7 +1534,7 @@ async function getStageTopTeams(
 
   // Fallback: old win-count logic for other stages
   const matches = await prisma.match.findMany({
-    where: { stageId, season, isPlayed: true, team1: { region } },
+    where: { saveId, stageId, season, isPlayed: true, team1: { region } },
     select: { winnerId: true },
   });
 
@@ -1520,7 +1546,7 @@ async function getStageTopTeams(
   }
 
   const matches2 = await prisma.match.findMany({
-    where: { stageId, season, isPlayed: true, team2: { region } },
+    where: { saveId, stageId, season, isPlayed: true, team2: { region } },
     select: { winnerId: true },
   });
   for (const m of matches2) {
@@ -1545,6 +1571,7 @@ async function getStageTopTeams(
  */
 export async function initializeInternationalEvent(
   prisma: PrismaClient,
+  saveId: string,
   seasonNumber: number,
   stagePrefix: string, // "EWC" or "CHAMPIONS"
   teamsPerRegion: number,
@@ -1552,14 +1579,14 @@ export async function initializeInternationalEvent(
 ): Promise<{ matchesScheduled: number }> {
   // Check if already initialized
   const existing = await prisma.match.count({
-    where: { stageId: { startsWith: `${stagePrefix}_SWISS` }, season: seasonNumber },
+    where: { saveId, stageId: { startsWith: `${stagePrefix}_SWISS` }, season: seasonNumber },
   });
   if (existing > 0) return { matchesScheduled: 0 };
 
   const qualifiedTeams: { teamId: string; region: Region; seed: number }[] = [];
 
   for (const region of ALL_REGIONS) {
-    const teamIds = await getStageTopTeams(prisma, region, seasonNumber, qualifyingStageId, teamsPerRegion);
+    const teamIds = await getStageTopTeams(prisma, saveId, region, seasonNumber, qualifyingStageId, teamsPerRegion);
     teamIds.forEach((id, idx) => {
       qualifiedTeams.push({ teamId: id, region, seed: idx + 1 });
     });
@@ -1579,13 +1606,13 @@ export async function initializeInternationalEvent(
   }
 
   const lastMatch = await prisma.match.findFirst({
-    where: { season: seasonNumber },
+    where: { saveId, season: seasonNumber },
     orderBy: { day: "desc" },
   });
   const afterDay = lastMatch?.day ?? 0;
 
   await createMatchesOnInternationalSlots(
-    prisma, pairs, `${stagePrefix}_SWISS_R1`, afterDay, seasonNumber,
+    prisma, saveId, pairs, `${stagePrefix}_SWISS_R1`, afterDay, seasonNumber,
   );
 
   return { matchesScheduled: pairs.length };
@@ -1706,6 +1733,7 @@ function offseasonCalcSalary(acs: number, kd: number, adr: number, kast: number)
  */
 export async function rollOffSeason(
   prisma: PrismaClient,
+  saveId: string,
   seasonId: string,
   currentSeasonNumber: number,
 ): Promise<{
@@ -1716,12 +1744,15 @@ export async function rollOffSeason(
 }> {
   const newSeasonNumber = currentSeasonNumber + 1;
 
-  // 1) Age all players
-  await prisma.player.updateMany({ data: { age: { increment: 1 } } });
+  // 1) Age all players in this save
+  await prisma.player.updateMany({
+    where: { team: { saveId } },
+    data: { age: { increment: 1 } },
+  });
 
-  // 2) Retire old underperformers
+  // 2) Retire old underperformers (within this save)
   const toRetire = await prisma.player.findMany({
-    where: { age: { gte: 32 }, acs: { lt: 200 }, isRetired: false },
+    where: { team: { saveId }, age: { gte: 32 }, acs: { lt: 200 }, isRetired: false },
     select: { id: true },
   });
   if (toRetire.length > 0) {
@@ -1778,13 +1809,15 @@ export async function rollOffSeason(
     rookiesCreated++;
   }
 
-  // 4) Reset team stats
+  // 4) Reset team stats (within this save)
   await prisma.team.updateMany({
+    where: { saveId },
     data: { wins: 0, losses: 0, champPts: 0, lastTrainedWeek: 0 },
   });
 
-  // 4b) Reset per-season player counters (pep talks, raises)
+  // 4b) Reset per-season player counters (pep talks, raises) within this save
   await prisma.player.updateMany({
+    where: { team: { saveId } },
     data: { pepTalksUsedSeason: 0, raisesUsedSeason: 0 },
   });
 
@@ -1814,8 +1847,11 @@ export async function rollOffSeason(
   // 7) Generate the new season's Kickoff patch
   await generateMetaPatch(prisma, newSeasonNumber, "KICKOFF");
 
-  // 8) Re-initialize the Kickoff bracket for all regions
-  const allTeams = await prisma.team.findMany({ select: { id: true, name: true, region: true } });
+  // 8) Re-initialize the Kickoff bracket for all regions (this save only)
+  const allTeams = await prisma.team.findMany({
+    where: { saveId },
+    select: { id: true, name: true, region: true },
+  });
   const teamsByRegion = new Map<Region, { id: string; name: string }[]>();
   for (const t of allTeams) {
     const list = teamsByRegion.get(t.region) ?? [];
@@ -1832,6 +1868,7 @@ export async function rollOffSeason(
       .filter((pair): pair is [string, string] => !!pair[0] && !!pair[1]);
 
     const data = pairs.map(([team1Id, team2Id]) => ({
+      saveId,
       team1Id,
       team2Id,
       stageId: "KICKOFF_UB_R1",
