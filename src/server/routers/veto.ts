@@ -1,16 +1,18 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { router, protectedProcedure } from "../trpc";
+import { router, saveProcedure } from "../trpc";
 import { getActiveMapPool } from "@/constants/maps";
 import { AGENT_META, getSynergyFactor, MAP_FACTOR } from "@/constants/meta";
 
 export const vetoRouter = router({
   // Get veto state for a match
-  getVetoState: protectedProcedure
+  getVetoState: saveProcedure
     .input(z.object({ matchId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const match = await ctx.prisma.match.findUnique({
-        where: { id: input.matchId },
+      // Match must belong to this save — otherwise the user is poking at
+      // someone else's data (or a stale ID from a deleted save).
+      const match = await ctx.prisma.match.findFirst({
+        where: { id: input.matchId, saveId: ctx.save.id },
         include: {
           team1: {
             select: {
@@ -38,10 +40,11 @@ export const vetoRouter = router({
       });
       if (!match) throw new TRPCError({ code: "NOT_FOUND" });
 
-      const userTeam = await ctx.prisma.team.findUnique({
-        where: { userId: ctx.userId },
+      const userTeam = await ctx.prisma.team.findFirst({
+        where: { saveId: ctx.save.id, isPlayerTeam: true },
+        select: { id: true },
       });
-      if (!userTeam) throw new TRPCError({ code: "NOT_FOUND" });
+      if (!userTeam) throw new TRPCError({ code: "NOT_FOUND", message: "User team not found in this save" });
 
       const isTeam1 = match.team1Id === userTeam.id;
       if (!isTeam1 && match.team2Id !== userTeam.id) {
@@ -54,7 +57,9 @@ export const vetoRouter = router({
       }
 
       // Get current season stage to determine active map pool
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({
+        where: { isActive: true, saveId: ctx.save.id },
+      });
       const mapPool = getActiveMapPool(season?.currentStage ?? "KICKOFF");
 
       return {
@@ -67,7 +72,7 @@ export const vetoRouter = router({
     }),
 
   // Execute veto: store the final map selection on the match
-  executeVeto: protectedProcedure
+  executeVeto: saveProcedure
     .input(
       z.object({
         matchId: z.string(),
@@ -81,8 +86,8 @@ export const vetoRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const match = await ctx.prisma.match.findUnique({
-        where: { id: input.matchId },
+      const match = await ctx.prisma.match.findFirst({
+        where: { id: input.matchId, saveId: ctx.save.id },
       });
       if (!match || match.isPlayed) {
         throw new TRPCError({ code: "BAD_REQUEST" });
@@ -96,7 +101,9 @@ export const vetoRouter = router({
         .filter((a) => a.type === "ban")
         .map((a) => a.map);
       // Get current season stage to determine active map pool
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({
+        where: { isActive: true, saveId: ctx.save.id },
+      });
       const currentPool = getActiveMapPool(season?.currentStage ?? "KICKOFF");
 
       const remaining = currentPool.filter(
@@ -117,11 +124,11 @@ export const vetoRouter = router({
       return { maps: finalMaps, actions: input.actions };
     }),
 
-  mapWinProbabilities: protectedProcedure
+  mapWinProbabilities: saveProcedure
     .input(z.object({ matchId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const match = await ctx.prisma.match.findUnique({
-        where: { id: input.matchId },
+      const match = await ctx.prisma.match.findFirst({
+        where: { id: input.matchId, saveId: ctx.save.id },
         include: {
           team1: { include: { players: { where: { isActive: true }, select: { id: true, acs: true, kd: true, adr: true, kast: true, mapFactors: true } } } },
           team2: { include: { players: { where: { isActive: true }, select: { id: true, acs: true, kd: true, adr: true, kast: true, mapFactors: true } } } },
@@ -129,11 +136,16 @@ export const vetoRouter = router({
       });
       if (!match) throw new TRPCError({ code: "NOT_FOUND" });
 
-      const userTeam = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
-      if (!userTeam) throw new TRPCError({ code: "NOT_FOUND" });
+      const userTeam = await ctx.prisma.team.findFirst({
+        where: { saveId: ctx.save.id, isPlayerTeam: true },
+        select: { id: true },
+      });
+      if (!userTeam) throw new TRPCError({ code: "NOT_FOUND", message: "User team not found in this save" });
       const isTeam1 = match.team1Id === userTeam.id;
 
-      const season = await ctx.prisma.season.findFirst({ where: { isActive: true } });
+      const season = await ctx.prisma.season.findFirst({
+        where: { isActive: true, saveId: ctx.save.id },
+      });
       const mapPool = getActiveMapPool(season?.currentStage ?? "KICKOFF");
 
       function teamMapScore(players: Array<{ acs: number; kast: number; adr: number; kd: number; mapFactors: unknown }>, mapName: string): number {

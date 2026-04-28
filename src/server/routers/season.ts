@@ -760,14 +760,20 @@ export const seasonRouter = router({
         where: { id: { in: Array.from(winnersToday) } },
         include: { sponsors: { where: { isActive: true }, select: { winBonus: true } } },
       });
+      const winBonusUpdates: Array<ReturnType<typeof ctx.prisma.team.update>> = [];
       for (const t of winningTeams) {
         const totalBonus = t.sponsors.reduce((sum, s) => sum + s.winBonus, 0);
         if (totalBonus > 0) {
-          await ctx.prisma.team.update({
-            where: { id: t.id },
-            data: { budget: { increment: totalBonus } },
-          });
+          winBonusUpdates.push(
+            ctx.prisma.team.update({
+              where: { id: t.id },
+              data: { budget: { increment: totalBonus } },
+            }),
+          );
         }
+      }
+      if (winBonusUpdates.length > 0) {
+        await ctx.prisma.$transaction(winBonusUpdates);
       }
     }
 
@@ -816,6 +822,7 @@ export const seasonRouter = router({
         },
       });
 
+      const budgetUpdates: Array<ReturnType<typeof ctx.prisma.team.update>> = [];
       for (const t of allTeams) {
         const totalSalary = t.players.reduce((sum, p) => sum + p.salary, 0);
         const coachSalary = t.coach?.salary ?? 0;
@@ -823,10 +830,12 @@ export const seasonRouter = router({
         const net = sponsorIncome - totalSalary - coachSalary;
         if (net === 0) continue;
         const newBudget = Math.max(0, t.budget + net);
-        await ctx.prisma.team.update({
-          where: { id: t.id },
-          data: { budget: newBudget },
-        });
+        budgetUpdates.push(
+          ctx.prisma.team.update({
+            where: { id: t.id },
+            data: { budget: newBudget },
+          }),
+        );
         salaryDeductions.push({
           teamId: t.id,
           teamName: t.name,
@@ -835,6 +844,11 @@ export const seasonRouter = router({
           sponsorIncome,
           newBudget,
         });
+      }
+      // Batch all team-budget writes in a single round-trip instead of one
+      // sequential round-trip per team.
+      if (budgetUpdates.length > 0) {
+        await ctx.prisma.$transaction(budgetUpdates);
       }
     }
 
@@ -864,7 +878,11 @@ export const seasonRouter = router({
     // when the successor stage already exists), so this is safe to call every
     // tick. Catches edge cases where the per-resolve dispatch missed a round
     // (older saves, races, code paths bypassing the dispatcher).
-    {
+    //
+    // Perf gate: skip the scan entirely on idle days. If nothing completed
+    // today, no successor needs creating — running it anyway costs a full
+    // season-wide findMany for nothing.
+    if (completedRounds.size > 0) {
       const allMatches = await ctx.prisma.match.findMany({
         where: { saveId: ctx.save.id, season: season.number },
         select: {
