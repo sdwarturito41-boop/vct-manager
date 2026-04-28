@@ -36,27 +36,29 @@ export const NAV_BG = "#0d0d12";
 export const NAV_CARD = "#1a1a24";
 export const NAV_BORDER = "#2C2C2A";
 
-// Light surfaces.
-const BG_PRIMARY = "#FFFFFF";        // page / cards
-const BG_SECONDARY = "#F6F5FA";      // muted rows, table headers
-const BG_SURFACE = "#FAFAFC";        // subtle panel tint
-const INK_PRIMARY = "#15141F";       // primary text
-const INK_MUTED = "#55556B";         // secondary text
-const INK_SUBTLE = "rgba(21,20,31,0.45)";
-const INK_FAINT = "rgba(21,20,31,0.2)";
-const HAIRLINE = "rgba(0,0,0,0.15)"; // 0.5px borders per spec
-const HAIRLINE_FAINT = "rgba(0,0,0,0.08)";
+// Surfaces — VALO.GG brand on a dark canvas (user preference: pure white
+// hurts the eyes during long manager sessions). Brand accents (indigo, teal,
+// coral, amber) remain semantically identical and read well on dark.
+const BG_PRIMARY = "#0F0F14";        // page background
+const BG_SECONDARY = "#16161E";      // subtle alt rows, table headers
+const BG_SURFACE = "#13131A";        // cards / panels
+const INK_PRIMARY = "#ECE8E1";       // primary text
+const INK_MUTED = "#9A9AAE";         // secondary text
+const INK_SUBTLE = "rgba(236,232,225,0.45)";
+const INK_FAINT = "rgba(236,232,225,0.18)";
+const HAIRLINE = "rgba(255,255,255,0.08)"; // 0.5px hairlines on dark
+const HAIRLINE_FAINT = "rgba(255,255,255,0.04)";
 
 // ── Token dictionary (D.*) — preserves legacy names as aliases ──
 
 export const D = {
-  // Surfaces
+  // Surfaces (dark canvas)
   bg: BG_PRIMARY,
-  surface: BG_SURFACE,
-  card: BG_PRIMARY,
+  surface: BG_SECONDARY,
+  card: BG_SURFACE,
   secondary: BG_SECONDARY,
-  hoverBg: "rgba(83,74,183,0.06)",
-  floatBg: "rgba(255,255,255,0.92)",
+  hoverBg: "rgba(83,74,183,0.10)",
+  floatBg: "rgba(15,15,20,0.92)",
   floatBorder: HAIRLINE,
 
   // Dark surfaces (nav only)
