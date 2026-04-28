@@ -1,16 +1,19 @@
 import { serverTrpc } from "@/lib/trpc-server";
+import { prisma } from "@/lib/prisma";
 import { formatCurrency } from "@/lib/format";
-import { formatGameDate, dayNameFull } from "@/lib/game-date";
+import { formatGameDate } from "@/lib/game-date";
 import { VCT_STAGES } from "@/constants/vct-format";
 import { AdvanceDayButton } from "@/components/AdvanceDayButton";
 import { TRPCError } from "@trpc/server";
 import Link from "next/link";
-import { D, overallToStars } from "@/constants/design";
+import { D } from "@/constants/design";
 
-// FM-style portal dashboard for VALO.GG. Layout mirrors Football Manager's
-// portal/overview screen (3-col: messages · news+calendar · fixtures+stages)
-// with an extra section for the player's own roster (FM doesn't show it on
-// the home page; the user wants it visible here for quick scanning).
+// FM-style portal dashboard. Three independent scroll columns at 100vh.
+// Layout closely follows the brief while staying inside VALO.GG palette:
+//   - dark surfaces (D.bg / D.surface / D.card),
+//   - indigo primary as the only accent (no orange),
+//   - teal / coral semantics for W/L and rating deltas,
+//   - sentence case + Inter 13/16/22, no uppercase tracking.
 
 type Match = {
   id: string;
@@ -34,10 +37,51 @@ type Player = {
   imageUrl: string | null;
   role: string;
   isActive: boolean;
+  rating: number;
   overall: number;
-  playstyleRole: string | null;
-  nationality: string;
+  agentStats: unknown;
 };
+
+const AGENT_CLASS: Record<string, "duelist" | "initiator" | "controller" | "sentinel"> = {
+  jett: "duelist", phoenix: "duelist", raze: "duelist", yoru: "duelist",
+  neon: "duelist", reyna: "duelist", iso: "duelist", waylay: "duelist",
+  sova: "initiator", skye: "initiator", fade: "initiator", breach: "initiator",
+  kayo: "initiator", gekko: "initiator", tejo: "initiator",
+  brimstone: "controller", omen: "controller", viper: "controller",
+  astra: "controller", harbor: "controller", clove: "controller",
+  killjoy: "sentinel", sage: "sentinel", cypher: "sentinel",
+  chamber: "sentinel", deadlock: "sentinel", vyse: "sentinel",
+};
+
+// Sentinel uses a deep-indigo so all 4 classes stay visually distinct without
+// borrowing amber (which the spec reserves for stars).
+const SENTINEL_TINT = "#8B8DC9";
+
+function agentColor(agent: string | null): string {
+  if (!agent) return D.textSubtle;
+  switch (AGENT_CLASS[agent.toLowerCase()]) {
+    case "duelist": return D.coral;
+    case "initiator": return D.primary;
+    case "controller": return D.teal;
+    case "sentinel": return SENTINEL_TINT;
+    default: return D.textSubtle;
+  }
+}
+
+function bestAgent(p: Player): string | null {
+  const stats = (p.agentStats ?? {}) as Record<string, { mastery?: number }>;
+  const entries = Object.entries(stats);
+  if (entries.length === 0) return null;
+  let best = entries[0];
+  for (const e of entries) if ((e[1].mastery ?? 0) > (best[1].mastery ?? 0)) best = e;
+  return best[0];
+}
+
+function winProbability(myAvg: number, oppAvg: number): number {
+  // Logistic on overall delta. ~50% at parity, ~75% at +2, ~90% at +4.
+  const p = 1 / (1 + Math.exp(-(myAvg - oppAvg) / 1.5));
+  return Math.round(p * 100);
+}
 
 export default async function DashboardPage() {
   const api = await serverTrpc();
@@ -81,10 +125,44 @@ export default async function DashboardPage() {
       : pendingMatch.team1.tag
     : null;
 
+  // Fetch full opponent roster for the matchup card.
+  const opponentTeamId = nextMatch
+    ? nextMatch.team1Id === team.id
+      ? nextMatch.team2Id
+      : nextMatch.team1Id
+    : null;
+  const opponentTeam = opponentTeamId
+    ? await prisma.team.findUnique({
+        where: { id: opponentTeamId },
+        include: {
+          players: {
+            where: { isActive: true },
+            orderBy: { overall: "desc" },
+            take: 5,
+          },
+        },
+      })
+    : null;
+
+  const myStarters = ((team.players as Player[]) ?? [])
+    .filter((p) => p.isActive)
+    .sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0))
+    .slice(0, 5);
+
+  // Upcoming + recent fixtures combined view (FM "Fixture schedule" mixes both
+  // — recent results above the fold, upcoming below).
   const upcomingMatches = matches
     .filter((m) => !m.isPlayed && m.day > 0)
     .sort((a, b) => a.day - b.day)
-    .slice(0, 7);
+    .slice(0, 4);
+
+  const fixturesList: Array<{
+    match: Match;
+    isUpcoming: boolean;
+  }> = [
+    ...upcomingMatches.map((m) => ({ match: m, isUpcoming: true })),
+    ...recentMatches.slice(0, 3).map((m) => ({ match: m, isUpcoming: false })),
+  ];
 
   const currentStage =
     season?.currentStage && season.currentStage in VCT_STAGES
@@ -102,8 +180,6 @@ export default async function DashboardPage() {
   }>;
   const teamRank = standingsArr.findIndex((t) => t.id === team.id) + 1;
 
-  const players = (team.players as Player[]).filter((p) => p.isActive);
-  // Top story: most recent unread message, fall back to latest.
   const messagesArr = messages as Array<{
     id: string;
     title: string;
@@ -116,320 +192,417 @@ export default async function DashboardPage() {
     week: number;
     day: number;
   }>;
-  const topStory = messagesArr[0] ?? null;
+
+  // Compute team-overall averages for the win-prob badge.
+  const myAvg = myStarters.length > 0
+    ? myStarters.reduce((s, p) => s + (p.overall ?? 10), 0) / myStarters.length
+    : 10;
+  const oppAvg = opponentTeam && opponentTeam.players.length > 0
+    ? opponentTeam.players.reduce((s, p) => s + (p.overall ?? 10), 0) / opponentTeam.players.length
+    : 10;
+  const winProb = winProbability(myAvg, oppAvg);
 
   return (
-    <div className="flex min-h-full flex-col" style={{ background: D.bg }}>
-      {/* ─── Top header strip ─────────────────────────────────────── */}
-      <section
-        className="flex items-center justify-between px-8 py-4"
-        style={{ background: D.surface, borderBottom: `1px solid ${D.border}` }}
+    <div className="flex h-screen flex-col overflow-hidden" style={{ background: D.bg }}>
+      {/* ─── Top header (52px) ─── */}
+      <header
+        className="flex shrink-0 items-center justify-between px-6"
+        style={{
+          height: 52,
+          background: D.surface,
+          borderBottom: `1px solid ${D.border}`,
+        }}
       >
-        <div className="flex items-center gap-4">
-          {team.logoUrl ? (
-            <img src={team.logoUrl} alt={team.name} className="h-10 w-10 object-contain" />
-          ) : (
-            <div
-              className="flex h-10 w-10 items-center justify-center rounded"
-              style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-            >
-              <span className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
-                {team.name.slice(0, 2)}
-              </span>
-            </div>
-          )}
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[16px] font-medium" style={{ color: D.textPrimary }}>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3">
+            {team.logoUrl ? (
+              <img src={team.logoUrl} alt={team.name} className="h-8 w-8 object-contain" />
+            ) : (
+              <div
+                className="flex h-8 w-8 items-center justify-center rounded-full"
+                style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+              >
+                <span className="text-[12px]" style={{ color: D.textPrimary }}>
+                  {team.name.slice(0, 2)}
+                </span>
+              </div>
+            )}
+            <span className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
               {team.name}
             </span>
-            <span className="text-[11px]" style={{ color: D.textMuted }}>
-              {team.region} · Season {season?.number ?? 1}
-              {currentStage ? ` · ${currentStage.name}` : ""}
-            </span>
           </div>
-        </div>
 
-        <div className="flex items-center gap-5">
-          {season && (
-            <div className="flex flex-col items-end gap-0.5">
-              <span className="text-[16px] font-medium tabular-nums" style={{ color: D.textPrimary }}>
-                {formatGameDate(season.currentDay)}
-              </span>
-              <span className="text-[11px]" style={{ color: D.textMuted }}>
-                Week {season.currentWeek}
-              </span>
-            </div>
-          )}
-          <div className="w-44">
-            <AdvanceDayButton pendingMatchId={pendingMatch?.id} pendingOpponent={pendingOpponent} />
-          </div>
-        </div>
-      </section>
-
-      {/* ─── Sub-tabs (FM portal pattern) ─────────────────────────── */}
-      <nav
-        className="flex items-center gap-6 px-8"
-        style={{ background: D.surface, borderBottom: `1px solid ${D.border}` }}
-      >
-        {(["Overview", "Inbox", "Calendar", "News", "Fixtures", "Standings", "Roster"] as const).map(
-          (label, i) => (
-            <span
-              key={label}
-              className="relative py-3 text-[12px]"
-              style={{
-                color: i === 0 ? D.primary : D.textMuted,
-                fontWeight: i === 0 ? 500 : 400,
-              }}
-            >
-              {label}
-              {i === 0 && (
-                <span
-                  className="absolute bottom-0 left-0 right-0 h-[2px]"
-                  style={{ background: D.primary }}
-                />
-              )}
-            </span>
-          ),
-        )}
-      </nav>
-
-      {/* ─── Main 3-column grid ────────────────────────────────────── */}
-      <section
-        className="grid gap-6 px-8 py-6"
-        style={{ gridTemplateColumns: "320px 1fr 320px" }}
-      >
-        {/* ── LEFT: messages ── */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[16px] font-medium" style={{ color: D.textPrimary }}>
-              Messages
-            </h2>
-            <Link
-              href="/inbox"
-              className="text-[11px] transition-colors"
-              style={{ color: D.primary }}
-            >
-              See all →
-            </Link>
-          </div>
-          <div className="flex items-center gap-2">
-            {(["All", "New", "Tasks", "Unread"] as const).map((chip, i) => (
+          <nav className="flex items-center gap-5">
+            {(
+              [
+                ["Portal", true],
+                ["Squad", false],
+                ["Recruitment", false],
+                ["Match day", false],
+                ["Club", false],
+                ["Career", false],
+              ] as const
+            ).map(([label, active]) => (
               <span
-                key={chip}
-                className="rounded-full px-3 py-1 text-[11px]"
+                key={label}
+                className="relative py-3 text-[13px]"
                 style={{
-                  background: i === 0 ? D.primaryLight : "transparent",
-                  color: i === 0 ? D.primaryDark : D.textMuted,
-                  border: i === 0 ? "none" : `1px solid ${D.border}`,
-                  fontWeight: i === 0 ? 500 : 400,
+                  color: active ? D.textPrimary : D.textMuted,
+                  fontWeight: active ? 500 : 400,
                 }}
               >
-                {chip}
+                {label}
+                {active && (
+                  <span
+                    className="absolute bottom-0 left-0 right-0"
+                    style={{ height: 2, background: D.primary }}
+                  />
+                )}
               </span>
             ))}
-          </div>
-          <div
-            className="flex flex-col"
-            style={{
-              background: D.card,
-              border: `1px solid ${D.borderFaint}`,
-              borderRadius: 12,
-              maxHeight: 640,
-              overflowY: "auto",
-            }}
-          >
-            {messagesArr.length === 0 ? (
-              <div className="px-4 py-12 text-center text-[12px]" style={{ color: D.textSubtle }}>
-                No messages yet.
-              </div>
-            ) : (
-              messagesArr.slice(0, 12).map((m) => (
-                <Link
-                  key={m.id}
-                  href="/inbox"
-                  className="flex items-start gap-3 px-4 py-3 transition-colors"
-                  style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-                >
-                  <div
-                    className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-                    style={{
-                      background: D.surface,
-                      border: `1px solid ${D.borderFaint}`,
-                      color: m.isRead ? D.textMuted : D.primary,
-                      fontSize: 13,
-                    }}
-                  >
-                    {iconForCategory(m.category)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span
-                        className="truncate text-[12px]"
-                        style={{
-                          color: m.isRead ? D.textMuted : D.textPrimary,
-                          fontWeight: m.isRead ? 400 : 500,
-                        }}
-                      >
-                        {m.senderName ?? "System"}
-                      </span>
-                      <span className="shrink-0 text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
-                        D{m.day}
-                      </span>
-                    </div>
-                    <div
-                      className="truncate text-[11px]"
-                      style={{ color: m.isRead ? D.textSubtle : D.textMuted }}
-                    >
-                      {m.title}
-                    </div>
-                  </div>
-                </Link>
-              ))
-            )}
-          </div>
+          </nav>
         </div>
 
-        {/* ── CENTER: news hero + next match + recent fixtures + calendar ── */}
-        <div className="flex flex-col gap-5">
-          {/* News hero */}
-          <div
-            className="rounded-xl p-6"
-            style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+        <div className="flex items-center gap-4">
+          {season && (
+            <span className="text-[12px] tabular-nums" style={{ color: D.textMuted }}>
+              {formatGameDate(season.currentDay)}
+            </span>
+          )}
+          <span
+            className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] tabular-nums"
+            style={{
+              background: "rgba(29,158,117,0.12)",
+              color: D.teal,
+              border: `1px solid rgba(29,158,117,0.25)`,
+            }}
           >
-            <Link
-              href="/inbox"
-              className="text-[11px] transition-colors"
-              style={{ color: D.primary }}
-            >
-              See all news →
-            </Link>
-            <h3
-              className="mt-4 text-[22px] font-medium leading-tight"
-              style={{ color: D.textPrimary }}
-            >
-              {topStory?.title ?? `Welcome to season ${season?.number ?? 1}`}
-            </h3>
-            <p className="mt-3 text-[13px] leading-relaxed" style={{ color: D.textMuted }}>
-              {topStory?.body
-                ? truncate(topStory.body, 220)
-                : `Manage ${team.name} through the ${currentStage?.name ?? "current stage"}. Track inbox briefings, upcoming fixtures, and roster development from this overview.`}
-            </p>
-            {topStory?.senderName && (
-              <div
-                className="mt-4 flex items-center gap-2 text-[11px]"
-                style={{ color: D.textSubtle }}
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: D.teal }} />
+            {formatCurrency(team.budget)}
+          </span>
+          <div style={{ minWidth: 140 }}>
+            <AdvanceDayButton
+              pendingMatchId={pendingMatch?.id}
+              pendingOpponent={pendingOpponent}
+            />
+          </div>
+        </div>
+      </header>
+
+      {/* ─── Sub-navigation ─── */}
+      <nav
+        className="flex shrink-0 items-center gap-5 px-6"
+        style={{
+          height: 36,
+          background: D.surface,
+          borderBottom: `1px solid ${D.border}`,
+        }}
+      >
+        {(
+          [
+            ["Overview", true],
+            ["Messages", false],
+            ["Calendar", false],
+            ["News site", false],
+            ["Fixture schedule", false],
+            ["Standings", false],
+            ["More", false],
+          ] as const
+        ).map(([label, active]) => (
+          <span
+            key={label}
+            className="relative py-2 text-[12px]"
+            style={{
+              color: active ? D.primary : D.textMuted,
+              fontWeight: active ? 500 : 400,
+            }}
+          >
+            {label}
+            {active && (
+              <span
+                className="absolute -bottom-0 left-0 right-0"
+                style={{ height: 2, background: D.primary }}
+              />
+            )}
+          </span>
+        ))}
+      </nav>
+
+      {/* ─── 3-column body ─── */}
+      <div
+        className="grid min-h-0 flex-1"
+        style={{ gridTemplateColumns: "240px 1fr 280px" }}
+      >
+        {/* LEFT — Inbox */}
+        <aside
+          className="flex min-h-0 flex-col overflow-y-auto"
+          style={{ borderRight: `1px solid ${D.border}` }}
+        >
+          <div className="px-4 pt-4 pb-2" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+            <SectionLabel>Messages</SectionLabel>
+            <div className="mt-3 flex items-center gap-2">
+              {(["All", "New", "Tasks"] as const).map((chip, i) => (
+                <span
+                  key={chip}
+                  className="rounded-full px-2.5 py-0.5 text-[11px]"
+                  style={{
+                    background: i === 0 ? "rgba(83,74,183,0.18)" : "transparent",
+                    color: i === 0 ? D.primary : D.textMuted,
+                    border: i === 0 ? "none" : `1px solid ${D.borderFaint}`,
+                    fontWeight: i === 0 ? 500 : 400,
+                  }}
+                >
+                  {chip}
+                  {i === 1 && messagesArr.filter((m) => !m.isRead).length > 0 && (
+                    <span className="ml-1 tabular-nums">
+                      ({messagesArr.filter((m) => !m.isRead).length})
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+          {messagesArr.length === 0 ? (
+            <div className="px-4 py-12 text-center text-[12px]" style={{ color: D.textSubtle }}>
+              No messages yet.
+            </div>
+          ) : (
+            messagesArr.slice(0, 30).map((m) => (
+              <Link
+                key={m.id}
+                href="/inbox"
+                className="flex items-start gap-3 px-4 py-3 transition-colors"
+                style={{ borderBottom: `1px solid ${D.borderFaint}` }}
               >
-                <span>{topStory.senderName}</span>
-                <span style={{ color: D.textFaint }}>·</span>
-                <span>D{topStory.day}</span>
-              </div>
+                <div
+                  className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-medium"
+                  style={{
+                    background: categoryTint(m.category),
+                    color: categoryColor(m.category),
+                    border: `1px solid ${categoryColor(m.category)}33`,
+                  }}
+                >
+                  {(m.senderName ?? "??").slice(0, 2)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span
+                      className="truncate text-[12px]"
+                      style={{
+                        color: m.isRead ? D.textMuted : D.textPrimary,
+                        fontWeight: m.isRead ? 400 : 500,
+                      }}
+                    >
+                      {m.senderName ?? "System"}
+                    </span>
+                    <span className="shrink-0 text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
+                      D{m.day}
+                    </span>
+                  </div>
+                  <div
+                    className="truncate text-[11px]"
+                    style={{ color: m.isRead ? D.textSubtle : D.textMuted }}
+                  >
+                    {m.title}
+                  </div>
+                </div>
+              </Link>
+            ))
+          )}
+        </aside>
+
+        {/* CENTER — Next match + this week */}
+        <main className="flex min-h-0 flex-col overflow-y-auto px-5 py-4">
+          {/* Next match header strip */}
+          <div className="mb-3 flex items-center justify-between">
+            <SectionLabel withAccent>Next match</SectionLabel>
+            {nextMatch && (
+              <span className="text-[11px]" style={{ color: D.textMuted }}>
+                {nextMatch.format} · D{nextMatch.day}
+                {currentStage ? ` · ${currentStage.name}` : ""}
+              </span>
             )}
           </div>
 
-          {/* Next match + Recent fixtures (split) */}
-          <div className="grid gap-5" style={{ gridTemplateColumns: "1fr 1fr" }}>
-            {/* Next match */}
-            <div
-              className="rounded-xl p-5"
-              style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-            >
-              <div className="text-[11px] mb-3" style={{ color: D.textSubtle }}>
-                Next match
-              </div>
-              {nextMatch ? (
-                (() => {
-                  const isHome = nextMatch.team1Id === team.id;
-                  const opp = isHome ? nextMatch.team2 : nextMatch.team1;
-                  return (
-                    <div className="flex items-center gap-3">
-                      {opp.logoUrl ? (
-                        <img src={opp.logoUrl} alt={opp.name} className="h-12 w-12 object-contain" />
-                      ) : (
-                        <div
-                          className="flex h-12 w-12 items-center justify-center rounded"
-                          style={{ background: D.surface, border: `1px solid ${D.borderFaint}` }}
-                        >
-                          <span className="text-[12px]" style={{ color: D.textMuted }}>
-                            {opp.tag}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
-                          {opp.name}{" "}
-                          <span style={{ color: D.textSubtle }}>({isHome ? "H" : "A"})</span>
-                        </span>
-                        <span className="text-[11px]" style={{ color: D.textMuted }}>
-                          {dayNameFull(nextMatch.day)} · {nextMatch.format}
-                        </span>
-                        {pendingMatch?.id === nextMatch.id && (
-                          <span
-                            className="mt-1 inline-flex w-fit rounded-full px-2 py-0.5 text-[10px]"
-                            style={{
-                              background: "rgba(216,90,48,0.12)",
-                              color: D.coral,
-                              border: `1px solid rgba(216,90,48,0.25)`,
-                            }}
-                          >
-                            Ready to play
-                          </span>
-                        )}
-                      </div>
+          {/* Match card */}
+          {nextMatch ? (
+            (() => {
+              const isHome = nextMatch.team1Id === team.id;
+              const opp = isHome ? nextMatch.team2 : nextMatch.team1;
+              return (
+                <div
+                  className="flex flex-col gap-2 rounded-lg p-4"
+                  style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+                >
+                  {/* Header row */}
+                  <div className="flex items-center justify-between gap-3 pb-2" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+                    <TeamHeader
+                      logo={team.logoUrl}
+                      tag={team.tag}
+                      name={team.name}
+                      rank={teamRank}
+                      record={`${team.wins}-${team.losses}`}
+                      align="left"
+                      ours
+                    />
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-[11px]" style={{ color: D.textSubtle }}>
+                        Win probability
+                      </span>
+                      <span className="text-[18px] font-medium tabular-nums" style={{ color: D.primary }}>
+                        {winProb}%
+                      </span>
                     </div>
-                  );
-                })()
-              ) : (
-                <span className="text-[12px]" style={{ color: D.textSubtle }}>
-                  No upcoming match.
-                </span>
-              )}
-            </div>
+                    <TeamHeader
+                      logo={opp.logoUrl}
+                      tag={opp.tag}
+                      name={opp.name}
+                      rank={standingsArr.findIndex((t) => t.id === opp.id) + 1 || null}
+                      record={(() => {
+                        const oppStanding = standingsArr.find((t) => t.id === opp.id);
+                        return oppStanding ? `${oppStanding.wins}-${oppStanding.losses}` : "—";
+                      })()}
+                      align="right"
+                    />
+                  </div>
 
-            {/* Recent fixtures */}
+                  {/* 5 matchup rows */}
+                  <div className="flex flex-col">
+                    {Array.from({ length: 5 }).map((_, i) => {
+                      const my = myStarters[i] ?? null;
+                      const them = opponentTeam?.players[i] ?? null;
+                      const myAgent = my ? bestAgent(my) : null;
+                      const oppAgent = them ? bestAgent(them as Player) : null;
+                      const myRating = my?.rating ?? 0;
+                      const oppRating = them?.rating ?? 0;
+                      const diff = myRating - oppRating;
+
+                      return (
+                        <div
+                          key={i}
+                          className="grid items-center gap-2 px-2 py-2"
+                          style={{
+                            gridTemplateColumns: "1fr 200px 1fr",
+                            borderBottom:
+                              i < 4 ? `1px solid ${D.borderFaint}` : "none",
+                          }}
+                        >
+                          {/* My player */}
+                          <PlayerLine
+                            ign={my?.ign ?? "—"}
+                            agent={myAgent}
+                            color={agentColor(myAgent)}
+                            align="left"
+                          />
+
+                          {/* Center: ratings + diff */}
+                          <div className="flex items-center justify-center gap-2 text-[12px] tabular-nums">
+                            <span style={{ color: D.primary, fontWeight: 500 }}>
+                              {myRating > 0 ? myRating.toFixed(2) : "—"}
+                            </span>
+                            <span style={{ color: D.textSubtle }}>vs</span>
+                            <span
+                              className="rounded px-1.5 text-[11px]"
+                              style={{
+                                background:
+                                  diff >= 0
+                                    ? "rgba(29,158,117,0.15)"
+                                    : "rgba(216,90,48,0.15)",
+                                color: diff >= 0 ? D.teal : D.coral,
+                                fontWeight: 500,
+                              }}
+                            >
+                              {diff >= 0 ? "+" : ""}
+                              {diff.toFixed(2)}
+                            </span>
+                            <span style={{ color: D.textPrimary, fontWeight: 500 }}>
+                              {oppRating > 0 ? oppRating.toFixed(2) : "—"}
+                            </span>
+                          </div>
+
+                          {/* Opp player */}
+                          <PlayerLine
+                            ign={them?.ign ?? "—"}
+                            agent={oppAgent}
+                            color={agentColor(oppAgent)}
+                            align="right"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
             <div
-              className="rounded-xl p-5"
-              style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+              className="rounded-lg p-6 text-center text-[12px]"
+              style={{ background: D.card, border: `1px solid ${D.borderFaint}`, color: D.textSubtle }}
             >
-              <div className="text-[11px] mb-3" style={{ color: D.textSubtle }}>
-                Recent fixtures
-              </div>
-              {recentMatches.length === 0 ? (
-                <span className="text-[12px]" style={{ color: D.textSubtle }}>
-                  No matches played yet.
+              No upcoming match scheduled.
+            </div>
+          )}
+
+          {/* This week calendar */}
+          {season && <ThisWeekCalendar season={season} matches={matches} teamId={team.id} />}
+        </main>
+
+        {/* RIGHT — Fixture schedule + standings */}
+        <aside
+          className="flex min-h-0 flex-col overflow-y-auto"
+          style={{ borderLeft: `1px solid ${D.border}` }}
+        >
+          <div className="px-4 py-4" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+            <SectionLabel>Fixture schedule</SectionLabel>
+            <div className="mt-3 flex flex-col">
+              {fixturesList.length === 0 ? (
+                <span className="text-[11px]" style={{ color: D.textSubtle }}>
+                  No fixtures.
                 </span>
               ) : (
-                <div className="flex flex-col gap-1.5">
-                  {recentMatches.slice(0, 4).map((m) => {
-                    const isHome = m.team1Id === team.id;
-                    const opp = isHome ? m.team2 : m.team1;
-                    const won = m.winnerId === team.id;
-                    const draw = m.winnerId === null;
-                    const score = m.score as { team1Maps?: number; team2Maps?: number } | null;
-                    const ourMaps = score
-                      ? isHome
-                        ? score.team1Maps ?? 0
-                        : score.team2Maps ?? 0
-                      : 0;
-                    const oppMaps = score
-                      ? isHome
-                        ? score.team2Maps ?? 0
-                        : score.team1Maps ?? 0
-                      : 0;
-                    return (
-                      <div
-                        key={m.id}
-                        className="grid items-center gap-2 py-1 text-[12px]"
-                        style={{ gridTemplateColumns: "1fr auto auto" }}
-                      >
-                        <span className="truncate" style={{ color: D.textMuted }}>
-                          {opp.tag}{" "}
-                          <span style={{ color: D.textSubtle }}>({isHome ? "H" : "A"})</span>
-                        </span>
-                        <span className="tabular-nums" style={{ color: D.textPrimary }}>
-                          {ourMaps}–{oppMaps}
-                        </span>
+                fixturesList.map(({ match: m, isUpcoming }) => {
+                  const isHome = m.team1Id === team.id;
+                  const opp = isHome ? m.team2 : m.team1;
+                  const won = m.winnerId === team.id;
+                  const draw = m.winnerId === null && m.isPlayed;
+                  const score = m.score as { team1Maps?: number; team2Maps?: number } | null;
+                  const ourMaps = score
+                    ? isHome
+                      ? score.team1Maps ?? 0
+                      : score.team2Maps ?? 0
+                    : 0;
+                  const oppMaps = score
+                    ? isHome
+                      ? score.team2Maps ?? 0
+                      : score.team1Maps ?? 0
+                    : 0;
+
+                  return (
+                    <div
+                      key={m.id}
+                      className="grid items-center gap-2 py-1.5 text-[11px]"
+                      style={{
+                        gridTemplateColumns: "30px 1fr 50px",
+                        borderBottom: `1px solid ${D.borderFaint}`,
+                      }}
+                    >
+                      <span className="tabular-nums" style={{ color: D.textSubtle }}>
+                        D{m.day}
+                      </span>
+                      <span className="truncate" style={{ color: D.textPrimary }}>
+                        {team.tag} <span style={{ color: D.textSubtle }}>{isHome ? "vs" : "@"}</span>{" "}
+                        <span style={{ color: D.textMuted }}>{opp.tag}</span>
+                      </span>
+                      {isUpcoming ? (
                         <span
-                          className="rounded px-1.5 text-[10px] font-medium"
+                          className="text-right text-[10px]"
+                          style={{ color: D.textSubtle }}
+                        >
+                          TBD
+                        </span>
+                      ) : (
+                        <span
+                          className="rounded px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums"
                           style={{
                             background: won
                               ? "rgba(29,158,117,0.15)"
@@ -439,207 +612,219 @@ export default async function DashboardPage() {
                             color: won ? D.teal : draw ? D.textMuted : D.coral,
                           }}
                         >
-                          {won ? "W" : draw ? "D" : "L"}
+                          {won ? "W" : draw ? "D" : "L"} {ourMaps}-{oppMaps}
                         </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
 
-          {/* Calendar week strip */}
-          {season && <CalendarStrip season={season} matches={matches} teamId={team.id} />}
-        </div>
-
-        {/* ── RIGHT: fixture schedule + standings ── */}
-        <div className="flex flex-col gap-5">
-          <div
-            className="rounded-xl p-5"
-            style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-          >
-            <h3 className="mb-3 text-[14px] font-medium" style={{ color: D.textPrimary }}>
-              Fixture schedule
-            </h3>
-            {upcomingMatches.length === 0 ? (
-              <span className="text-[12px]" style={{ color: D.textSubtle }}>
-                No upcoming fixtures.
-              </span>
-            ) : (
-              <div className="flex flex-col">
-                {upcomingMatches.map((m) => {
-                  const isHome = m.team1Id === team.id;
-                  const opp = isHome ? m.team2 : m.team1;
-                  return (
-                    <div
-                      key={m.id}
-                      className="grid items-center gap-2 py-2 text-[11px]"
-                      style={{
-                        gridTemplateColumns: "auto 1fr auto auto",
-                        borderBottom: `1px solid ${D.borderFaint}`,
-                      }}
-                    >
-                      <span className="tabular-nums" style={{ color: D.textSubtle }}>
-                        D{m.day}
-                      </span>
-                      <span className="truncate" style={{ color: D.textPrimary }}>
-                        {opp.tag}
-                      </span>
-                      <span style={{ color: D.textMuted }}>{isHome ? "H" : "A"}</span>
-                      <span style={{ color: D.textSubtle }}>{m.format}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div
-            className="rounded-xl p-5"
-            style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-          >
-            <div className="mb-3 flex items-baseline justify-between">
-              <h3 className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
-                Standings
-              </h3>
+          <div className="px-4 py-4">
+            <div className="flex items-baseline justify-between">
+              <SectionLabel>Standings</SectionLabel>
               {teamRank > 0 && (
-                <span className="text-[11px]" style={{ color: D.textMuted }}>
+                <span className="text-[10px]" style={{ color: D.textMuted }}>
                   #{teamRank} of {standingsArr.length}
                 </span>
               )}
             </div>
-            <div className="flex flex-col">
+            <div className="mt-2 flex flex-col">
               <div
-                className="grid items-center gap-2 pb-2 text-[10px]"
+                className="grid items-center gap-2 pb-1.5 text-[10px]"
                 style={{
-                  gridTemplateColumns: "20px 1fr 32px 32px",
+                  gridTemplateColumns: "16px 1fr 36px 28px",
                   color: D.textSubtle,
                   borderBottom: `1px solid ${D.borderFaint}`,
                 }}
               >
-                <span>Pos</span>
+                <span>#</span>
                 <span>Team</span>
-                <span className="text-right">W–L</span>
+                <span className="text-right">W-L</span>
                 <span className="text-right">Pts</span>
               </div>
               {standingsArr.slice(0, 8).map((t, i) => {
                 const isOurs = t.id === team.id;
+                const top4 = i < 4;
                 return (
                   <div
                     key={t.id}
                     className="grid items-center gap-2 py-1.5 text-[12px]"
                     style={{
-                      gridTemplateColumns: "20px 1fr 32px 32px",
+                      gridTemplateColumns: "16px 1fr 36px 28px",
                       borderBottom: `1px solid ${D.borderFaint}`,
-                      color: isOurs ? D.primary : D.textPrimary,
-                      fontWeight: isOurs ? 500 : 400,
+                      background: isOurs ? "rgba(83,74,183,0.10)" : "transparent",
                     }}
                   >
-                    <span className="tabular-nums" style={{ color: D.textSubtle }}>
+                    <span
+                      className="tabular-nums"
+                      style={{ color: top4 ? D.teal : D.textSubtle }}
+                    >
                       {i + 1}
                     </span>
-                    <span className="truncate">{t.tag ?? t.name}</span>
-                    <span className="text-right tabular-nums" style={{ color: D.textMuted }}>
-                      {t.wins}–{t.losses}
+                    <span
+                      className="flex items-center gap-1.5 truncate"
+                      style={{
+                        color: isOurs ? D.primary : D.textPrimary,
+                        fontWeight: isOurs ? 500 : 400,
+                      }}
+                    >
+                      {isOurs && (
+                        <span style={{ color: D.primary, fontSize: 10 }}>◀</span>
+                      )}
+                      {t.tag ?? t.name}
                     </span>
-                    <span className="text-right tabular-nums">{t.champPts}</span>
+                    <span className="text-right tabular-nums" style={{ color: D.textMuted }}>
+                      {t.wins}-{t.losses}
+                    </span>
+                    <span
+                      className="text-right tabular-nums"
+                      style={{ color: D.textPrimary, fontWeight: 500 }}
+                    >
+                      {t.champPts}
+                    </span>
                   </div>
                 );
               })}
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* ─── Roster strip (extra vs FM) ─────────────────────────────── */}
-      <section className="px-8 pb-8">
-        <div className="mb-3 flex items-baseline justify-between">
-          <h2 className="text-[16px] font-medium" style={{ color: D.textPrimary }}>
-            Roster · {players.length} active
-          </h2>
-          <Link
-            href="/roster"
-            className="text-[11px] transition-colors"
-            style={{ color: D.primary }}
-          >
-            Open roster →
-          </Link>
-        </div>
-        <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}
-        >
-          {players.map((p) => {
-            const { stars, label } = overallToStars(p.overall ?? 10);
-            return (
-              <Link
-                key={p.id}
-                href={`/player/${p.id}`}
-                className="flex flex-col gap-2 rounded-xl p-3 transition-colors"
-                style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-              >
-                <div className="flex items-center gap-3">
-                  {p.imageUrl ? (
-                    <img
-                      src={p.imageUrl}
-                      alt={p.ign}
-                      className="h-10 w-10 rounded-full object-cover"
-                      style={{ border: `1px solid ${D.borderFaint}` }}
-                    />
-                  ) : (
-                    <div
-                      className="flex h-10 w-10 items-center justify-center rounded-full"
-                      style={{ background: D.surface, border: `1px solid ${D.borderFaint}` }}
-                    >
-                      <span className="text-[12px]" style={{ color: D.textMuted }}>
-                        {p.ign.slice(0, 2)}
-                      </span>
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium" style={{ color: D.textPrimary }}>
-                      {p.ign}
-                    </div>
-                    <div className="truncate text-[11px]" style={{ color: D.textMuted }}>
-                      {p.role}
-                      {p.playstyleRole ? ` · ${p.playstyleRole}` : ""}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px]" style={{ color: D.textSubtle }}>
-                    {label}
-                  </span>
-                  <StaticStarRow count={stars} />
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* ─── Hidden quick-stats footer ───────────────────────────── */}
-      <section
-        className="grid grid-cols-4"
-        style={{ background: D.surface, borderTop: `1px solid ${D.border}` }}
-      >
-        <FooterMetric label="Record" value={`${team.wins}–${team.losses}`} />
-        <FooterMetric label="Champ pts" value={String(team.champPts)} accent={D.amber} />
-        <FooterMetric label="Budget" value={formatCurrency(team.budget)} />
-        <FooterMetric
-          label="Roster"
-          value={`${players.length}`}
-          sub={`of ${(team.players as Player[]).length} total`}
-        />
-      </section>
+        </aside>
+      </div>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────
+// ─── Subcomponents ──────────────────────────────────────────────────
 
-function CalendarStrip({
+function SectionLabel({
+  children,
+  withAccent,
+}: {
+  children: React.ReactNode;
+  withAccent?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      {withAccent && (
+        <span style={{ width: 3, height: 12, background: D.primary, borderRadius: 1 }} />
+      )}
+      <span className="text-[11px] font-medium" style={{ color: D.textMuted }}>
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function TeamHeader({
+  logo,
+  tag,
+  name,
+  rank,
+  record,
+  align,
+  ours,
+}: {
+  logo: string | null;
+  tag: string;
+  name: string;
+  rank: number | null;
+  record: string;
+  align: "left" | "right";
+  ours?: boolean;
+}) {
+  const right = align === "right";
+  return (
+    <div
+      className="flex items-center gap-2.5"
+      style={{ flexDirection: right ? "row-reverse" : "row" }}
+    >
+      {logo ? (
+        <img src={logo} alt={name} className="h-9 w-9 object-contain" />
+      ) : (
+        <div
+          className="flex h-9 w-9 items-center justify-center rounded"
+          style={{ background: D.surface, border: `1px solid ${D.borderFaint}` }}
+        >
+          <span className="text-[10px]" style={{ color: D.textMuted }}>
+            {tag}
+          </span>
+        </div>
+      )}
+      <div
+        className="flex flex-col"
+        style={{ alignItems: right ? "flex-end" : "flex-start" }}
+      >
+        <span
+          className="text-[13px] font-medium"
+          style={{ color: ours ? D.primary : D.textPrimary }}
+        >
+          {name}
+        </span>
+        <span className="text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
+          {rank ? `#${rank}` : "—"} · {record}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PlayerLine({
+  ign,
+  agent,
+  color,
+  align,
+}: {
+  ign: string;
+  agent: string | null;
+  color: string;
+  align: "left" | "right";
+}) {
+  const right = align === "right";
+  return (
+    <div
+      className="flex items-center gap-2"
+      style={{
+        flexDirection: right ? "row-reverse" : "row",
+        borderLeft: right ? "none" : `2px solid ${color}`,
+        borderRight: right ? `2px solid ${color}` : "none",
+        paddingLeft: right ? 0 : 8,
+        paddingRight: right ? 8 : 0,
+      }}
+    >
+      <div
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-medium"
+        style={{
+          background: `${color}1A`,
+          color,
+          border: `1px solid ${color}40`,
+        }}
+      >
+        {ign.slice(0, 2)}
+      </div>
+      <div
+        className="flex min-w-0 flex-col"
+        style={{ alignItems: right ? "flex-end" : "flex-start" }}
+      >
+        <span
+          className="truncate text-[12px] font-medium"
+          style={{ color: D.textPrimary, maxWidth: 120 }}
+        >
+          {ign}
+        </span>
+        <span
+          className="truncate text-[10px] capitalize"
+          style={{ color, maxWidth: 120 }}
+        >
+          {agent ?? "—"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ThisWeekCalendar({
   season,
   matches,
   teamId,
@@ -648,52 +833,54 @@ function CalendarStrip({
   matches: Match[];
   teamId: string;
 }) {
-  // Render the week containing currentDay across 7 columns.
   const weekStart = Math.max(1, season.currentDay - ((season.currentDay - 1) % 7));
   const days = Array.from({ length: 7 }, (_, i) => weekStart + i);
   const matchByDay = new Map<number, Match>();
   for (const m of matches) if (!matchByDay.has(m.day)) matchByDay.set(m.day, m);
+  const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
   return (
-    <div
-      className="rounded-xl p-5"
-      style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-    >
-      <div className="mb-3 flex items-baseline justify-between">
-        <h3 className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
-          Calendar · week {season.currentWeek}
-        </h3>
-        <span className="text-[11px]" style={{ color: D.textSubtle }}>
-          D{season.currentDay}
-        </span>
-      </div>
-      <div className="grid grid-cols-7 gap-2">
-        {days.map((d) => {
+    <div className="mt-5">
+      <SectionLabel>This week</SectionLabel>
+      <div
+        className="mt-2 grid grid-cols-7 overflow-hidden rounded-lg"
+        style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+      >
+        {days.map((d, i) => {
           const m = matchByDay.get(d);
           const isToday = d === season.currentDay;
           const ours = m && (m.team1Id === teamId || m.team2Id === teamId);
           return (
             <div
               key={d}
-              className="flex min-h-[64px] flex-col gap-1 rounded p-2"
+              className="flex min-h-[68px] flex-col items-center justify-start gap-1 p-2"
               style={{
-                background: isToday ? "rgba(83,74,183,0.12)" : D.surface,
-                border: `1px solid ${isToday ? "rgba(83,74,183,0.4)" : D.borderFaint}`,
+                background: isToday ? "rgba(83,74,183,0.10)" : "transparent",
+                borderRight:
+                  i < 6 ? `1px solid ${D.borderFaint}` : "none",
               }}
             >
+              <span className="text-[10px]" style={{ color: D.textSubtle }}>
+                {dayLabels[i]}
+              </span>
               <span
-                className="text-[10px] tabular-nums"
-                style={{ color: isToday ? D.primary : D.textSubtle }}
+                className="text-[14px] tabular-nums"
+                style={{
+                  color: isToday ? D.primary : D.textPrimary,
+                  fontWeight: isToday ? 500 : 400,
+                }}
               >
                 D{d}
               </span>
-              {m && (
-                <div
-                  className="truncate text-[10px]"
-                  style={{ color: ours ? D.textPrimary : D.textMuted }}
-                >
-                  {m.team1Id === teamId ? m.team2.tag : m.team1.tag}
-                </div>
+              {ours && (
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 999,
+                    background: D.primary,
+                  }}
+                />
               )}
             </div>
           );
@@ -703,85 +890,20 @@ function CalendarStrip({
   );
 }
 
-function StaticStarRow({ count }: { count: number }) {
-  const PATH =
-    "M5 0.5 L6.18 3.72 L9.55 3.91 L6.91 6.06 L7.81 9.35 L5 7.5 L2.19 9.35 L3.09 6.06 L0.45 3.91 L3.82 3.72 Z";
-  return (
-    <span className="inline-flex items-center" aria-label={`${count.toFixed(1)} stars`}>
-      {[0, 1, 2, 3, 4].map((i) => {
-        const fill = count - i;
-        return (
-          <svg key={i} width={11} height={11} viewBox="0 0 10 10">
-            <path d={PATH} fill="none" stroke={D.amber} strokeWidth={0.8} opacity={0.45} />
-            {fill > 0 && (
-              <>
-                <defs>
-                  <clipPath id={`s-${i}-${count}`}>
-                    <rect x={0} y={0} width={Math.min(1, fill) * 10} height={10} />
-                  </clipPath>
-                </defs>
-                <path d={PATH} fill={D.amber} clipPath={`url(#s-${i}-${count})`} />
-              </>
-            )}
-          </svg>
-        );
-      })}
-    </span>
-  );
-}
+// ─── Helpers ────────────────────────────────────────────────────────
 
-function FooterMetric({
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  accent?: string;
-}) {
-  return (
-    <div
-      className="flex flex-col gap-0.5 px-6 py-4"
-      style={{ borderRight: `1px solid ${D.borderFaint}` }}
-    >
-      <span className="text-[11px]" style={{ color: D.textSubtle }}>
-        {label}
-      </span>
-      <span
-        className="text-[16px] font-medium tabular-nums"
-        style={{ color: accent ?? D.textPrimary }}
-      >
-        {value}
-      </span>
-      {sub && (
-        <span className="text-[11px]" style={{ color: D.textSubtle }}>
-          {sub}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function iconForCategory(cat: string): string {
+function categoryColor(cat: string): string {
   switch (cat) {
-    case "INJURY":
-      return "⚕";
-    case "TRANSFER":
-      return "↔";
-    case "SCOUT":
-      return "⌕";
-    case "TRAINING":
-      return "▤";
-    case "MATCH":
-      return "▶";
-    default:
-      return "✉";
+    case "INJURY": return D.coral;
+    case "MATCH": return D.coral;
+    case "TRANSFER": return D.primary;
+    case "SCOUT": return D.teal;
+    case "TRAINING": return D.primary;
+    default: return D.textMuted;
   }
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max).replace(/\s+\S*$/, "") + "…";
+function categoryTint(cat: string): string {
+  const c = categoryColor(cat);
+  return `${c}1A`;
 }
