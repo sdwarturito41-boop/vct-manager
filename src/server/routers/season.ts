@@ -30,7 +30,20 @@ import {
 } from "@/server/mercato/relationships";
 import { snapshotPlayerStats } from "@/server/mercato/attributes";
 
-function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
+// Minimal shape needed by the simulation engine. Avoids depending on the full
+// Prisma Team/Player types so callers can pass slimmed-down selects.
+type SimTeamInput = {
+  id: string;
+  name: string;
+  tag: string;
+  skillAim: number;
+  skillUtility: number;
+  skillTeamplay: number;
+  playstyle: Team["playstyle"];
+  players: Pick<Player, "id" | "ign" | "acs" | "kd" | "adr" | "kast" | "hs" | "role" | "overall">[];
+};
+
+function buildSimTeam(team: SimTeamInput): SimTeam {
   // Only use top 5 players by ACS (active roster limit)
   const top5 = [...team.players].sort((a, b) => b.acs - a.acs).slice(0, 5);
   return {
@@ -114,6 +127,19 @@ export const seasonRouter = router({
     // This covers the case where matches were scheduled in the past (stage init during
     // an earlier advance) — they'll get simulated on the next advance.
     const stagePrefix = season.currentStage;
+    // Slim the player payload to only the fields buildSimTeam reads.
+    // The full Player row includes 4 heavy Json columns (attributes, roleScores,
+    // agentStats, mapFactors, happinessTags) — fetching them for every player on
+    // every team playing today added megabytes of unused data per advanceDay
+    // call. Restricting to scalars cuts the wire payload by ~95%.
+    const playerSelect = {
+      id: true, ign: true, acs: true, kd: true, adr: true, kast: true,
+      hs: true, role: true, overall: true,
+    } as const;
+    const teamScalars = {
+      id: true, name: true, tag: true, logoUrl: true, region: true,
+      skillAim: true, skillUtility: true, skillTeamplay: true, playstyle: true,
+    } as const;
     const todaysMatches = await ctx.prisma.match.findMany({
       where: {
         saveId: ctx.save.id,
@@ -125,9 +151,23 @@ export const seasonRouter = router({
           { stageId: stagePrefix },
         ],
       },
-      include: {
-        team1: { include: { players: { where: { isActive: true } }, coach: true } },
-        team2: { include: { players: { where: { isActive: true } }, coach: true } },
+      select: {
+        id: true, stageId: true, format: true, day: true, week: true,
+        season: true, team1Id: true, team2Id: true,
+        team1: {
+          select: {
+            ...teamScalars,
+            players: { where: { isActive: true }, select: playerSelect },
+            coach: { select: { utilityBoost: true } },
+          },
+        },
+        team2: {
+          select: {
+            ...teamScalars,
+            players: { where: { isActive: true }, select: playerSelect },
+            coach: { select: { utilityBoost: true } },
+          },
+        },
       },
     });
 

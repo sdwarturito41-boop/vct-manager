@@ -18,21 +18,22 @@ export default async function GameLayout({
     redirect("/auth/login");
   }
 
-  // Multi-save guard: user must have a save to enter the game.
-  // No save → send them to create one.
-  const save = await prisma.save.findUnique({
-    where: { userId: session.user.id! },
-    select: { id: true },
-  });
+  // Parallelize save + team lookups — both depend only on userId, so there's
+  // no reason to serialize. Saves one RT to Neon on every page load.
+  const userId = session.user.id!;
+  const [save, team] = await Promise.all([
+    prisma.save.findUnique({
+      where: { userId },
+      select: { id: true },
+    }),
+    prisma.team.findFirst({
+      where: { userId, isPlayerTeam: true },
+      select: { id: true, name: true, tag: true, budget: true, region: true },
+    }),
+  ]);
   if (!save) {
     redirect("/new-save");
   }
-
-  // User's team within this save
-  const team = await prisma.team.findFirst({
-    where: { saveId: save.id, isPlayerTeam: true },
-    select: { id: true, name: true, tag: true, budget: true, region: true },
-  });
   if (!team) {
     // Save exists but no player team — corrupted state, recreate.
     redirect("/new-save");
