@@ -122,14 +122,30 @@ export default async function DashboardPage() {
       ? nextMatch.team2Id
       : nextMatch.team1Id
     : null;
+  // Slim select: the matchup card only reads id/ign/role/overall/rating + the
+  // agentStats Json (for the best-agent badge). Pulling the full Player row
+  // dragged in 4 other heavy Json columns we never read.
   const opponentTeam = opponentTeamId
     ? await prisma.team.findUnique({
         where: { id: opponentTeamId },
-        include: {
+        select: {
+          id: true,
+          name: true,
+          tag: true,
+          logoUrl: true,
+          region: true,
           players: {
             where: { isActive: true },
             orderBy: { overall: "desc" },
             take: 5,
+            select: {
+              id: true,
+              ign: true,
+              role: true,
+              overall: true,
+              rating: true,
+              agentStats: true,
+            },
           },
         },
       })

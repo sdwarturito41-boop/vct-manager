@@ -784,7 +784,8 @@ export const seasonRouter = router({
 
       await runAiTransferActivity(ctx.prisma, ctx.save.id, newWeek, season.number);
 
-      // Inbox notifs for newly created IA → user offers
+      // Inbox notifs for newly created IA → user offers — batched in one
+      // createMany so a busy mercato week doesn't fire N sequential creates.
       if (userTeam) {
         const after = await ctx.prisma.transferOffer.findMany({
           where: { toTeamId: userTeam.id, status: "PENDING" },
@@ -794,24 +795,24 @@ export const seasonRouter = router({
           },
           orderBy: { createdAt: "desc" },
         });
-        for (const o of after) {
-          if (beforeIds.has(o.id)) continue;
-          await ctx.prisma.message.create({
-            data: {
-              saveId: ctx.save.id,
-              teamId: userTeam.id,
-              category: "MARKET",
-              fromName: o.fromTeam?.name ?? "Unknown",
-              fromRole: "GM",
-              subject: `${o.fromTeam?.tag ?? "???"} want ${o.player?.ign ?? "your player"}`,
-              body: `We've put an offer on the table. Fee $${o.transferFee.toLocaleString()}, salary $${o.proposedSalary.toLocaleString()}/wk for ${o.contractLengthWeeks} weeks.`,
-              eventType: "BUYOUT_RECEIVED",
-              eventData: { offerId: o.id },
-              requiresAction: true,
-              week: newWeek,
-              season: season.number,
-            },
-          });
+        const newMessages = after
+          .filter((o) => !beforeIds.has(o.id))
+          .map((o) => ({
+            saveId: ctx.save.id,
+            teamId: userTeam.id,
+            category: "MARKET" as const,
+            fromName: o.fromTeam?.name ?? "Unknown",
+            fromRole: "GM",
+            subject: `${o.fromTeam?.tag ?? "???"} want ${o.player?.ign ?? "your player"}`,
+            body: `We've put an offer on the table. Fee $${o.transferFee.toLocaleString()}, salary $${o.proposedSalary.toLocaleString()}/wk for ${o.contractLengthWeeks} weeks.`,
+            eventType: "BUYOUT_RECEIVED",
+            eventData: { offerId: o.id } as import("@/generated/prisma/client").Prisma.InputJsonValue,
+            requiresAction: true,
+            week: newWeek,
+            season: season.number,
+          }));
+        if (newMessages.length > 0) {
+          await ctx.prisma.message.createMany({ data: newMessages });
         }
       }
     }

@@ -328,21 +328,21 @@ export async function runRelationshipsTick(
     }
   }
 
-  // 6. Flush in parallel chunks
-  const CHUNK = 25;
-  for (let i = 0; i < toCreate.length; i += CHUNK) {
-    await Promise.all(
-      toCreate.slice(i, i + CHUNK).map((data) =>
-        prisma.playerRelation.create({ data }).catch(() => null),
-      ),
-    );
+  // 6. Flush all writes in one round-trip to Neon. Creates → createMany.
+  //    Updates + deletes → single $transaction. Previously this looped 25 at a
+  //    time × hundreds of relations per tick = ~25 sequential RTs per kind.
+  if (toCreate.length > 0) {
+    await prisma.playerRelation.createMany({
+      data: toCreate,
+      skipDuplicates: true,
+    });
   }
-  for (let i = 0; i < toUpdate.length; i += CHUNK) {
-    await Promise.all(
-      toUpdate.slice(i, i + CHUNK).map((u) =>
-        prisma.playerRelation.update({ where: { id: u.id }, data: u.data }),
-      ),
-    );
+  const writes: ReturnType<typeof prisma.playerRelation.update>[] = [];
+  for (const u of toUpdate) {
+    writes.push(prisma.playerRelation.update({ where: { id: u.id }, data: u.data }));
+  }
+  if (writes.length > 0) {
+    await prisma.$transaction(writes);
   }
   if (toDelete.length > 0) {
     await prisma.playerRelation.deleteMany({ where: { id: { in: toDelete } } });
@@ -372,21 +372,16 @@ export async function applyMentorStatGrowth(
   const protégéIds = Array.from(new Set(mentors.map((m) => m.playerBId)));
   if (protégéIds.length === 0) return 0;
 
-  const CHUNK = 25;
-  for (let i = 0; i < protégéIds.length; i += CHUNK) {
-    await Promise.all(
-      protégéIds.slice(i, i + CHUNK).map((id) =>
-        prisma.player.update({
-          where: { id },
-          data: {
-            acs: { increment: MENTOR_STAT_GROWTH.acs },
-            kd: { increment: MENTOR_STAT_GROWTH.kd },
-            adr: { increment: MENTOR_STAT_GROWTH.adr },
-          },
-        }),
-      ),
-    );
-  }
+  // Single updateMany — the increment is the same for every protégé and the
+  // selector is just `id IN (...)`. Replaces the chunked update loop entirely.
+  await prisma.player.updateMany({
+    where: { id: { in: protégéIds } },
+    data: {
+      acs: { increment: MENTOR_STAT_GROWTH.acs },
+      kd: { increment: MENTOR_STAT_GROWTH.kd },
+      adr: { increment: MENTOR_STAT_GROWTH.adr },
+    },
+  });
   return protégéIds.length;
 }
 

@@ -353,10 +353,25 @@ export async function runAiOfferResolutions(ctx: ResolveCtx): Promise<number> {
     where: { status: "PENDING", saveId: ctx.save.id },
     select: { id: true },
   });
+  if (pending.length === 0) return 0;
+
+  // Process in parallel chunks. Each `resolveOfferDecision` does a findUnique
+  // + 1-3 writes, so a sequential loop on ~250 pending offers (typical the
+  // day after a weekly tick that creates IA→IA buyout offers in bulk) was
+  // hitting Neon with hundreds of round-trips back-to-back. Cap concurrency
+  // to avoid blowing the connection pool, but let multiple offers resolve at
+  // once — most decisions are independent (different player + team pair).
+  const CHUNK = 8;
   let resolved = 0;
-  for (const o of pending) {
-    const d = await resolveOfferDecision(ctx, o.id);
-    if (d !== "PENDING") resolved++;
+  for (let i = 0; i < pending.length; i += CHUNK) {
+    const decisions = await Promise.all(
+      pending
+        .slice(i, i + CHUNK)
+        .map((o: { id: string }) =>
+          resolveOfferDecision(ctx, o.id).catch(() => "PENDING" as const),
+        ),
+    );
+    for (const d of decisions) if (d !== "PENDING") resolved++;
   }
   return resolved;
 }

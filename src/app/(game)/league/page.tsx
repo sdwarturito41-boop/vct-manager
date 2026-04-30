@@ -8,10 +8,25 @@ import { D } from "@/constants/design";
 export default async function LeaguePage() {
   const api = await serverTrpc();
 
-  let season;
-  try {
-    season = await api.season.getCurrent();
-  } catch {
+  // Run every initial query in parallel — none of them depend on each other.
+  // Previously these were 7 sequential awaits, costing ~7 round-trips to Neon
+  // before the page could render. With Promise.all we cap that at one RT total.
+  const [seasonResult, schedule, team, standingsRaw, templates, allTeams] =
+    await Promise.all([
+      api.season.getCurrent().then(
+        (s) => ({ ok: true, data: s }) as const,
+        () => ({ ok: false }) as const,
+      ),
+      api.season.getSchedule(),
+      api.team.get(),
+      api.league.standings().catch(() => []),
+      prisma.vctTeamTemplate.findMany({
+        select: { name: true, logoUrl: true },
+      }),
+      api.team.listInSaveSlim(),
+    ]);
+
+  if (!seasonResult.ok) {
     return (
       <div className="flex items-center justify-center py-32">
         <p
@@ -23,10 +38,8 @@ export default async function LeaguePage() {
       </div>
     );
   }
-
-  const schedule = await api.season.getSchedule();
-  const team = await api.team.get();
-  const standings = (await api.league.standings().catch(() => [])) as Array<{
+  const season = seasonResult.data;
+  const standings = standingsRaw as Array<{
     id: string;
     name: string;
     tag: string;
@@ -36,8 +49,6 @@ export default async function LeaguePage() {
     losses: number;
   }>;
 
-  const templates = await prisma.vctTeamTemplate.findMany({ select: { name: true, logoUrl: true } });
-  const allTeams = await prisma.team.findMany({ select: { id: true, name: true, tag: true, logoUrl: true, region: true } });
   const teamNameToLogo: Record<string, string | null> = {};
   for (const t of templates) teamNameToLogo[t.name] = t.logoUrl;
   for (const t of allTeams) if (t.logoUrl) teamNameToLogo[t.name] = t.logoUrl;
@@ -61,21 +72,13 @@ export default async function LeaguePage() {
   for (const m of schedule) byRegion.get(m.team1.region)?.push(m);
   const orderedRegions = [team.region, ...regions.filter((r) => r !== team.region)];
 
-  // ─── Fetch all matches for the current international stages to compute Swiss standings ───
-  // Full match data: we have `schedule` (user region + internationals) already
-  // For Masters/EWC/Champions we need internal stage matches for ALL participating teams
+  // `schedule` (from getSchedule) already returns every match in the current
+  // stage scoped to this save, with team1/team2 selects sufficient for
+  // standings + bracket rendering. The previous duplicate findMany here was
+  // round-tripping the same data with a heavier `team1: true, team2: true`
+  // include — drop it.
   const stagePrefix = currentStage;
-  const allStageMatches = await prisma.match.findMany({
-    where: {
-      season: season.number,
-      OR: [
-        { stageId: { startsWith: stagePrefix } },
-        { stageId: stagePrefix },
-      ],
-    },
-    include: { team1: true, team2: true },
-    orderBy: { day: "asc" },
-  });
+  const allStageMatches = schedule;
 
   // ─── Stage-specific views ───
 

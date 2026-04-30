@@ -137,6 +137,24 @@ export const teamRouter = router({
     });
   }),
 
+  /**
+   * Slim list of every team in the current save — used by views that just need
+   * id/name/tag/logo/region for lookups (league bracket page, fixture cards…).
+   * Avoids the heavy `getAll` payload (full Player rows × ~290 players).
+   */
+  listInSaveSlim: saveProcedure.query(async ({ ctx }) => {
+    return ctx.prisma.team.findMany({
+      where: { saveId: ctx.save.id },
+      select: {
+        id: true,
+        name: true,
+        tag: true,
+        logoUrl: true,
+        region: true,
+      },
+    });
+  }),
+
   togglePlayerActive: protectedProcedure
     .input(
       z.object({

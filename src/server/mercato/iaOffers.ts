@@ -6,6 +6,43 @@ const MIN_INTEREST = 35;
 const MAX_OFFERS_PER_TEAM_PER_WEEK = 2;
 const OFFER_DEADLINE_HOURS = 72;
 
+/**
+ * Healthy teams shouldn't be churning their roster every week. Real org
+ * mercato is need-driven: gaps, weak links, or losing records prompt moves.
+ * A team that's winning with a full balanced roster sits the week out.
+ *
+ * Returns true ONLY when the team has a concrete reason to add a player.
+ */
+function teamNeedsRecruitment(
+  team: Team & {
+    players: Pick<Player, "role" | "acs" | "kd" | "adr">[];
+  },
+): boolean {
+  // 1. Roster gap — must recruit to fill the 5-active-roster slot
+  if (team.players.length < 5) return true;
+
+  // 2. Role gap — comp is unbalanced, recruit to cover a missing role
+  const rolesPresent = new Set(team.players.map((p) => p.role));
+  // 4 distinct roles is the minimum for a sensible Valorant comp
+  // (Duelist/Initiator/Sentinel/Controller; IGL is often a flex of one of these).
+  if (rolesPresent.size < 4) return true;
+
+  // 3. Weak link — there's a player notably below the rest of the squad,
+  //    so the team would shop for an upgrade
+  const ratings = team.players.map((p) => playerRating(p));
+  const avg = ratings.reduce((s, r) => s + r, 0) / ratings.length;
+  const min = Math.min(...ratings);
+  if (avg > 0 && min < avg * 0.80) return true;
+
+  // 4. Losing record — once enough games are in the books, struggling teams
+  //    shake things up
+  const games = team.wins + team.losses;
+  if (games >= 3 && team.wins / games < 0.4) return true;
+
+  // Otherwise the squad is healthy — sit the week out
+  return false;
+}
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
@@ -38,7 +75,7 @@ function needRoleMultiplier(
  */
 function computeInterest(
   team: Team & { players: Pick<Player, "role" | "acs" | "kd" | "adr">[] },
-  target: Player,
+  target: Pick<Player, "role" | "region" | "acs" | "kd" | "adr">,
   offerUpfront: number,
   happinessBonus: number,
 ): number {
@@ -56,7 +93,7 @@ function computeInterest(
  * is always above the player's demand threshold (current × 1.2).
  */
 function generateTerms(
-  target: Player,
+  target: Pick<Player, "salary" | "buyoutClause" | "baseBuyoutClause" | "happiness">,
   offerType: "BUYOUT" | "FREE_AGENT_SIGNING",
   interest: number,
 ): {
@@ -135,16 +172,25 @@ export async function runAiTransferActivity(
   });
 
   // Pool of potential targets: free agents + contracted non-user players.
-  // (IA teams don't poach from the user's team automatically here —
-  // their interest is computed against ALL non-self players; user players
-  // included, which is what makes the market lively.)
+  // Only select the fields the scoring + offer-generation pipeline actually
+  // reads. The full Player row carries 5 heavy Json columns (attributes,
+  // roleScores, agentStats, mapFactors, happinessTags) that aren't used here —
+  // pulling them across all ~290 players blows up the wire payload.
   const allTargets = await prisma.player.findMany({
     where: {
       isRetired: false,
       isActive: true,
       team: { saveId },
     },
+    select: {
+      id: true, region: true, role: true, teamId: true, currentTeam: true,
+      acs: true, kd: true, adr: true, salary: true,
+      happiness: true, isTransferListed: true,
+      buyoutClause: true, baseBuyoutClause: true,
+      wantsTransferSinceWeek: true, wantsTransferSinceSeason: true,
+    },
   });
+  type SlimTarget = (typeof allTargets)[number];
 
   // Pre-compute all cooldowns in a single query (was O(teams × players))
   const cooldownSet = await buildCooldownSet(
@@ -179,14 +225,41 @@ export async function runAiTransferActivity(
     );
   }
 
+  // Buffer all offers and flush in one createMany at the end. Previously each
+  // offer was its own sequential `await prisma.transferOffer.create` round-trip,
+  // so a busy week with ~50 IA teams × up to 5 offers = up to 250 sequential RTs
+  // against Neon's pooler — easily several seconds.
+  const offersToCreate: Array<{
+    saveId: string;
+    playerId: string;
+    fromTeamId: string;
+    toTeamId: string | null;
+    offerType: "BUYOUT" | "FREE_AGENT_SIGNING";
+    transferFee: number;
+    proposedSalary: number;
+    contractLengthWeeks: number;
+    signingBonus: number;
+    sellOnPercentage: number;
+    loyaltyBonus: number;
+    status: "PENDING";
+    week: number;
+    season: number;
+    deadlineAt: Date;
+    negotiationRound: number;
+  }> = [];
   let offersCreated = 0;
 
   for (const team of aiTeams) {
+    // Skip healthy teams entirely — they don't shop the market when nothing
+    // is broken. Cuts the typical week's transfer churn from ~15 moves to a
+    // handful tied to actual roster needs.
+    if (!teamNeedsRecruitment(team)) continue;
+
     let offersThisWeek = 0;
     let upfrontCommitted = pendingUpfrontByTeam.get(team.id) ?? 0;
 
     // Filter targets: exclude own players + cooldowned players (in-memory lookups)
-    const eligibleTargets: Player[] = allTargets.filter(
+    const eligibleTargets: SlimTarget[] = allTargets.filter(
       (t) => t.teamId !== team.id && !cooldownSet.has(`${team.id}|${t.id}`),
     );
 
@@ -232,31 +305,33 @@ export async function runAiTransferActivity(
 
       const deadline = new Date(Date.now() + OFFER_DEADLINE_HOURS * 3600 * 1000);
 
-      await prisma.transferOffer.create({
-        data: {
-          saveId,
-          playerId: cand.target.id,
-          fromTeamId: team.id,
-          toTeamId: cand.offerType === "BUYOUT" ? cand.target.teamId : null,
-          offerType: cand.offerType,
-          transferFee: terms.transferFee,
-          proposedSalary: terms.proposedSalary,
-          contractLengthWeeks: terms.contractLengthWeeks,
-          signingBonus: terms.signingBonus,
-          sellOnPercentage: terms.sellOnPercentage,
-          loyaltyBonus: terms.loyaltyBonus,
-          status: "PENDING",
-          week: currentWeek,
-          season: currentSeason,
-          deadlineAt: deadline,
-          negotiationRound: 1,
-        },
+      offersToCreate.push({
+        saveId,
+        playerId: cand.target.id,
+        fromTeamId: team.id,
+        toTeamId: cand.offerType === "BUYOUT" ? cand.target.teamId : null,
+        offerType: cand.offerType,
+        transferFee: terms.transferFee,
+        proposedSalary: terms.proposedSalary,
+        contractLengthWeeks: terms.contractLengthWeeks,
+        signingBonus: terms.signingBonus,
+        sellOnPercentage: terms.sellOnPercentage,
+        loyaltyBonus: terms.loyaltyBonus,
+        status: "PENDING",
+        week: currentWeek,
+        season: currentSeason,
+        deadlineAt: deadline,
+        negotiationRound: 1,
       });
 
       upfrontCommitted += realUpfront;
       offersThisWeek += 1;
       offersCreated += 1;
     }
+  }
+
+  if (offersToCreate.length > 0) {
+    await prisma.transferOffer.createMany({ data: offersToCreate });
   }
 
   return { offersCreated };
