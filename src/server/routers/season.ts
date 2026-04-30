@@ -486,6 +486,65 @@ export const seasonRouter = router({
       }
     }
 
+    // ── Prize money payouts (USD into team.budget) ──────────────────
+    // Cash awarded at elimination match. Spec sourced from VCT 2026 prize
+    // breakdowns: Champions $2.25M, big Masters (Shanghai-tier) $1M, small
+    // Masters (Madrid-tier) $500k, regional Stage 2 $250k. Kickoff and
+    // Stage 1 are qualifiers only — no direct prize money.
+    //
+    // Eliminations match → placement mapping:
+    //   GF winner = 1st, GF loser = 2nd, LB Final loser = 3rd, LB SF loser = 4th
+    //   LB R3 losers = 5-6, LB R1 losers = 7-8 (Masters/Champions 8-team bracket).
+    //   For regional Stage 2 (8-team but no LB SF): UB Final loser is treated as 4th,
+    //   LB R2 losers as 5-6, LB R1 losers no payout.
+    const prizePayouts: Record<string, { winner: number; loser: number }> = {
+      // Stage 2 regional ($250k per region)
+      "STAGE_2_PO_GF":         { winner: 100_000, loser: 65_000 },
+      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 40_000 },
+      "STAGE_2_PO_UB_FINAL":   { winner: 0, loser: 25_000 },
+      "STAGE_2_PO_LB_R2":      { winner: 0, loser: 10_000 },
+      // Masters 1 — Madrid-tier ($500k)
+      "MASTERS_1_GRAND_FINAL": { winner: 175_000, loser: 100_000 },
+      "MASTERS_1_LB_FINAL":    { winner: 0, loser: 62_500 },
+      "MASTERS_1_LB_SF":       { winner: 0, loser: 37_500 },
+      "MASTERS_1_LB_R3":       { winner: 0, loser: 25_000 },
+      "MASTERS_1_LB_R1":       { winner: 0, loser: 17_500 },
+      // Masters 2 — Shanghai-tier ($1M)
+      "MASTERS_2_GRAND_FINAL": { winner: 350_000, loser: 200_000 },
+      "MASTERS_2_LB_FINAL":    { winner: 0, loser: 125_000 },
+      "MASTERS_2_LB_SF":       { winner: 0, loser: 75_000 },
+      "MASTERS_2_LB_R3":       { winner: 0, loser: 50_000 },
+      "MASTERS_2_LB_R1":       { winner: 0, loser: 35_000 },
+      // Champions — the big one ($2.25M)
+      "CHAMPIONS_GRAND_FINAL": { winner: 1_000_000, loser: 400_000 },
+      "CHAMPIONS_LB_FINAL":    { winner: 0, loser: 250_000 },
+      "CHAMPIONS_LB_SF":       { winner: 0, loser: 130_000 },
+      "CHAMPIONS_LB_R3":       { winner: 0, loser: 85_000 },
+      "CHAMPIONS_LB_R1":       { winner: 0, loser: 50_000 },
+    };
+    for (const result of simulatedResults) {
+      const payout = prizePayouts[result.stageId];
+      if (payout && result.winnerId) {
+        const loserId = result.winnerId === result.team1Id ? result.team2Id : result.team1Id;
+        const updates: ReturnType<typeof ctx.prisma.team.update>[] = [];
+        if (payout.winner > 0) {
+          updates.push(ctx.prisma.team.update({
+            where: { id: result.winnerId },
+            data: { budget: { increment: payout.winner } },
+          }));
+        }
+        if (payout.loser > 0) {
+          updates.push(ctx.prisma.team.update({
+            where: { id: loserId },
+            data: { budget: { increment: payout.loser } },
+          }));
+        }
+        if (updates.length > 0) {
+          await ctx.prisma.$transaction(updates);
+        }
+      }
+    }
+
     // ═══════════════════════════════════════════════════════════
     // Stage transitions
     // ═══════════════════════════════════════════════════════════

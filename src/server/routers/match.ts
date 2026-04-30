@@ -624,6 +624,54 @@ export const matchRouter = router({
         }
       }
 
+      // Prize money — mirror of season.advanceDay's prizePayouts table so the
+      // user gets paid the same as AI teams when they finalize their own
+      // tournament-stage matches.
+      const PRIZE_PAYOUTS: Record<string, { winner: number; loser: number }> = {
+        "STAGE_2_PO_GF":         { winner: 100_000, loser: 65_000 },
+        "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 40_000 },
+        "STAGE_2_PO_UB_FINAL":   { winner: 0, loser: 25_000 },
+        "STAGE_2_PO_LB_R2":      { winner: 0, loser: 10_000 },
+        "MASTERS_1_GRAND_FINAL": { winner: 175_000, loser: 100_000 },
+        "MASTERS_1_LB_FINAL":    { winner: 0, loser: 62_500 },
+        "MASTERS_1_LB_SF":       { winner: 0, loser: 37_500 },
+        "MASTERS_1_LB_R3":       { winner: 0, loser: 25_000 },
+        "MASTERS_1_LB_R1":       { winner: 0, loser: 17_500 },
+        "MASTERS_2_GRAND_FINAL": { winner: 350_000, loser: 200_000 },
+        "MASTERS_2_LB_FINAL":    { winner: 0, loser: 125_000 },
+        "MASTERS_2_LB_SF":       { winner: 0, loser: 75_000 },
+        "MASTERS_2_LB_R3":       { winner: 0, loser: 50_000 },
+        "MASTERS_2_LB_R1":       { winner: 0, loser: 35_000 },
+        "CHAMPIONS_GRAND_FINAL": { winner: 1_000_000, loser: 400_000 },
+        "CHAMPIONS_LB_FINAL":    { winner: 0, loser: 250_000 },
+        "CHAMPIONS_LB_SF":       { winner: 0, loser: 130_000 },
+        "CHAMPIONS_LB_R3":       { winner: 0, loser: 85_000 },
+        "CHAMPIONS_LB_R1":       { winner: 0, loser: 50_000 },
+      };
+      const prize = PRIZE_PAYOUTS[match.stageId];
+      if (prize) {
+        const prizeUpdates: ReturnType<typeof ctx.prisma.team.update>[] = [];
+        if (prize.winner > 0) {
+          prizeUpdates.push(
+            ctx.prisma.team.update({
+              where: { id: input.winnerId },
+              data: { budget: { increment: prize.winner } },
+            }),
+          );
+        }
+        if (prize.loser > 0) {
+          prizeUpdates.push(
+            ctx.prisma.team.update({
+              where: { id: loserId },
+              data: { budget: { increment: prize.loser } },
+            }),
+          );
+        }
+        if (prizeUpdates.length > 0) {
+          await ctx.prisma.$transaction(prizeUpdates);
+        }
+      }
+
       // 2b. Sponsor win bonuses for the winning team
       const winningTeamSponsors = await ctx.prisma.sponsor.findMany({
         where: { teamId: input.winnerId, isActive: true },
