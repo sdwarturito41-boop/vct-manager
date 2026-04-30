@@ -575,6 +575,55 @@ export const matchRouter = router({
         });
       }
 
+      // Finals champ pts. Mirrors the table in season.advanceDay so the user
+      // gets the same placement payout when they finalize their own match
+      // through veto/play. Without this, the user could win a Kickoff UB Final
+      // and walk away with 0 champPts because only the AI sim path applied
+      // these increments.
+      const FINALS_POINTS: Record<string, { winner: number; loser: number }> = {
+        // Kickoff triple-elim — only LB_FINAL eliminates fully (loser gets 4th).
+        "KICKOFF_UB_FINAL": { winner: 4, loser: 0 },
+        "KICKOFF_MID_FINAL": { winner: 3, loser: 0 },
+        "KICKOFF_LB_FINAL": { winner: 2, loser: 1 },
+        // Masters
+        "MASTERS_1_GRAND_FINAL": { winner: 4, loser: 3 },
+        "MASTERS_1_LB_FINAL": { winner: 0, loser: 2 },
+        "MASTERS_1_LB_SF": { winner: 0, loser: 1 },
+        "MASTERS_2_GRAND_FINAL": { winner: 4, loser: 3 },
+        "MASTERS_2_LB_FINAL": { winner: 0, loser: 2 },
+        "MASTERS_2_LB_SF": { winner: 0, loser: 1 },
+        // Regional Stage playoffs
+        "STAGE_1_PO_GF": { winner: 4, loser: 3 },
+        "STAGE_1_PO_LB_FINAL": { winner: 0, loser: 2 },
+        "STAGE_1_PO_LB_R2": { winner: 0, loser: 1 },
+        "STAGE_2_PO_GF": { winner: 4, loser: 3 },
+        "STAGE_2_PO_LB_FINAL": { winner: 0, loser: 2 },
+        "STAGE_2_PO_LB_R2": { winner: 0, loser: 1 },
+      };
+      const cfg = FINALS_POINTS[match.stageId];
+      if (cfg) {
+        const finalUpdates: ReturnType<typeof ctx.prisma.team.update>[] = [];
+        if (cfg.winner > 0) {
+          finalUpdates.push(
+            ctx.prisma.team.update({
+              where: { id: input.winnerId },
+              data: { champPts: { increment: cfg.winner } },
+            }),
+          );
+        }
+        if (cfg.loser > 0) {
+          finalUpdates.push(
+            ctx.prisma.team.update({
+              where: { id: loserId },
+              data: { champPts: { increment: cfg.loser } },
+            }),
+          );
+        }
+        if (finalUpdates.length > 0) {
+          await ctx.prisma.$transaction(finalUpdates);
+        }
+      }
+
       // 2b. Sponsor win bonuses for the winning team
       const winningTeamSponsors = await ctx.prisma.sponsor.findMany({
         where: { teamId: input.winnerId, isActive: true },
