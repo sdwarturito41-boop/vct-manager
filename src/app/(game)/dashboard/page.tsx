@@ -140,6 +140,44 @@ export default async function DashboardPage() {
     .sort((a, b) => (b.overall ?? 0) - (a.overall ?? 0))
     .slice(0, 5);
 
+  // Pair starters by role for the head-to-head matchup card. A Valorant comp
+  // typically has one of each: Duelist / Initiator / Sentinel / Controller +
+  // IGL or Flex. Pairing by role makes the matchup readable (Duelist vs Duelist
+  // tells you who's likely to entry/duel, etc.). Falls back to ordered leftovers
+  // when a team's comp doesn't have an exact role counterpart.
+  const ROLE_ORDER: Player["role"][] = [
+    "Duelist",
+    "Initiator",
+    "Sentinel",
+    "Controller",
+    "IGL",
+    "Flex",
+  ];
+  function pairByRole(
+    a: Player[],
+    b: Player[],
+  ): Array<{ my: Player | null; them: Player | null }> {
+    const aRemaining = [...a];
+    const bRemaining = [...b];
+    const pairs: Array<{ my: Player | null; them: Player | null }> = [];
+    for (const role of ROLE_ORDER) {
+      const myIdx = aRemaining.findIndex((p) => p.role === role);
+      const themIdx = bRemaining.findIndex((p) => p.role === role);
+      if (myIdx === -1 && themIdx === -1) continue;
+      const my = myIdx >= 0 ? aRemaining.splice(myIdx, 1)[0] : null;
+      const them = themIdx >= 0 ? bRemaining.splice(themIdx, 1)[0] : null;
+      pairs.push({ my, them });
+    }
+    // Pair any leftovers (teams with multiple of the same role, or unusual comps).
+    while (aRemaining.length || bRemaining.length) {
+      pairs.push({ my: aRemaining.shift() ?? null, them: bRemaining.shift() ?? null });
+    }
+    return pairs.slice(0, 5);
+  }
+  const matchupPairs = opponentTeam
+    ? pairByRole(myStarters, (opponentTeam.players as Player[]) ?? [])
+    : Array.from({ length: 5 }, () => ({ my: null, them: null }));
+
   // Upcoming + recent fixtures combined view (FM "Fixture schedule" mixes both
   // — recent results above the fold, upcoming below).
   const upcomingMatches = matches
@@ -333,11 +371,9 @@ export default async function DashboardPage() {
                     />
                   </div>
 
-                  {/* 5 matchup rows */}
+                  {/* 5 matchup rows — paired by role (Duelist vs Duelist, etc.) */}
                   <div className="flex flex-col">
-                    {Array.from({ length: 5 }).map((_, i) => {
-                      const my = myStarters[i] ?? null;
-                      const them = opponentTeam?.players[i] ?? null;
+                    {matchupPairs.map(({ my, them }, i) => {
                       const myAgent = my ? bestAgent(my) : null;
                       const oppAgent = them ? bestAgent(them as Player) : null;
                       const myRating = my?.rating ?? 0;

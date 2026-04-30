@@ -506,38 +506,23 @@ export async function snapshotPlayerStats(
   });
   if (players.length === 0) return 0;
 
-  const CHUNK = 50;
-  for (let i = 0; i < players.length; i += CHUNK) {
-    const batch = players.slice(i, i + CHUNK);
-    await Promise.all(
-      batch.map((p) =>
-        prisma.playerStatSnapshot
-          .upsert({
-            where: { playerId_season_week: { playerId: p.id, season, week } },
-            update: {
-              rating: p.rating,
-              acs: p.acs,
-              kd: p.kd,
-              kast: p.kast,
-              adr: p.adr,
-              clPct: p.clPct,
-            },
-            create: {
-              saveId,
-              playerId: p.id,
-              season,
-              week,
-              rating: p.rating,
-              acs: p.acs,
-              kd: p.kd,
-              kast: p.kast,
-              adr: p.adr,
-              clPct: p.clPct,
-            },
-          })
-          .catch(() => null),
-      ),
-    );
-  }
+  // The weekly tick only fires when crossing into a new week, so duplicates
+  // shouldn't happen for a given (playerId, season, week). createMany +
+  // skipDuplicates is one round-trip vs. ~290 sequential upserts.
+  await prisma.playerStatSnapshot.createMany({
+    data: players.map((p) => ({
+      saveId,
+      playerId: p.id,
+      season,
+      week,
+      rating: p.rating,
+      acs: p.acs,
+      kd: p.kd,
+      kast: p.kast,
+      adr: p.adr,
+      clPct: p.clPct,
+    })),
+    skipDuplicates: true,
+  });
   return players.length;
 }

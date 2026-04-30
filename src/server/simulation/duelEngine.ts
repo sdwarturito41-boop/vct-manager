@@ -636,12 +636,26 @@ function pickRoundEntry(team: TeamRuntime): string | null {
 /**
  * Distribute a queued weapon pickup (from a dead teammate last round) to the
  * lowest-tier player on the team. Receiver keeps their credits — pickups are free.
+ *
+ * Role-respect: a sniper (Op/Outlaw/Marshal) only goes to the team's awper. A
+ * Duelist would walk past an Outlaw in real play, not pick it up — without this,
+ * a round-3 Outlaw drop could end up stuck on a Duelist for the rest of the map.
  */
 function applyPickup(team: TeamRuntime, pickup: { weapon: WeaponName }): boolean {
   const pickupTier = weaponTierOf(pickup.weapon);
-  const candidates = team.players
+  const isSniperPickup =
+    pickup.weapon === "Operator" ||
+    pickup.weapon === "Outlaw" ||
+    pickup.weapon === "Marshal";
+
+  let candidates = team.players
     .map((p) => ({ p, e: team.economy.get(p.input.id)! }))
     .filter(({ e }) => e.weaponTier < pickupTier);
+
+  if (isSniperPickup) {
+    candidates = candidates.filter(({ p }) => p.input.id === team.awperId);
+  }
+
   if (candidates.length === 0) return false;
   candidates.sort((a, b) => a.e.weaponTier - b.e.weaponTier);
   setEconomyWeapon(candidates[0].e, pickup.weapon, true);
@@ -812,7 +826,11 @@ function planBuys(
     const isSurvivor = survivedLastRound.has(p.input.id);
 
     if (isSurvivor && e.weaponTier >= 1) {
-      // Carryover: keep weapon, rebuy armor (already reset to "none" above)
+      // Carryover: keep weapon, rebuy armor (already reset to "none" above).
+      // Picked-up weapons stay with the survivor until they die — same as real
+      // Valorant. The pickup flag is cleared after one round of carryover so it
+      // doesn't display as "fresh pickup" forever.
+      e.fromPickup = false;
       if (strategy === "full" || strategy === "half") {
         if (e.credits >= PRICE.heavyArmor) {
           e.credits -= PRICE.heavyArmor; e.armor = "heavy";

@@ -254,37 +254,63 @@ export const seasonRouter = router({
       completedRounds.add(match.stageId);
     }
 
-    // Phase 2 — fire all DB writes in parallel. On Neon's pooler this caps the
-    // round-trip latency at ~one query's worth instead of multiplying by N.
+    // Phase 2 — collapse all of today's match writes into ONE transaction.
+    // Previously this was N parallel transactions (3 statements each), so ~3
+    // round-trips × N matches against Neon's pooler. One mega-transaction caps
+    // the latency at a single round-trip regardless of match count.
     const playedAt = new Date();
     if (aiResults.length > 0) {
-      await Promise.all(
-        aiResults.map((r) =>
-          ctx.prisma.$transaction([
-            ctx.prisma.match.update({
-              where: { id: r.matchId },
-              data: {
-                isPlayed: true,
-                playedAt,
-                winnerId: r.winnerId,
-                score: { team1: r.score.team1, team2: r.score.team2 },
-                maps: r.maps as unknown as import("@/generated/prisma/client").Prisma.InputJsonValue,
-              },
-            }),
-            ctx.prisma.team.update({
-              where: { id: r.winnerId },
-              data: {
-                wins: { increment: 1 },
-                ...(r.isStage12Group ? { champPts: { increment: 1 } } : {}),
-              },
-            }),
-            ctx.prisma.team.update({
-              where: { id: r.loserId },
-              data: { losses: { increment: 1 } },
-            }),
-          ]),
-        ),
-      );
+      const writes: import("@/generated/prisma/client").Prisma.PrismaPromise<unknown>[] = [];
+      for (const r of aiResults) {
+        writes.push(
+          ctx.prisma.match.update({
+            where: { id: r.matchId },
+            data: {
+              isPlayed: true,
+              playedAt,
+              winnerId: r.winnerId,
+              score: { team1: r.score.team1, team2: r.score.team2 },
+              maps: r.maps as unknown as import("@/generated/prisma/client").Prisma.InputJsonValue,
+            },
+          }),
+        );
+      }
+      // Aggregate per-team win/loss/champPts across all matches today, then
+      // emit one update per team. Collapses the 2-update-per-match pattern into
+      // ~equal-or-fewer rows total (a team rarely plays >1 match per day, but
+      // when they do this dedupes the writes too).
+      const teamDeltas = new Map<
+        string,
+        { wins: number; losses: number; champPts: number }
+      >();
+      const ensure = (id: string) => {
+        let d = teamDeltas.get(id);
+        if (!d) {
+          d = { wins: 0, losses: 0, champPts: 0 };
+          teamDeltas.set(id, d);
+        }
+        return d;
+      };
+      for (const r of aiResults) {
+        const w = ensure(r.winnerId);
+        w.wins += 1;
+        if (r.isStage12Group) w.champPts += 1;
+        const l = ensure(r.loserId);
+        l.losses += 1;
+      }
+      for (const [teamId, d] of teamDeltas) {
+        const data: { wins?: { increment: number }; losses?: { increment: number }; champPts?: { increment: number } } = {};
+        if (d.wins) data.wins = { increment: d.wins };
+        if (d.losses) data.losses = { increment: d.losses };
+        if (d.champPts) data.champPts = { increment: d.champPts };
+        writes.push(
+          ctx.prisma.team.update({
+            where: { id: teamId },
+            data,
+          }),
+        );
+      }
+      await ctx.prisma.$transaction(writes);
     }
 
     for (const r of aiResults) {

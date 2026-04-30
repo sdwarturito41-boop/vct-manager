@@ -221,12 +221,12 @@ export async function recomputeHappinessAll(
     }
   }
 
-  // Flush updates in parallel chunks (Neon handles ~25 concurrent writes fine)
-  const CHUNK = 25;
-  for (let i = 0; i < pendingUpdates.length; i += CHUNK) {
-    const chunk = pendingUpdates.slice(i, i + CHUNK);
-    await Promise.all(
-      chunk.map((u) =>
+  // Flush all player updates in one transaction — caps round-trip latency
+  // at ~one query regardless of player count (vs. ~12 chunks × 25 sequential
+  // RTs on Neon's pooler).
+  if (pendingUpdates.length > 0) {
+    await prisma.$transaction(
+      pendingUpdates.map((u) =>
         prisma.player.update({ where: { id: u.id }, data: u.data }),
       ),
     );
