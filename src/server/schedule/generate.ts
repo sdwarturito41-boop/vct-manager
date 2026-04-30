@@ -646,7 +646,13 @@ export async function initializeMasters(
   });
   if (existing > 0) return { matchesScheduled: 0 };
 
-  // Get qualifiers: top 3 from each region
+  // VCT 2026 Masters format:
+  //   - 4 Seed #1 (regional Kickoff UB Final winners) — direct byes to bracket
+  //   - 8 (Seed #2 + Seed #3 of each region) — start in Swiss
+  //   - Top 4 from Swiss + 4 byes = 8-team double-elim bracket
+  //
+  // Stage_1/Stage_2 path: same shape but seeds come from playoff placement
+  // (UB Final winner = #1, GF winner = #2, GF loser = #3 via getStageTopTeams).
   const qualifiedTeams: { teamId: string; region: Region; seed: number }[] = [];
 
   for (const region of ALL_REGIONS) {
@@ -654,7 +660,6 @@ export async function initializeMasters(
     if (qualifyingStagePrefix === "KICKOFF") {
       teamIds = await getKickoffQualifiers(prisma, saveId, region, seasonNumber);
     } else {
-      // For STAGE_1 / STAGE_2 qualification: top 3 by wins in that stage
       teamIds = await getStageTopTeams(prisma, saveId, region, seasonNumber, qualifyingStagePrefix, 3);
     }
     teamIds.forEach((id, idx) => {
@@ -663,19 +668,31 @@ export async function initializeMasters(
   }
 
   if (qualifiedTeams.length < 12) {
-    // Not enough qualifiers - shouldn't happen but guard against it
     return { matchesScheduled: 0 };
   }
 
-  // Sort by seed for initial pairing: 1v12, 2v11, 3v10, etc.
-  // Seed order: region1 seed1, region2 seed1, region3 seed1, region4 seed1, then seed2s, then seed3s
-  const sorted = [...qualifiedTeams].sort((a, b) => a.seed - b.seed || ALL_REGIONS.indexOf(a.region) - ALL_REGIONS.indexOf(b.region));
-
-  // Swiss R1: 1v12, 2v11, 3v10, 4v9, 5v8, 6v7
-  const pairs: [string, string][] = [];
-  for (let i = 0; i < 6; i++) {
-    pairs.push([sorted[i].teamId, sorted[11 - i].teamId]);
+  // Only seeds 2 and 3 enter Swiss (seed 1s bye). 4 Seed#2 + 4 Seed#3 = 8 teams.
+  const seed2sByRegion = new Map<Region, string>();
+  const seed3sByRegion = new Map<Region, string>();
+  for (const q of qualifiedTeams) {
+    if (q.seed === 2) seed2sByRegion.set(q.region, q.teamId);
+    if (q.seed === 3) seed3sByRegion.set(q.region, q.teamId);
   }
+
+  // Swiss R1: cross-region Seed#2 vs Seed#3 — pair each region's #2 with the
+  // NEXT region's #3 in the rotation. Guarantees no same-region matchup R1.
+  // Pattern: EMEA#2 v Pacific#3 / Pacific#2 v Americas#3 /
+  //          Americas#2 v China#3 / China#2 v EMEA#3.
+  const pairs: [string, string][] = [];
+  for (let i = 0; i < ALL_REGIONS.length; i++) {
+    const regA = ALL_REGIONS[i];
+    const regB = ALL_REGIONS[(i + 1) % ALL_REGIONS.length];
+    const a = seed2sByRegion.get(regA);
+    const b = seed3sByRegion.get(regB);
+    if (a && b) pairs.push([a, b]);
+  }
+
+  if (pairs.length === 0) return { matchesScheduled: 0 };
 
   // Find last Kickoff match day to schedule after it
   const lastKickoffMatch = await prisma.match.findFirst({
@@ -857,8 +874,16 @@ export async function progressSwiss(
 // ══════════════════════════════════════════════════════════════
 
 /**
- * Create the double-elimination bracket for Masters.
- * 8 teams seeded by Swiss performance.
+ * Create the double-elimination bracket for Masters (VCT 2026 format).
+ *
+ * 8 teams in UB QF:
+ *   - 4 byes: regional Seed #1 (winner of each region's qualifying playoffs)
+ *   - 4 Swiss survivors: top 4 by record from the 8-team Swiss
+ *
+ * Pairing: each Seed#1 picks (here, randomly) one Swiss survivor to face. We
+ * shuffle both groups and zip them. Real VCT has the seeds choose live on
+ * stage — randomization captures that "anything goes" feel without modeling
+ * draft order.
  */
 async function createMastersBracket(
   prisma: PrismaClient,
@@ -874,51 +899,42 @@ async function createMastersBracket(
   });
   if (existing > 0) return;
 
-  // Get Swiss records for seeding
-  const allSwissMatches = await prisma.match.findMany({
-    where: {
-      saveId,
-      season: seasonNumber,
-      stageId: { startsWith: `${stagePrefix}_SWISS_R` },
-      isPlayed: true,
-    },
-  });
-
-  const winsMap = new Map<string, number>();
-  const buchholzMap = new Map<string, number>();
-  const opponentsMap = new Map<string, string[]>();
-
-  for (const match of allSwissMatches) {
-    const winnerId = match.winnerId!;
-    const loserId = winnerId === match.team1Id ? match.team2Id : match.team1Id;
-    winsMap.set(winnerId, (winsMap.get(winnerId) ?? 0) + 1);
-    winsMap.set(loserId, winsMap.get(loserId) ?? 0);
-    const wOpps = opponentsMap.get(winnerId) ?? [];
-    wOpps.push(loserId);
-    opponentsMap.set(winnerId, wOpps);
-    const lOpps = opponentsMap.get(loserId) ?? [];
-    lOpps.push(winnerId);
-    opponentsMap.set(loserId, lOpps);
+  // Re-derive the 4 Seed #1 byes from the qualifying source. For Masters_1
+  // this is each region's Kickoff UB Final winner; for Masters_2 it's Stage 1
+  // playoffs UB Final winner. getStageTopTeams + getKickoffQualifiers both
+  // return seeds in [#1, #2, #3] order.
+  const isFromKickoff = stagePrefix === "MASTERS_1";
+  const seed1Byes: string[] = [];
+  for (const region of ALL_REGIONS) {
+    const qualifiers = isFromKickoff
+      ? await getKickoffQualifiers(prisma, saveId, region, seasonNumber)
+      : await getStageTopTeams(prisma, saveId, region, seasonNumber, "STAGE_1", 3);
+    if (qualifiers[0]) seed1Byes.push(qualifiers[0]);
   }
 
-  for (const teamId of advancedTeamIds) {
-    const opps = opponentsMap.get(teamId) ?? [];
-    buchholzMap.set(teamId, opps.reduce((s, o) => s + (winsMap.get(o) ?? 0), 0));
+  if (seed1Byes.length < 4 || advancedTeamIds.length < 4) {
+    // Defensive: not enough teams to form a bracket — bail rather than
+    // create malformed matches.
+    return;
   }
 
-  // Seed: sort by wins desc, then Buchholz desc
-  const seeded = [...advancedTeamIds].sort((a, b) => {
-    const wDiff = (winsMap.get(b) ?? 0) - (winsMap.get(a) ?? 0);
-    if (wDiff !== 0) return wDiff;
-    return (buchholzMap.get(b) ?? 0) - (buchholzMap.get(a) ?? 0);
-  });
+  // Shuffle both groups, then pair: bye[i] vs swissSurvivor[i]
+  const shuffle = <T>(arr: T[]): T[] => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j]!, a[i]!];
+    }
+    return a;
+  };
+  const shuffledByes = shuffle(seed1Byes).slice(0, 4);
+  const shuffledSwiss = shuffle(advancedTeamIds).slice(0, 4);
 
-  // UB QF: 1v8, 2v7, 3v6, 4v5
   const ubQfPairs: [string, string][] = [
-    [seeded[0], seeded[7]],
-    [seeded[1], seeded[6]],
-    [seeded[2], seeded[5]],
-    [seeded[3], seeded[4]],
+    [shuffledByes[0], shuffledSwiss[0]],
+    [shuffledByes[1], shuffledSwiss[1]],
+    [shuffledByes[2], shuffledSwiss[2]],
+    [shuffledByes[3], shuffledSwiss[3]],
   ];
 
   await createMatchesOnInternationalSlots(
@@ -1034,6 +1050,8 @@ export async function progressMastersBracket(
   }
 
   // ── UB Final done → LB Final (UB Final loser vs LB SF winner) ──
+  // VCT 2026 bumps LB Final and Grand Final to BO5 — the rest of the bracket
+  // stays BO3.
   if (completedStageId === `${stagePrefix}_UB_FINAL`) {
     const ubFinal = await getIntlResults(`${stagePrefix}_UB_FINAL`);
     const lbSF = await getIntlResults(`${stagePrefix}_LB_SF`);
@@ -1042,7 +1060,7 @@ export async function progressMastersBracket(
       await prisma.match.createMany({ data: [{
         saveId,
         team1Id: ubFinal[0].loser, team2Id: lbSF[0].winner,
-        stageId: `${stagePrefix}_LB_FINAL`, format: "BO3", day, week: Math.ceil(day / 7), season: S,
+        stageId: `${stagePrefix}_LB_FINAL`, format: "BO5", day, week: Math.ceil(day / 7), season: S,
       }] });
     }
   }
