@@ -1017,28 +1017,54 @@ export const seasonRouter = router({
           team1: { select: { region: true } },
         },
       });
-      const counts = new Map<string, { played: number; total: number; region: string }>();
+      // International stages (Masters / EWC / Champions, Swiss + bracket) are
+      // cross-region — every match has a different team1.region. Aggregating
+      // by (stage, region) would split a single 4-match round into 4 single-
+      // match shards and fire `progressSwiss` with partial state. Track those
+      // globally by stageId. Regional stages (Kickoff / Stage groups / Stage
+      // playoffs) still aggregate per-region because each match belongs to one
+      // region's bracket.
+      const intlCounts = new Map<string, { played: number; total: number }>();
+      const regionalCounts = new Map<string, { played: number; total: number; region: string }>();
       for (const m of allMatches) {
-        const key = `${m.stageId}::${m.team1.region}`;
-        const cur = counts.get(key) ?? { played: 0, total: 0, region: m.team1.region };
-        cur.total++;
-        if (m.isPlayed) cur.played++;
-        counts.set(key, cur);
-      }
-      for (const [key, c] of counts) {
-        if (c.played !== c.total || c.total === 0) continue;
-        const [stageId] = key.split("::");
-        const isInternational =
+        const stageId = m.stageId;
+        const isInternationalStage =
           stageId.startsWith("MASTERS_") ||
           stageId.startsWith("EWC_") ||
           stageId.startsWith("CHAMPIONS_");
+        if (isInternationalStage) {
+          const cur = intlCounts.get(stageId) ?? { played: 0, total: 0 };
+          cur.total++;
+          if (m.isPlayed) cur.played++;
+          intlCounts.set(stageId, cur);
+        } else {
+          const key = `${stageId}::${m.team1.region}`;
+          const cur = regionalCounts.get(key) ?? { played: 0, total: 0, region: m.team1.region };
+          cur.total++;
+          if (m.isPlayed) cur.played++;
+          regionalCounts.set(key, cur);
+        }
+      }
+      // International progression — one call per fully-played stage.
+      for (const [stageId, c] of intlCounts) {
+        if (c.played !== c.total || c.total === 0) continue;
         const isSwiss = stageId.includes("_SWISS_R");
         try {
           if (isSwiss) {
             await progressSwiss(ctx.prisma, ctx.save.id, stageId, season.number, newDay);
-          } else if (isInternational && !isSwiss) {
+          } else {
             await progressMastersBracket(ctx.prisma, ctx.save.id, stageId, season.number, newDay);
-          } else if (stageId.startsWith("KICKOFF")) {
+          }
+        } catch {
+          // Ignore — a single bad stage shouldn't break the whole advance-day.
+        }
+      }
+      // Regional progression — one call per (stage, region) fully played.
+      for (const [key, c] of regionalCounts) {
+        if (c.played !== c.total || c.total === 0) continue;
+        const [stageId] = key.split("::");
+        try {
+          if (stageId.startsWith("KICKOFF")) {
             await progressBracket(ctx.prisma, ctx.save.id, stageId, c.region as Region, season.number, newDay);
           } else if (stageId === "STAGE_1_ALPHA" || stageId === "STAGE_1_OMEGA") {
             await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_1", c.region as Region, season.number, newDay);

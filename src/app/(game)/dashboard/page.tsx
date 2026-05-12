@@ -228,15 +228,15 @@ export default async function DashboardPage() {
 
   const messagesArr = messages as Array<{
     id: string;
-    title: string;
+    subject: string;
     body: string;
-    senderName: string | null;
+    fromName: string;
+    fromRole: string;
     category: string;
     isRead: boolean;
     createdAt: Date;
-    seasonNumber: number;
+    season: number;
     week: number;
-    day: number;
   }>;
   const personalMessages = messagesArr.filter((m) => !NEWS_CATEGORIES.has(m.category));
   const newsItems = messagesArr.filter((m) => NEWS_CATEGORIES.has(m.category));
@@ -303,7 +303,7 @@ export default async function DashboardPage() {
                   border: `1px solid ${categoryColor(m.category)}33`,
                 }}
               >
-                {(m.senderName ?? "??").slice(0, 2)}
+                {m.fromName.slice(0, 2)}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">
@@ -314,17 +314,26 @@ export default async function DashboardPage() {
                       fontWeight: m.isRead ? 400 : 500,
                     }}
                   >
-                    {m.senderName ?? "System"}
+                    {m.fromName}
                   </span>
                   <span className="shrink-0 text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
-                    D{m.day}
+                    W{m.week}
                   </span>
                 </div>
                 <div
-                  className="truncate text-[11px]"
+                  className="truncate text-[12px]"
+                  style={{
+                    color: m.isRead ? D.textMuted : D.textPrimary,
+                    fontWeight: m.isRead ? 400 : 500,
+                  }}
+                >
+                  {m.subject}
+                </div>
+                <div
+                  className="line-clamp-2 text-[11px]"
                   style={{ color: m.isRead ? D.textSubtle : D.textMuted }}
                 >
-                  {m.title}
+                  {m.body}
                 </div>
               </div>
             </Link>
@@ -809,12 +818,12 @@ function NewsCard({
 }: {
   items: Array<{
     id: string;
-    title: string;
+    subject: string;
     body: string;
-    senderName: string | null;
+    fromName: string;
     category: string;
     isRead: boolean;
-    day: number;
+    week: number;
   }>;
 }) {
   return (
@@ -863,14 +872,14 @@ function NewsCard({
                   className="truncate text-[12px]"
                   style={{ color: D.textPrimary, fontWeight: 500 }}
                 >
-                  {m.title}
+                  {m.subject}
                 </div>
                 <div className="truncate text-[11px]" style={{ color: D.textMuted }}>
                   {m.body}
                 </div>
               </div>
               <span className="shrink-0 text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
-                D{m.day}
+                W{m.week}
               </span>
             </Link>
           );
