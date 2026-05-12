@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { D } from "@/constants/design";
 import { formatGameDate } from "@/lib/game-date";
+import { BracketDrawModal } from "@/components/BracketDrawModal";
 
 interface Props {
   pendingMatchId?: string | null;
@@ -51,6 +52,13 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
     undefined,
     { retry: false },
   );
+  // Bracket draw ceremony — when Swiss has just completed and the UB QF is
+  // fresh, swap the Continue CTA for "Assister au tirage".
+  const { data: pendingDraw, refetch: refetchDraw } = trpc.match.getPendingBracketDraw.useQuery(
+    undefined,
+    { retry: false },
+  );
+  const [drawOpen, setDrawOpen] = useState(false);
 
   const mutation = trpc.season.advanceDay.useMutation({
     onSuccess: (data) => {
@@ -107,6 +115,10 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
     serverPending?.opponent ??
     null;
 
+  // Priority order for the CTA:
+  //   1. Match-to-play (highest priority — user has a live match)
+  //   2. Bracket draw pending (cinematic ceremony before bracket starts)
+  //   3. Continue (default)
   return (
     <>
       {matchToPlay ? (
@@ -123,6 +135,18 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
             <span style={{ opacity: 0.7, fontWeight: 400 }}>· {buttonOpponent}</span>
           )}
         </Link>
+      ) : pendingDraw && pendingDraw.pairs.length > 0 ? (
+        <button
+          onClick={() => setDrawOpen(true)}
+          className="flex h-9 w-full items-center justify-center gap-1.5 rounded text-[12px] font-medium transition-colors"
+          style={{
+            background: D.teal,
+            color: "#ffffff",
+          }}
+        >
+          Assister au tirage
+          <span aria-hidden style={{ fontSize: 14, lineHeight: 1 }}>›</span>
+        </button>
       ) : (
         <button
           onClick={startAdvance}
@@ -147,6 +171,20 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
           userTeamId={userTeam?.id ?? null}
           pendingFromAdvance={pendingFromAdvance}
           onClose={closeModal}
+        />
+      )}
+
+      {drawOpen && pendingDraw && (
+        <BracketDrawModal
+          stage={pendingDraw.stage}
+          pairs={pendingDraw.pairs}
+          onClose={() => {
+            setDrawOpen(false);
+            // Refetch — once UB QF gets played, this query returns null and
+            // the CTA reverts to Continue / Play match naturally.
+            void refetchDraw();
+            router.refresh();
+          }}
         />
       )}
     </>

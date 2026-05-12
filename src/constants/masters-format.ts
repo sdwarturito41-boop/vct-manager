@@ -1,6 +1,10 @@
-// Masters Santiago: 12 teams (3 per region), Swiss -> Double Elimination
-// Swiss Stage: 4 rounds, teams with 3 wins advance, teams with 3 losses eliminated
-// Bracket Stage: 8 teams, double elimination, Grand Final BO5
+// Masters (VCT 2026 format): 12 teams total
+//   - 4 Seed #1 (regional winners) bye direct to bracket
+//   - 8 Seed #2 + Seed #3 play Swiss
+// Swiss Stage: first-to-2 wins to advance, first-to-2 losses to eliminate
+//   → 4 teams advance, 4 eliminated. Max 3 rounds for any team.
+// Bracket Stage: 8 teams (4 byes + 4 Swiss survivors), double elimination,
+//   BO3 except LB Final + Grand Final in BO5.
 
 export const MASTERS_FORMAT = {
   name: "Masters Santiago",
@@ -9,11 +13,11 @@ export const MASTERS_FORMAT = {
 
   // Swiss Stage
   swiss: {
-    rounds: 4,
-    winsToAdvance: 3,
-    lossesToEliminate: 3,
+    rounds: 3,
+    winsToAdvance: 2,
+    lossesToEliminate: 2,
     format: "BO3" as const,
-    advancingTeams: 8,
+    advancingTeams: 4,
   },
 
   // Bracket Stage

@@ -1847,6 +1847,13 @@ function resolveAssistants(
   for (const a of valid) {
     if (assistantIds.length >= 2) break;
     if (assistantIds.includes(a.playerId)) continue; // one credit per assister
+    // Non-one-shot abilities (controller smokes, sentinel traps, post-plant
+    // lockdowns) sit in pendingAssists for 15-30s and would otherwise credit
+    // the caster on EVERY kill that happens in that window. In real Valorant
+    // a smoke / trap assist requires the kill to actually go through the
+    // utility — gate with a probability roll so Controllers don't post 40+
+    // assists per map.
+    if (a.type === "cast" && Math.random() > 0.20) continue;
     assistantIds.push(a.playerId);
     if (a.oneShot) toConsume.push(a);
   }

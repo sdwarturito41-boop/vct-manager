@@ -60,6 +60,69 @@ async function applyActivePatch(
 }
 
 export const matchRouter = router({
+  // Detects a Masters/EWC/Champions bracket that just got drawn but hasn't
+  // been played yet. When this returns non-null, the dashboard / TopNav swaps
+  // the usual "Continue" CTA for "Assister au tirage" so the user can watch
+  // the bracket draw animation before the first QF match.
+  //
+  // Criteria: current stage is an international one, every Swiss round is
+  // played, and at least one UB QF match exists and is unplayed.
+  getPendingBracketDraw: saveProcedure.query(async ({ ctx }) => {
+    const season = await ctx.prisma.season.findFirst({
+      where: { isActive: true, saveId: ctx.save.id },
+      select: { number: true, currentStage: true },
+    });
+    if (!season) return null;
+    const stage = season.currentStage;
+    const isIntl =
+      stage.startsWith("MASTERS_") ||
+      stage.startsWith("EWC_") ||
+      stage.startsWith("CHAMPIONS_") ||
+      stage === "MASTERS_1" || stage === "MASTERS_2" || stage === "EWC" || stage === "CHAMPIONS";
+    if (!isIntl) return null;
+
+    // Swiss must be fully played
+    const swissUnplayed = await ctx.prisma.match.count({
+      where: {
+        saveId: ctx.save.id,
+        season: season.number,
+        stageId: { startsWith: `${stage}_SWISS_R` },
+        isPlayed: false,
+      },
+    });
+    if (swissUnplayed > 0) return null;
+
+    // UB QF must exist with all matches still unplayed (= bracket just drawn)
+    const qfMatches = await ctx.prisma.match.findMany({
+      where: {
+        saveId: ctx.save.id,
+        season: season.number,
+        stageId: `${stage}_UB_QF`,
+      },
+      select: {
+        id: true,
+        isPlayed: true,
+        team1: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
+        team2: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
+      },
+      orderBy: { day: "asc" },
+    });
+    if (qfMatches.length === 0) return null;
+    const anyPlayed = qfMatches.some((m) => m.isPlayed);
+    if (anyPlayed) return null;
+
+    // team1 = Seed #1 bye, team2 = Swiss survivor (per createMastersBracket
+    // construction). Tag each side so the client can animate accordingly.
+    return {
+      stage,
+      pairs: qfMatches.map((m) => ({
+        matchId: m.id,
+        bye: m.team1,
+        swissSurvivor: m.team2,
+      })),
+    };
+  }),
+
   // Returns the user team's earliest pending past/today match (if any). The
   // TopNav uses this to render a "Play match" CTA whenever the user has
   // something to play — without depending on a transient frontend state from

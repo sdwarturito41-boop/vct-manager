@@ -1,6 +1,5 @@
 import { PrismaClient } from "@/generated/prisma/client";
 import type { MatchFormat, Region } from "@/generated/prisma/client";
-import { MASTERS_FORMAT } from "@/constants/masters-format";
 import { VALORANT_AGENTS } from "@/constants/agents";
 import { MAP_POOLS, STAGE_MAP_POOL } from "@/constants/maps";
 import { applyPatchToMeta } from "@/constants/meta";
@@ -779,14 +778,22 @@ export async function progressSwiss(
     }, 0);
   }
 
+  // Swiss thresholds depend on tournament size:
+  //   - Masters: 8-team Swiss → first-to-2 wins (4 advance)
+  //   - EWC / Champions: 16-team Swiss → first-to-3 wins (8 advance)
+  // We can't read constants per-stage cleanly here, so pick by participant
+  // count seen in this Swiss.
+  const participantCount = records.size;
+  const winsThreshold = participantCount <= 8 ? 2 : 3;
+  const lossesThreshold = participantCount <= 8 ? 2 : 3;
   const advanced: string[] = [];
   const eliminated: string[] = [];
   const stillPlaying: SwissRecord[] = [];
 
   for (const rec of records.values()) {
-    if (rec.wins >= 3) {
+    if (rec.wins >= winsThreshold) {
       advanced.push(rec.teamId);
-    } else if (rec.losses >= 3) {
+    } else if (rec.losses >= lossesThreshold) {
       eliminated.push(rec.teamId);
     } else {
       stillPlaying.push(rec);
@@ -809,55 +816,58 @@ export async function progressSwiss(
     return { advanced, eliminated, nextRoundCreated: false };
   }
 
-  // Pair teams with same W-L record, using Buchholz for seeding
-  // Group by W-L record
-  const groups = new Map<string, SwissRecord[]>();
-  for (const rec of stillPlaying) {
-    const key = `${rec.wins}-${rec.losses}`;
-    const group = groups.get(key) ?? [];
-    group.push(rec);
-    groups.set(key, group);
-  }
+  // Pair teams with same W-L record, sorted by Buchholz inside the group. The
+  // old loop incremented `i` by 2 without tracking which teams were already
+  // paired in the rematch-skip path, which could yield double-pairs or
+  // surface rematches that another order would have avoided. Replace with a
+  // greedy walk: for each unpaired team in record-then-Buchholz order, take
+  // the first un-paired non-rematch opponent. Fall back to a rematch only if
+  // literally nothing else is left.
+
+  // Sort all still-playing teams by record desc, then Buchholz desc.
+  const sortedAll = [...stillPlaying].sort((a, b) => {
+    if (a.wins !== b.wins) return b.wins - a.wins;
+    if (a.losses !== b.losses) return a.losses - b.losses;
+    return b.buchholz - a.buchholz;
+  });
 
   const nextPairs: [string, string][] = [];
   const paired = new Set<string>();
 
-  // Sort groups by wins desc, then pair within each group
-  const sortedKeys = [...groups.keys()].sort((a, b) => {
-    const [aw] = a.split("-").map(Number);
-    const [bw] = b.split("-").map(Number);
-    return bw - aw;
-  });
-
-  for (const key of sortedKeys) {
-    const group = groups.get(key)!;
-    // Sort by Buchholz desc for seeding
-    group.sort((a, b) => b.buchholz - a.buchholz);
-
-    const unpaired = group.filter((r) => !paired.has(r.teamId));
-    for (let i = 0; i < unpaired.length - 1; i += 2) {
-      // Try to avoid rematches
-      let opponent = i + 1;
-      while (
-        opponent < unpaired.length &&
-        unpaired[i].opponents.includes(unpaired[opponent].teamId)
-      ) {
-        opponent++;
-      }
-      if (opponent >= unpaired.length) opponent = i + 1; // fallback: allow rematch
-
-      nextPairs.push([unpaired[i].teamId, unpaired[opponent].teamId]);
-      paired.add(unpaired[i].teamId);
-      paired.add(unpaired[opponent].teamId);
+  for (const team of sortedAll) {
+    if (paired.has(team.teamId)) continue;
+    // First pass: same record (wins,losses) bucket, non-rematch.
+    let opp = sortedAll.find(
+      (t) =>
+        !paired.has(t.teamId) &&
+        t.teamId !== team.teamId &&
+        t.wins === team.wins &&
+        t.losses === team.losses &&
+        !team.opponents.includes(t.teamId),
+    );
+    // Second pass: cross-record, non-rematch. Real VCT Swiss never rematches
+    // inside a record bucket — if the bucket forces a rematch, the pairing
+    // jumps to a different-record team instead (the "soft" record pairing).
+    if (!opp) {
+      opp = sortedAll.find(
+        (t) =>
+          !paired.has(t.teamId) &&
+          t.teamId !== team.teamId &&
+          !team.opponents.includes(t.teamId),
+      );
     }
-  }
-
-  // Handle any leftover unpaired team (odd number in a group) — pair across groups
-  const leftover = stillPlaying.filter((r) => !paired.has(r.teamId));
-  for (let i = 0; i < leftover.length - 1; i += 2) {
-    nextPairs.push([leftover[i].teamId, leftover[i + 1].teamId]);
-    paired.add(leftover[i].teamId);
-    paired.add(leftover[i + 1].teamId);
+    // Last resort: any unpaired team. Only triggers if every remaining
+    // opponent is a prior rematch — vanishingly unlikely in an 8-team Swiss
+    // (each team plays at most 3 rounds, so they've faced ≤ 3 of 7 others).
+    if (!opp) {
+      opp = sortedAll.find(
+        (t) => !paired.has(t.teamId) && t.teamId !== team.teamId,
+      );
+    }
+    if (!opp) break;
+    nextPairs.push([team.teamId, opp.teamId]);
+    paired.add(team.teamId);
+    paired.add(opp.teamId);
   }
 
   if (nextPairs.length > 0) {
@@ -880,10 +890,11 @@ export async function progressSwiss(
  *   - 4 byes: regional Seed #1 (winner of each region's qualifying playoffs)
  *   - 4 Swiss survivors: top 4 by record from the 8-team Swiss
  *
- * Pairing: each Seed#1 picks (here, randomly) one Swiss survivor to face. We
- * shuffle both groups and zip them. Real VCT has the seeds choose live on
- * stage — randomization captures that "anything goes" feel without modeling
- * draft order.
+ * Real VCT bracket draw: Seed #1s are drawn in random order, then each picks
+ * their preferred (= weakest) opponent from the Swiss survivors. We model
+ * that here — the first Seed #1 drawn grabs the lowest-rated Swiss team
+ * (typically a 2-1), and the last one is stuck with the toughest 2-0
+ * survivor.
  */
 async function createMastersBracket(
   prisma: PrismaClient,
@@ -899,10 +910,7 @@ async function createMastersBracket(
   });
   if (existing > 0) return;
 
-  // Re-derive the 4 Seed #1 byes from the qualifying source. For Masters_1
-  // this is each region's Kickoff UB Final winner; for Masters_2 it's Stage 1
-  // playoffs UB Final winner. getStageTopTeams + getKickoffQualifiers both
-  // return seeds in [#1, #2, #3] order.
+  // Re-derive the 4 Seed #1 byes from the qualifying source.
   const isFromKickoff = stagePrefix === "MASTERS_1";
   const seed1Byes: string[] = [];
   for (const region of ALL_REGIONS) {
@@ -913,29 +921,56 @@ async function createMastersBracket(
   }
 
   if (seed1Byes.length < 4 || advancedTeamIds.length < 4) {
-    // Defensive: not enough teams to form a bracket — bail rather than
-    // create malformed matches.
     return;
   }
 
-  // Shuffle both groups, then pair: bye[i] vs swissSurvivor[i]
-  const shuffle = <T>(arr: T[]): T[] => {
-    const a = [...arr];
+  // Compute Swiss records to rank survivors weak → strong.
+  // 2-0 teams are stronger than 2-1 teams (Seed #1s prefer the 2-1 survivors).
+  const swissMatches = await prisma.match.findMany({
+    where: {
+      saveId,
+      season: seasonNumber,
+      stageId: { startsWith: `${stagePrefix}_SWISS_R` },
+      isPlayed: true,
+    },
+    select: { winnerId: true, team1Id: true, team2Id: true },
+  });
+  const winsMap = new Map<string, number>();
+  const lossesMap = new Map<string, number>();
+  for (const m of swissMatches) {
+    if (!m.winnerId) continue;
+    const loserId = m.winnerId === m.team1Id ? m.team2Id : m.team1Id;
+    winsMap.set(m.winnerId, (winsMap.get(m.winnerId) ?? 0) + 1);
+    lossesMap.set(loserId, (lossesMap.get(loserId) ?? 0) + 1);
+  }
+
+  // Sort Swiss survivors weak → strong (fewer wins first, then more losses).
+  // Tiebreak randomly so the draw stays unpredictable across seeds with the
+  // same record.
+  const survivorsWeakToStrong = [...advancedTeamIds].sort((a, b) => {
+    const wd = (winsMap.get(a) ?? 0) - (winsMap.get(b) ?? 0);
+    if (wd !== 0) return wd;
+    const ld = (lossesMap.get(b) ?? 0) - (lossesMap.get(a) ?? 0);
+    if (ld !== 0) return ld;
+    return Math.random() - 0.5;
+  });
+
+  // Shuffle the Seed #1 draw order. The first drawn picks first.
+  const drawnByes = (() => {
+    const a = [...seed1Byes];
     for (let i = a.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [a[i], a[j]] = [a[j]!, a[i]!];
     }
-    return a;
-  };
-  const shuffledByes = shuffle(seed1Byes).slice(0, 4);
-  const shuffledSwiss = shuffle(advancedTeamIds).slice(0, 4);
+    return a.slice(0, 4);
+  })();
 
-  const ubQfPairs: [string, string][] = [
-    [shuffledByes[0], shuffledSwiss[0]],
-    [shuffledByes[1], shuffledSwiss[1]],
-    [shuffledByes[2], shuffledSwiss[2]],
-    [shuffledByes[3], shuffledSwiss[3]],
-  ];
+  // Each Seed #1 in draw order picks the weakest remaining Swiss survivor.
+  const remainingSurvivors = [...survivorsWeakToStrong];
+  const ubQfPairs: [string, string][] = drawnByes.map((bye) => {
+    const picked = remainingSurvivors.shift()!;
+    return [bye, picked];
+  });
 
   await createMatchesOnInternationalSlots(
     prisma, saveId, ubQfPairs, `${stagePrefix}_UB_QF`, afterDay, seasonNumber,
