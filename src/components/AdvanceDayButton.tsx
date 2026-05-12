@@ -53,12 +53,38 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
     { retry: false },
   );
   // Bracket draw ceremony — when Swiss has just completed and the UB QF is
-  // fresh, swap the Continue CTA for "Assister au tirage".
+  // fresh, swap the Continue CTA for "Assister au tirage". Once the user has
+  // watched (or skipped) the animation, we flag the stage in localStorage so
+  // the CTA reverts to Continue. The server-side check still gates by "no QF
+  // played yet", so refreshing won't bring the prompt back once a match is in.
   const { data: pendingDraw, refetch: refetchDraw } = trpc.match.getPendingBracketDraw.useQuery(
     undefined,
     { retry: false },
   );
   const [drawOpen, setDrawOpen] = useState(false);
+  const [drawSeenStages, setDrawSeenStages] = useState<Set<string>>(new Set());
+  // Hydrate from localStorage after mount (avoids SSR/client mismatch).
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("vct-draw-seen");
+      if (raw) setDrawSeenStages(new Set(JSON.parse(raw) as string[]));
+    } catch {
+      // localStorage may be unavailable (private mode, etc.) — ignore.
+    }
+  }, []);
+  function markDrawSeen(stage: string) {
+    setDrawSeenStages((prev) => {
+      const next = new Set(prev);
+      next.add(stage);
+      try {
+        window.localStorage.setItem("vct-draw-seen", JSON.stringify([...next]));
+      } catch {
+        // ignore storage failures
+      }
+      return next;
+    });
+  }
+  const drawAlreadySeen = pendingDraw ? drawSeenStages.has(pendingDraw.stage) : false;
 
   const mutation = trpc.season.advanceDay.useMutation({
     onSuccess: (data) => {
@@ -135,7 +161,7 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
             <span style={{ opacity: 0.7, fontWeight: 400 }}>· {buttonOpponent}</span>
           )}
         </Link>
-      ) : pendingDraw && pendingDraw.pairs.length > 0 ? (
+      ) : pendingDraw && pendingDraw.pairs.length > 0 && !drawAlreadySeen ? (
         <button
           onClick={() => setDrawOpen(true)}
           className="flex h-9 w-full items-center justify-center gap-1.5 rounded text-[12px] font-medium transition-colors"
@@ -180,6 +206,7 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
           pairs={pendingDraw.pairs}
           onClose={() => {
             setDrawOpen(false);
+            markDrawSeen(pendingDraw.stage);
             // Refetch — once UB QF gets played, this query returns null and
             // the CTA reverts to Continue / Play match naturally.
             void refetchDraw();
