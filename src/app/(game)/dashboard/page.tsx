@@ -105,14 +105,25 @@ function pairByRole(a: Player[], b: Player[]): Array<{ my: Player | null; them: 
   const aRemaining = [...a];
   const bRemaining = [...b];
   const pairs: Array<{ my: Player | null; them: Player | null }> = [];
+
+  // First pass: pair players only where BOTH teams have someone in the same
+  // role. Asymmetric roles (Duelist on one side, Controller on the other) are
+  // deferred to the leftover pass — otherwise the strict role match would
+  // emit `{ my: Controller, them: null }` even when an unmatched Duelist on
+  // the opposing side could fill that slot.
   for (const role of ROLE_ORDER) {
     const myIdx = aRemaining.findIndex((p) => p.role === role);
     const themIdx = bRemaining.findIndex((p) => p.role === role);
-    if (myIdx === -1 && themIdx === -1) continue;
-    const my = myIdx >= 0 ? aRemaining.splice(myIdx, 1)[0] : null;
-    const them = themIdx >= 0 ? bRemaining.splice(themIdx, 1)[0] : null;
-    pairs.push({ my, them });
+    if (myIdx >= 0 && themIdx >= 0) {
+      const my = aRemaining.splice(myIdx, 1)[0];
+      const them = bRemaining.splice(themIdx, 1)[0];
+      pairs.push({ my, them });
+    }
   }
+
+  // Second pass: pair what's left in order. Each side's leftovers get matched
+  // up — no more rows with `null` unless one team genuinely has fewer than 5
+  // active players.
   while (aRemaining.length || bRemaining.length) {
     pairs.push({ my: aRemaining.shift() ?? null, them: bRemaining.shift() ?? null });
   }
