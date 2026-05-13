@@ -303,14 +303,18 @@ function clamp(v: number, min: number, max: number): number {
 /** Bonus from consecutive duels won (the "on fire RIGHT NOW" effect) */
 function streakBonus(wins: number): number {
   if (wins <= 0) return 0;
-  // 1→0.02, 2→0.05, 3→0.09, 4→0.13, 5+→0.16 (career night territory)
-  return Math.min(0.16, 0.02 * wins + 0.01 * Math.max(0, wins - 2));
+  // Capped at +0.10 — the previous +0.16 cap stacked with rolling impact and
+  // team tilt to snowball maps into 13-3 / 13-6 stomps even when the dashboard
+  // showed close win probabilities. 1→0.02, 2→0.04, 3→0.06, 4→0.08, 5+→0.10.
+  return Math.min(0.10, 0.02 * wins);
 }
 
 /** Penalty from consecutive duels lost (cold hand) */
 function streakPenalty(losses: number): number {
   if (losses <= 1) return 0;
-  return Math.max(-0.10, -0.03 * (losses - 1));
+  // Capped at -0.06 (was -0.10) so cold-side compounding doesn't tank a map
+  // beyond recovery.
+  return Math.max(-0.06, -0.02 * (losses - 1));
 }
 
 /**

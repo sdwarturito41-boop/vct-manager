@@ -94,7 +94,12 @@ function statsOnMap(p: Player, factor: number): { acs: number; kd: number } {
 }
 
 function winProbability(myAvg: number, oppAvg: number): number {
-  const p = 1 / (1 + Math.exp(-(myAvg - oppAvg) / 1.5));
+  // Logistic on overall delta. Divisor 3.0 gives a calibrated scale that
+  // matches the actual sim's variance: a 2-point overall edge ~ 65%, 4 pts
+  // ~ 79%, 5 pts ~ 84%. The old 1.5 divisor was too aggressive — it showed
+  // 86% for a 2.7-point gap, which the sim couldn't actually deliver once
+  // mapFactor, gameDay rolls and bracket variance kicked in.
+  const p = 1 / (1 + Math.exp(-(myAvg - oppAvg) / 3.0));
   return Math.round(p * 100);
 }
 
