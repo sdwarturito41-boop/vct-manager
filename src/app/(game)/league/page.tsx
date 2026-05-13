@@ -191,15 +191,16 @@ export default async function LeaguePage() {
   }
 
   // ─── Bracket rounds for Masters/EWC/Champions ───
+  // 8-team double elim (VCT 2026): UB QF → UB SF → UB Final, with LB R1 → LB
+  // SF → LB Final → LB GF feeding into the Grand Final.
   const bracketRoundOrder = [
     "_UB_QF",
     "_UB_SF",
     "_UB_FINAL",
     "_LB_R1",
-    "_LB_R2",
-    "_LB_R3",
     "_LB_SF",
     "_LB_FINAL",
+    "_LB_GF",
     "_GRAND_FINAL",
   ];
   const bracketRounds: Array<{ label: string; matches: typeof allStageMatches }> = [];
