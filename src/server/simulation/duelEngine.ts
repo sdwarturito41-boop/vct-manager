@@ -344,8 +344,12 @@ function computeRating(p: SimPlayerInput, mapName: string, agentName: string, ag
   const kdScore = p.kd / 1.15;
   const baseRating = clamp(acsScore * 0.6 + kdScore * 0.4, 0.82, 1.18);
 
-  // Map affinity (very subtle — ±8%)
-  const mapFactor = clamp(p.mapFactors?.[mapName] ?? 1.0, 0.92, 1.08);
+  // Map affinity — wider band so a team's bad/good map actually matters.
+  // Real mapFactors in the seed range ~0.85 → ~1.40 (e.g. Haven outliers);
+  // clamping to ±8% killed the signal entirely. [0.78, 1.22] gives a ~56%
+  // delta between a player's worst and best map — enough that bad-map games
+  // skew, without single-map factors swinging an entire match outright.
+  const mapFactor = clamp(p.mapFactors?.[mapName] ?? 1.0, 0.78, 1.22);
 
   // Agent mastery (0-5 stars → 0.95-1.05)
   const masteryKey = `${p.id}:${agentName}`;
@@ -779,7 +783,12 @@ function planBuys(
   const halfPrice = weaponPrice("Bulldog");
   const armedCount = team.players.filter((p) => team.economy.get(p.input.id)!.weaponTier >= 2).length;
 
-  const shouldSave = avgCredits < 2500 && armedCount < 3;
+  // Save threshold: after a pistol loss the team sits ~2700 credits. With the
+  // old 2500 cap they fell just outside save range and force-bought SMGs at
+  // R2, which depleted their economy and meant R3 (with loss-bonus stacked)
+  // still couldn't full-buy rifles. Pros actually full-eco R2 to GUARANTEE
+  // a rifle buy at R3 — bumping the cap to 3000 matches that behavior.
+  const shouldSave = avgCredits < 3000 && armedCount < 3;
 
   if (shouldSave) {
     team.inSaveMode = true;
@@ -2342,7 +2351,12 @@ export function simulateMapDuel(
 
   // ── Second half ──
   if (team1.score < 13 && team2.score < 13) {
-    // Halftime reset — fresh pistol state for everyone, pool cleared
+    // Halftime reset — economy AND mental momentum. Without resetting
+    // hotness / streaks, the team that dominated H1 carried a huge "hot
+    // hand" buff into the H2 pistol round, which in real Valorant is much
+    // closer to a coin flip. Without this reset 10-2 first halves were
+    // turning into 11-round losing streaks because the cold side could
+    // never break out of the snowball.
     for (const t of [team1, team2]) {
       for (const p of t.players) {
         t.economy.set(p.input.id, {
@@ -2352,10 +2366,19 @@ export function simulateMapDuel(
           weaponTier: 0,
           fromPickup: false,
         });
+        // Reset per-player streaks/hotness so H2 starts fresh-headed.
+        p.consecutiveDuelsWon = 0;
+        p.consecutiveDuelsLost = 0;
+        p.rollingImpact = 0;
+        p.hotness = 1.0;
       }
       t.weaponPool = [];
       t.roundEntryId = null;
       t.inSaveMode = false;
+      // Team-level streaks too (drives tilt and loss-bonus escalation).
+      t.winStreak = 0;
+      t.lossStreak = 0;
+      t.lossesBonus = 0;
     }
     team1Survivors = new Set(team1.players.map((p) => p.input.id));
     team2Survivors = new Set(team2.players.map((p) => p.input.id));
