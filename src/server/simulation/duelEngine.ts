@@ -367,13 +367,17 @@ function computeRating(p: SimPlayerInput, mapName: string, agentName: string, ag
 }
 
 function rollGameDay(): number {
-  // Narrower distribution — most games are "normal", tails are rarer.
+  // Per-player game-day variance — moderately tight. Old ranges (career night
+  // 1.25-1.55, disaster 0.62-0.78) compounded with mapFactor, teamPrepRoll and
+  // overall multipliers to produce 13-0 stomps even when a team was an 80%
+  // favorite. The tails are still meaningful but no longer override the
+  // baseline rating gap.
   const roll = Math.random();
-  if (roll < 0.03) return randFloat(1.25, 1.55); // career night (rarer, lower ceiling)
-  if (roll < 0.12) return randFloat(1.08, 1.25); // great game
-  if (roll < 0.88) return randFloat(0.90, 1.10); // normal (76% of games)
-  if (roll < 0.97) return randFloat(0.78, 0.90); // off day
-  return randFloat(0.62, 0.78); // disaster
+  if (roll < 0.03) return randFloat(1.15, 1.30); // career night
+  if (roll < 0.12) return randFloat(1.05, 1.15); // great game
+  if (roll < 0.88) return randFloat(0.92, 1.08); // normal (76%)
+  if (roll < 0.97) return randFloat(0.85, 0.92); // off day
+  return randFloat(0.72, 0.85); // disaster
 }
 
 function buildTeamRuntime(
@@ -390,9 +394,10 @@ function buildTeamRuntime(
   }
 
   // Per-match team preparation roll — represents scrims, prep, chemistry, tactics.
-  // Shared across all players of the team: +/- 10% rating swing.
-  // An underdog with great prep can upset a top team, and a top team with bad prep can drop a map.
-  const teamPrepRoll = randFloat(0.90, 1.10);
+  // Tightened from ±10% to ±5%: combined with per-player gameDay variance, the
+  // old range produced too many lopsided upsets. Underdogs can still take maps
+  // (mapFactor + agent mastery + lucky duels) but not because of one prep roll.
+  const teamPrepRoll = randFloat(0.95, 1.05);
 
   const players: PlayerState[] = team.players.slice(0, 5).map((p) => {
     const agent = agentByPlayer.get(p.id) ?? defaultAgentForRole(p.role);
