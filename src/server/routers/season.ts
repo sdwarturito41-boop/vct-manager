@@ -1004,6 +1004,7 @@ export const seasonRouter = router({
         include: {
           players: { where: { isActive: true }, select: { salary: true } },
           coach: { select: { salary: true } },
+          staff: { select: { salary: true } },
           sponsors: { where: { isActive: true }, select: { weeklyPayment: true } },
         },
       });
@@ -1013,8 +1014,11 @@ export const seasonRouter = router({
       for (const t of allTeams) {
         const totalSalary = t.players.reduce((sum, p) => sum + p.salary, 0);
         const coachSalary = t.coach?.salary ?? 0;
+        // FM-style staff wages — sum across Manager / Analyst / Fitness /
+        // additional Coaches stored in the unified Staff table.
+        const staffSalary = t.staff.reduce((sum, s) => sum + s.salary, 0);
         const sponsorIncome = t.sponsors.reduce((sum, s) => sum + s.weeklyPayment, 0);
-        const totalWageOut = totalSalary + coachSalary;
+        const totalWageOut = totalSalary + coachSalary + staffSalary;
         if (totalWageOut === 0 && sponsorIncome === 0) continue;
 
         // Lazy migration — if a team still has the legacy single-budget
@@ -1146,22 +1150,45 @@ export const seasonRouter = router({
       }
 
       // ── Scouting V1 — auto-reveal potential for shortlisted players ──
-      // After SCOUTING_REVEAL_WEEKS on the shortlist, the player's potential
-      // becomes visible to the shortlist owner (via potentialRevealed flag).
+      // Reveal delay scales with the user team's best Analyst skill1
+      // (scoutingSpeed). Base = 4 weeks. At skill 100 → 1 week. At skill 0 →
+      // 5 weeks. Each team's shortlist uses its OWN analyst, not a global.
       const absWeek = season.number * 52 + newWeek;
-      const matureShortlists = await ctx.prisma.shortlist.findMany({
+      const allShortlists = await ctx.prisma.shortlist.findMany({
         where: {
           saveId: ctx.save.id,
-          addedWeek: { lte: absWeek - SCOUTING_REVEAL_WEEKS },
           player: { potentialRevealed: false },
         },
-        select: { playerId: true },
+        select: { playerId: true, teamId: true, addedWeek: true },
       });
-      if (matureShortlists.length > 0) {
-        await ctx.prisma.player.updateMany({
-          where: { id: { in: matureShortlists.map((s) => s.playerId) } },
-          data: { potentialRevealed: true },
+      if (allShortlists.length > 0) {
+        // Pre-compute per-team reveal threshold via best Analyst skill1.
+        const teamIds = Array.from(new Set(allShortlists.map((s) => s.teamId)));
+        const analysts = await ctx.prisma.staff.findMany({
+          where: { teamId: { in: teamIds }, role: "ANALYST" },
+          select: { teamId: true, skill1: true },
         });
+        const bestAnalystByTeam = new Map<string, number>();
+        for (const a of analysts) {
+          if (!a.teamId) continue;
+          const cur = bestAnalystByTeam.get(a.teamId) ?? 0;
+          if (a.skill1 > cur) bestAnalystByTeam.set(a.teamId, a.skill1);
+        }
+        const playersToReveal: string[] = [];
+        for (const s of allShortlists) {
+          const skill = bestAnalystByTeam.get(s.teamId) ?? 0;
+          // skill 0 → 5w, skill 50 → 3w, skill 100 → 1w. Linear.
+          const requiredWeeks = Math.max(1, Math.round(5 - (skill / 100) * 4));
+          if (absWeek - s.addedWeek >= requiredWeeks) {
+            playersToReveal.push(s.playerId);
+          }
+        }
+        if (playersToReveal.length > 0) {
+          await ctx.prisma.player.updateMany({
+            where: { id: { in: playersToReveal } },
+            data: { potentialRevealed: true },
+          });
+        }
       }
     }
 

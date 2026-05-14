@@ -187,8 +187,10 @@ async function resolveOfferDecision(
         }
 
         // Healthy-team premium — if seller is winning AND the player fills
-        // a role with no backup, demand 1.5× clause. Doesn't apply if
-        // WANTS_TRANSFER.
+        // a role with no backup, demand a premium over clause. Doesn't apply
+        // if WANTS_TRANSFER. The BUYER's Manager.skill1 (negotiationSkill)
+        // softens the premium: skill 100 → 1.20×, skill 50 → 1.35×, skill 0
+        // → 1.5× (the baseline).
         if (!isDesperate) {
           const games = sellerTeam.wins + sellerTeam.losses;
           const winPct = games > 0 ? sellerTeam.wins / games : 0.5;
@@ -199,7 +201,13 @@ async function resolveOfferDecision(
           const teamHealthy =
             sellerTeam.players.length >= 5 && (games < 3 || winPct >= 0.45);
           if (teamHealthy && wouldLeaveGap) {
-            healthyTeamPremium = 1.5;
+            const buyerManager = await ctx.prisma.staff.findFirst({
+              where: { teamId: offer.fromTeamId, role: "MANAGER" },
+              select: { skill1: true },
+            });
+            const negSkill = buyerManager?.skill1 ?? 0;
+            // skill 100 → 1.20, skill 0 → 1.50 — linear interpolation.
+            healthyTeamPremium = 1.5 - (negSkill / 100) * 0.3;
           }
         }
       }

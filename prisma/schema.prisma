@@ -44,6 +44,7 @@ model Save {
   playerRelations PlayerRelation[]
   playerStatSnapshots PlayerStatSnapshot[]
   shortlists      Shortlist[]
+  staff           Staff[]
 }
 
 model Team {
@@ -127,6 +128,11 @@ model Team {
   rosterLockedUntilDay Int?
   coachId         String?
   coach           Coach?    @relation(fields: [coachId], references: [id], onDelete: SetNull)
+  // FM-style staff (4 roles via Staff.role). Coach record above is kept as
+  // a transitional pointer; the head coach also lives in `staff` with
+  // role=COACH. Future schema push will drop coachId once UI is fully on
+  // the unified Staff model.
+  staff           Staff[]
   sponsors        Sponsor[]
   incomingTransferOffers TransferOffer[] @relation("OffersToTeam")
   outgoingTransferOffers TransferOffer[] @relation("OffersFromTeam")
@@ -267,6 +273,52 @@ model Coach {
   teams        Team[]
 
   @@index([saveId])
+}
+
+/**
+ * Unified staff model — 4 roles via `StaffRole`. Generic `skill1/2/3` columns
+ * interpreted per role (see STAFF_SKILL_LABELS in constants):
+ *   COACH   — utilityBoost / trainingEff / scoutingSkill
+ *   ANALYST — scoutingSpeed / prepQuality / vodReviewBonus
+ *   MANAGER — negotiationSkill / networkStrength / contractSavvy
+ *   FITNESS — recoverySpeed / injuryPrevention / peakCondition
+ *
+ * Slot constraints (enforced at hire/fire):
+ *   COACH   max 1 (optional)
+ *   ANALYST min 1, max 5
+ *   MANAGER min 1, max 1
+ *   FITNESS max 1 (optional)
+ */
+model Staff {
+  id                String    @id @default(cuid())
+  saveId            String?
+  save              Save?     @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  name              String
+  role              StaffRole
+  region            String
+  nationality       String
+  imageUrl          String?
+  age               Int
+  salary            Int
+  contractEndSeason Int       @default(1)
+  contractEndWeek   Int       @default(52)
+  skill1            Int       @default(50)
+  skill2            Int       @default(50)
+  skill3            Int       @default(50)
+  teamId            String?
+  team              Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdAt         DateTime  @default(now())
+
+  @@index([saveId])
+  @@index([teamId])
+  @@index([saveId, role])
+}
+
+enum StaffRole {
+  COACH
+  ANALYST
+  MANAGER
+  FITNESS
 }
 
 model Sponsor {

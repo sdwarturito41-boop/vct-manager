@@ -1,32 +1,50 @@
 "use client";
 
+import { useState } from "react";
 import { trpc } from "@/lib/trpc-client";
 import { formatCurrency } from "@/lib/format";
 import { D } from "@/constants/design";
+import {
+  STAFF_SKILL_LABELS,
+  STAFF_ROLE_LABELS,
+  ALL_STAFF_ROLES,
+} from "@/constants/staff";
+import type { StaffRole } from "@/generated/prisma/client";
 
-interface CoachOffer {
+type SlotInfo = {
+  current: number;
+  min: number;
+  max: number;
+  canHire: boolean;
+  canFireLast: boolean;
+};
+
+type StaffRow = {
   id: string;
   name: string;
+  role: StaffRole;
+  region: string;
   nationality: string;
   age: number;
   salary: number;
-  utilityBoost: number;
-  trainingEff: number;
-  scoutingSkill: number;
-}
-
-interface MyCoach {
-  id: string;
-  name: string;
-  nationality: string;
-  age: number;
-  salary: number;
-  utilityBoost: number;
-  trainingEff: number;
-  scoutingSkill: number;
+  skill1: number;
+  skill2: number;
+  skill3: number;
   contractEndSeason: number;
   contractEndWeek: number;
-}
+};
+
+type MarketOffer = {
+  id: string;
+  name: string;
+  role: StaffRole;
+  region: string;
+  age: number;
+  salary: number;
+  skill1: number;
+  skill2: number;
+  skill3: number;
+};
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -34,66 +52,43 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-function StatBar({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between">
-        <span
-          className="text-[10px] font-medium "
-          style={{ color: D.textSubtle }}
-        >
-          {label}
-        </span>
-        <span
-          className="text-[12px] font-medium tabular-nums"
-          style={{ color: D.textPrimary }}
-        >
-          {value}
-        </span>
-      </div>
-      <div
-        className="h-[3px] overflow-hidden"
-        style={{ background: D.borderFaint }}
-      >
-        <div
-          className="h-full"
-          style={{
-            width: `${Math.max(0, Math.min(100, value))}%`,
-            background: D.red,
-          }}
-        />
-      </div>
-    </div>
-  );
+function avgSkill(s: { skill1: number; skill2: number; skill3: number }): number {
+  return Math.round((s.skill1 + s.skill2 + s.skill3) / 3);
+}
+
+function skillColor(value: number): string {
+  if (value >= 80) return D.green;
+  if (value >= 60) return D.primary;
+  if (value >= 40) return D.textPrimary;
+  return D.textSubtle;
 }
 
 export default function StaffPage() {
   const utils = trpc.useUtils();
+  const mineQuery = trpc.staff.listMine.useQuery();
+  const data = mineQuery.data;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mineQuery = trpc.coach.listMyCoach.useQuery() as any;
-  const myCoach = mineQuery.data as MyCoach | null | undefined;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const offersQuery = trpc.coach.listAvailableCoaches.useQuery() as any;
-  const offers = offersQuery.data as CoachOffer[] | undefined;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const hireMut = trpc.coach.hireCoach.useMutation({
+  const fireMut = trpc.staff.fire.useMutation({
+    onSuccess: () => utils.staff.listMine.invalidate(),
+  });
+  const hireMut = trpc.staff.hire.useMutation({
     onSuccess: () => {
-      utils.coach.listMyCoach.invalidate();
-      utils.coach.listAvailableCoaches.invalidate();
-      utils.team.get.invalidate();
+      utils.staff.listMine.invalidate();
     },
-  }) as any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const fireMut = trpc.coach.fireCoach.useMutation({
-    onSuccess: () => {
-      utils.coach.listMyCoach.invalidate();
-    },
-  }) as any;
+  });
 
-  const offerCount = offers?.length ?? 0;
+  const [expandedRole, setExpandedRole] = useState<StaffRole | null>(null);
+
+  if (!data) {
+    return (
+      <div className="p-10 text-sm" style={{ color: D.textMuted }}>
+        Loading staff…
+      </div>
+    );
+  }
+
+  const totalWeeklyWage = data.staff.reduce((s, st) => s + st.salary, 0);
+  const totalCount = data.staff.length;
 
   return (
     <div className="flex min-h-full flex-col">
@@ -104,344 +99,383 @@ export default function StaffPage() {
       >
         <div className="flex items-start justify-between gap-6">
           <div>
-            <div
-              className="text-[11px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Coaching Staff
+            <div className="text-[11px] font-medium" style={{ color: D.textSubtle }}>
+              Support Team
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium leading-none "
+              className="mt-1 text-[34px] font-medium leading-none"
               style={{ color: D.textPrimary }}
             >
               Staff
             </h1>
             <div
-              className="mt-2 flex items-center gap-3 text-[11px] font-medium "
+              className="mt-2 flex items-center gap-3 text-[11px]"
               style={{ color: D.textMuted }}
             >
-              <span style={{ color: myCoach ? D.red : D.textMuted }}>
-                {myCoach ? "1 coach hired" : "No coach"}
-              </span>
+              <span>{totalCount} on payroll</span>
               <span>·</span>
-              <span>{offerCount} offers available</span>
+              <span style={{ color: D.gold }}>
+                {formatCurrency(totalWeeklyWage)}/wk
+              </span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Metrics row */}
+      {/* Slot summary */}
       <section
-        className="grid grid-cols-3"
+        className="grid grid-cols-4"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
-        <MetricCell
-          label="Head Coach"
-          value={myCoach ? myCoach.name : "—"}
-          sub={myCoach ? `${myCoach.nationality} · Age ${myCoach.age}` : "No coach on staff"}
-          accent={myCoach ? D.red : undefined}
-        />
-        <MetricCell
-          label="Weekly Salary"
-          value={myCoach ? formatCurrency(myCoach.salary) : "—"}
-          sub={myCoach ? `Ends S${myCoach.contractEndSeason} · W${myCoach.contractEndWeek}` : "No active contract"}
-          accent={myCoach ? D.gold : undefined}
-        />
-        <MetricCell
-          label="Available"
-          value={String(offerCount)}
-          sub="New listings each stage"
-          last
-        />
+        {ALL_STAFF_ROLES.map((role, idx) => {
+          const slot = data.slots[role];
+          const required = slot.min > 0;
+          const full = slot.current >= slot.max;
+          return (
+            <div
+              key={role}
+              className="flex flex-col gap-1 px-6 py-5"
+              style={
+                idx === 3
+                  ? undefined
+                  : { borderRight: `1px solid ${D.borderFaint}` }
+              }
+            >
+              <span
+                className="text-[10px] font-medium"
+                style={{ color: D.textSubtle }}
+              >
+                {STAFF_ROLE_LABELS[role]}
+              </span>
+              <span
+                className="text-[22px] font-medium tabular-nums"
+                style={{ color: full ? D.green : D.textPrimary }}
+              >
+                {slot.current}/{slot.max}
+              </span>
+              <span className="text-[10px]" style={{ color: D.textSubtle }}>
+                {required ? `Min ${slot.min} required` : "Optional"}
+                {full && " · slot full"}
+              </span>
+            </div>
+          );
+        })}
       </section>
 
-      {/* Current coach detail */}
-      {myCoach && (
-        <section
-          className="px-10 py-8"
-          style={{ borderBottom: `1px solid ${D.border}` }}
-        >
-          <div
-            className="text-[10px] font-medium "
-            style={{ color: D.textSubtle }}
-          >
-            Current Coach
-          </div>
-          <div className="mt-5 grid grid-cols-[80px_1fr_auto] items-center gap-6">
-            <div
-              className="flex h-20 w-20 items-center justify-center rounded-lg"
-              style={{ background: D.surface, border: `1px solid ${D.borderFaint}` }}
-            >
-              <span
-                className="text-[24px] font-medium"
-                style={{ color: D.textPrimary }}
-              >
-                {initials(myCoach.name)}
-              </span>
-            </div>
-            <div>
-              <div
-                className="text-[22px] font-medium "
-                style={{ color: D.textPrimary }}
-              >
-                {myCoach.name}
-              </div>
-              <div
-                className="mt-1 text-[11px] font-medium "
-                style={{ color: D.textMuted }}
-              >
-                <span>{myCoach.nationality}</span>
-                <span style={{ color: D.textFaint }}> · </span>
-                <span>Age {myCoach.age}</span>
-                <span style={{ color: D.textFaint }}> · </span>
-                <span style={{ color: D.gold }}>
-                  {formatCurrency(myCoach.salary)} / wk
-                </span>
-              </div>
-            </div>
-            <button
-              onClick={() => fireMut.mutate()}
-              disabled={fireMut.isPending}
-              className="rounded px-4 py-2 text-[10px] font-medium transition-colors disabled:opacity-40"
-              style={{
-                background: "rgba(255,70,85,0.08)",
-                color: D.red,
-                border: `1px solid rgba(255,70,85,0.25)`,
-              }}
-            >
-              Fire
-            </button>
-          </div>
-
-          <div className="mt-6 grid grid-cols-3 gap-10">
-            <StatBar label="Utility" value={myCoach.utilityBoost} />
-            <StatBar label="Training" value={myCoach.trainingEff} />
-            <StatBar label="Scouting" value={myCoach.scoutingSkill} />
-          </div>
-        </section>
-      )}
-
-      {/* Available coaches */}
+      {/* Per-role sections */}
       <section className="flex flex-col">
-        <div
-          className="flex items-center justify-between px-10 py-4"
-          style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-        >
-          <span
-            className="text-[10px] font-medium "
-            style={{ color: D.textSubtle }}
-          >
-            Available Coaches
-          </span>
-          <span
-            className="text-[10px] font-medium tabular-nums"
-            style={{ color: D.textMuted }}
-          >
-            {offerCount} offers
-          </span>
-        </div>
-
-        {!offers || offers.length === 0 ? (
-          <div
-            className="px-10 py-10 text-[12px]"
-            style={{ color: D.textSubtle }}
-          >
-            No coaches available. New listings arrive each stage.
-          </div>
-        ) : (
-          <>
-            {/* Column headers */}
+        {ALL_STAFF_ROLES.map((role) => {
+          const roleStaff = data.staff.filter((s) => s.role === role);
+          const slot = data.slots[role];
+          const isExpanded = expandedRole === role;
+          return (
             <div
-              className="grid items-center gap-4 px-10 py-3"
-              style={{
-                borderBottom: `1px solid ${D.borderFaint}`,
-                gridTemplateColumns: "48px 1fr 80px 80px 80px 100px 100px",
-              }}
+              key={role}
+              className="flex flex-col px-10 py-6"
+              style={{ borderBottom: `1px solid ${D.border}` }}
             >
-              <span />
-              <span
-                className="text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
-              >
-                Name
-              </span>
-              <span
-                className="text-right text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
-              >
-                Utility
-              </span>
-              <span
-                className="text-right text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
-              >
-                Training
-              </span>
-              <span
-                className="text-right text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
-              >
-                Scouting
-              </span>
-              <span
-                className="text-right text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
-              >
-                Salary/wk
-              </span>
-              <span />
-            </div>
-
-            {offers.map((o) => {
-              const diff = myCoach ? o.salary - myCoach.salary : 0;
-              const isMoreExpensive = diff > 0;
-              return (
-                <div
-                  key={o.id}
-                  className="group grid items-center gap-4 px-10 py-4 transition-colors"
-                  style={{
-                    borderBottom: `1px solid ${D.borderFaint}`,
-                    gridTemplateColumns: "48px 1fr 80px 80px 80px 100px 100px",
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = D.hoverBg)
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = "transparent")
-                  }
+              <div className="flex items-center justify-between mb-4">
+                <h2
+                  className="text-[16px] font-medium"
+                  style={{ color: D.textPrimary }}
                 >
-                  <div
-                    className="flex h-10 w-10 items-center justify-center rounded-full"
-                    style={{ background: D.hoverBg, border: `1px solid ${D.borderFaint}` }}
-                  >
-                    <span
-                      className="text-[11px] font-medium"
-                      style={{ color: D.textMuted }}
-                    >
-                      {initials(o.name)}
-                    </span>
-                  </div>
-                  <div className="min-w-0">
-                    <div
-                      className="truncate text-[13px] font-medium"
-                      style={{ color: D.textPrimary }}
-                    >
-                      {o.name}
-                    </div>
-                    <div
-                      className="text-[10px] font-medium "
-                      style={{ color: D.textSubtle }}
-                    >
-                      {o.nationality} · Age {o.age}
-                    </div>
-                  </div>
+                  {STAFF_ROLE_LABELS[role]}
                   <span
-                    className="text-right text-[13px] font-medium tabular-nums"
-                    style={{ color: D.textPrimary }}
+                    className="ml-2 text-[12px] font-normal"
+                    style={{ color: D.textSubtle }}
                   >
-                    {o.utilityBoost}
+                    {roleStaff.length}/{slot.max}
                   </span>
-                  <span
-                    className="text-right text-[13px] font-medium tabular-nums"
-                    style={{ color: D.textPrimary }}
-                  >
-                    {o.trainingEff}
-                  </span>
-                  <span
-                    className="text-right text-[13px] font-medium tabular-nums"
-                    style={{ color: D.textPrimary }}
-                  >
-                    {o.scoutingSkill}
-                  </span>
-                  <div className="flex flex-col items-end">
-                    <span
-                      className="text-[13px] font-medium tabular-nums"
-                      style={{
-                        color: isMoreExpensive ? D.red : D.gold,
-                      }}
-                    >
-                      {formatCurrency(o.salary)}
-                    </span>
-                    {myCoach && diff !== 0 && (
-                      <span
-                        className="text-[10px] tabular-nums"
-                        style={{ color: isMoreExpensive ? D.red : D.green }}
-                      >
-                        {diff > 0 ? "+" : ""}
-                        {formatCurrency(diff)}
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => hireMut.mutate({ coachOfferId: o.id })}
-                    disabled={hireMut.isPending}
-                    className="rounded px-4 py-2 text-[10px] font-medium transition-colors disabled:opacity-40"
-                    style={{
-                      background: "rgba(255,70,85,0.12)",
-                      color: D.red,
-                      border: `1px solid rgba(255,70,85,0.25)`,
-                    }}
-                  >
-                    {myCoach ? "Replace" : "Hire"}
-                  </button>
-                </div>
-              );
-            })}
-          </>
-        )}
+                </h2>
+                <button
+                  disabled={!slot.canHire}
+                  onClick={() => setExpandedRole(isExpanded ? null : role)}
+                  className="rounded px-3 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-30"
+                  style={{
+                    background: slot.canHire ? D.primary : "transparent",
+                    color: "white",
+                    border: `1px solid ${slot.canHire ? D.primary : D.borderFaint}`,
+                  }}
+                >
+                  {slot.canHire ? (isExpanded ? "Hide market" : "View market") : "Slot full"}
+                </button>
+              </div>
 
-        {hireMut.error && (
-          <div
-            className="mx-10 my-4 rounded px-4 py-3 text-[12px]"
-            style={{
-              background: "rgba(255,70,85,0.06)",
-              color: D.red,
-              border: `1px solid rgba(255,70,85,0.25)`,
-            }}
-          >
-            {hireMut.error.message}
-          </div>
-        )}
+              {/* Current hires */}
+              {roleStaff.length === 0 ? (
+                <div
+                  className="p-4 text-[11px]"
+                  style={{
+                    color: D.textSubtle,
+                    background: D.card,
+                    border: `1px solid ${D.borderFaint}`,
+                    borderRadius: D.radiusStat,
+                  }}
+                >
+                  {slot.min > 0
+                    ? "No one in this slot — required minimum not met."
+                    : "Optional slot — not currently filled."}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  {roleStaff.map((s) => (
+                    <StaffCard
+                      key={s.id}
+                      staff={s as StaffRow}
+                      canFire={slot.canFireLast}
+                      onFire={() => fireMut.mutate({ staffId: s.id })}
+                      firePending={fireMut.isPending}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Market when expanded */}
+              {isExpanded && (
+                <MarketSection
+                  role={role}
+                  onHire={(offer) =>
+                    hireMut.mutate({
+                      name: offer.name,
+                      role: offer.role,
+                      region: offer.region,
+                      age: offer.age,
+                      salary: offer.salary,
+                      skill1: offer.skill1,
+                      skill2: offer.skill2,
+                      skill3: offer.skill3,
+                    })
+                  }
+                  hirePending={hireMut.isPending}
+                />
+              )}
+
+              {hireMut.error && expandedRole === role && (
+                <p className="mt-2 text-[10px]" style={{ color: D.red }}>
+                  {hireMut.error.message}
+                </p>
+              )}
+            </div>
+          );
+        })}
       </section>
     </div>
   );
 }
 
-function MetricCell({
-  label,
-  value,
-  sub,
-  accent,
-  last,
+function StaffCard({
+  staff,
+  canFire,
+  onFire,
+  firePending,
 }: {
-  label: string;
-  value: string;
-  sub?: string;
-  accent?: string;
-  last?: boolean;
+  staff: StaffRow;
+  canFire: boolean;
+  onFire: () => void;
+  firePending: boolean;
 }) {
+  const labels = STAFF_SKILL_LABELS[staff.role];
   return (
     <div
-      className="flex flex-col gap-1 px-6 py-5"
-      style={last ? undefined : { borderRight: `1px solid ${D.borderFaint}` }}
+      className="flex flex-col gap-3 p-4"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.borderFaint}`,
+        borderRadius: D.radiusCard,
+      }}
     >
-      <span
-        className="text-[10px] font-medium "
+      <div className="flex items-start gap-3">
+        <div
+          className="flex h-12 w-12 items-center justify-center rounded-full"
+          style={{
+            background: "rgba(255,255,255,0.05)",
+            border: `1px solid ${D.borderFaint}`,
+          }}
+        >
+          <span
+            className="text-[14px] font-medium"
+            style={{ color: D.textPrimary }}
+          >
+            {initials(staff.name)}
+          </span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div
+            className="truncate text-[14px] font-medium"
+            style={{ color: D.textPrimary }}
+          >
+            {staff.name}
+          </div>
+          <div className="text-[11px]" style={{ color: D.textSubtle }}>
+            {staff.nationality} · Age {staff.age}
+          </div>
+          <div className="text-[11px] tabular-nums mt-0.5" style={{ color: D.gold }}>
+            {formatCurrency(staff.salary)}/wk
+          </div>
+        </div>
+        <button
+          disabled={!canFire || firePending}
+          onClick={onFire}
+          title={!canFire ? "Cannot fire — at role minimum" : "Fire"}
+          className="rounded px-2 py-1 text-[10px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-30"
+          style={{
+            background: canFire ? "rgba(255,80,80,0.10)" : "transparent",
+            color: D.red,
+            border: `1px solid ${canFire ? "rgba(255,80,80,0.25)" : D.borderFaint}`,
+          }}
+        >
+          Fire
+        </button>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <SkillCell label={labels[0]} value={staff.skill1} />
+        <SkillCell label={labels[1]} value={staff.skill2} />
+        <SkillCell label={labels[2]} value={staff.skill3} />
+      </div>
+    </div>
+  );
+}
+
+function MarketSection({
+  role,
+  onHire,
+  hirePending,
+}: {
+  role: StaffRole;
+  onHire: (offer: MarketOffer) => void;
+  hirePending: boolean;
+}) {
+  const marketQ = trpc.staff.listMarket.useQuery({ role });
+  const offers = marketQ.data ?? [];
+  return (
+    <div className="mt-4 flex flex-col gap-2">
+      <div
+        className="text-[10px] font-medium uppercase tracking-wider"
         style={{ color: D.textSubtle }}
       >
-        {label}
-      </span>
-      <span
-        className="truncate text-[22px] font-medium tabular-nums"
-        style={{ color: accent ?? D.textPrimary }}
-      >
-        {value}
-      </span>
-      {sub && (
-        <span className="text-[10px]" style={{ color: D.textSubtle }}>
-          {sub}
-        </span>
+        Available {STAFF_ROLE_LABELS[role]}s
+      </div>
+      {offers.length === 0 ? (
+        <p className="text-[10px]" style={{ color: D.textSubtle }}>
+          Loading market…
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {offers.map((o) => (
+            <MarketCard
+              key={o.id}
+              offer={o as MarketOffer}
+              onHire={() => onHire(o as MarketOffer)}
+              pending={hirePending}
+            />
+          ))}
+        </div>
       )}
+    </div>
+  );
+}
+
+function MarketCard({
+  offer,
+  onHire,
+  pending,
+}: {
+  offer: MarketOffer;
+  onHire: () => void;
+  pending: boolean;
+}) {
+  const labels = STAFF_SKILL_LABELS[offer.role];
+  const avg = avgSkill(offer);
+  return (
+    <div
+      className="flex items-center gap-3 p-3"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.borderFaint}`,
+        borderRadius: D.radiusStat,
+      }}
+    >
+      <div className="flex-1 min-w-0">
+        <div
+          className="truncate text-[13px] font-medium"
+          style={{ color: D.textPrimary }}
+        >
+          {offer.name}
+        </div>
+        <div className="text-[10px]" style={{ color: D.textSubtle }}>
+          {offer.region} · Age {offer.age}
+        </div>
+        <div className="flex items-center gap-2 mt-1 text-[10px]" style={{ color: D.textSubtle }}>
+          <span title={labels[0]} style={{ color: skillColor(offer.skill1) }}>
+            {offer.skill1}
+          </span>
+          <span style={{ color: D.borderFaint }}>·</span>
+          <span title={labels[1]} style={{ color: skillColor(offer.skill2) }}>
+            {offer.skill2}
+          </span>
+          <span style={{ color: D.borderFaint }}>·</span>
+          <span title={labels[2]} style={{ color: skillColor(offer.skill3) }}>
+            {offer.skill3}
+          </span>
+          <span style={{ color: D.borderFaint }}>·</span>
+          <span style={{ color: D.textMuted }}>avg {avg}</span>
+        </div>
+      </div>
+      <div className="flex flex-col items-end gap-1">
+        <span
+          className="text-[12px] tabular-nums font-medium"
+          style={{ color: D.gold }}
+        >
+          {formatCurrency(offer.salary)}/wk
+        </span>
+        <button
+          disabled={pending}
+          onClick={onHire}
+          className="rounded px-2.5 py-1 text-[10px] font-medium transition-colors disabled:opacity-40"
+          style={{
+            background: D.primary,
+            color: "white",
+          }}
+        >
+          {pending ? "…" : "Hire"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SkillCell({ label, value }: { label: string; value: number }) {
+  return (
+    <div
+      className="flex flex-col gap-1 p-2"
+      style={{
+        background: "rgba(255,255,255,0.02)",
+        borderRadius: D.radiusStat,
+      }}
+    >
+      <div className="text-[9px]" style={{ color: D.textSubtle }}>
+        {label}
+      </div>
+      <div className="flex items-baseline justify-between">
+        <span
+          className="text-[16px] font-medium tabular-nums"
+          style={{ color: skillColor(value) }}
+        >
+          {value}
+        </span>
+      </div>
+      <div
+        className="h-0.5"
+        style={{ background: "rgba(255,255,255,0.05)" }}
+      >
+        <div
+          className="h-full"
+          style={{
+            width: `${value}%`,
+            background: skillColor(value),
+          }}
+        />
+      </div>
     </div>
   );
 }

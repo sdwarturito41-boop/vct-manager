@@ -7,6 +7,70 @@ import { VCT_TEAMS } from "@/constants/teams";
 import { allocateSeasonBudget } from "@/server/finance/budgets";
 import { applyOffSeasonFinancials } from "@/server/finance/seasonRollover";
 import { stageStartDay } from "@/constants/vct-calendar";
+import { scaledSalary } from "@/constants/staff";
+import type { StaffRole } from "@/generated/prisma/client";
+
+// ── Staff seed helpers (used at save creation) ──
+const STAFF_FIRST = ["Marc","Tom","Ben","Liam","Noah","Lucas","Ethan","Sam","Felix","Jonas","Pablo","Diego","Hiro","Kenji","Wei","Chen"];
+const STAFF_LAST = ["Smith","Müller","Dubois","Rossi","Silva","Park","Tanaka","Wang","Costa","Bauer","Andersson","Novak","Vidal","Akimov"];
+function staffRand(min: number, max: number) { return Math.floor(min + Math.random() * (max - min + 1)); }
+function staffPick<T>(a: ReadonlyArray<T>): T { return a[Math.floor(Math.random() * a.length)]; }
+
+function staffNationalityFor(region: Region): string {
+  switch (region) {
+    case "EMEA": return staffPick(["France","Germany","Spain","UK","Sweden","Türkiye","Poland"]);
+    case "Americas": return staffPick(["USA","Brazil","Canada","Mexico","Argentina"]);
+    case "Pacific": return staffPick(["South Korea","Japan","Singapore","Thailand","Indonesia"]);
+    case "China": return staffPick(["China"]);
+  }
+}
+
+function generateStaffRow(role: StaffRole, region: Region, prestige: number, saveId: string, teamId: string) {
+  const skillBase = 30 + (prestige / 100) * 50;
+  const variance = () => staffRand(-8, 8);
+  const skill1 = Math.max(10, Math.min(95, Math.round(skillBase + variance())));
+  const skill2 = Math.max(10, Math.min(95, Math.round(skillBase + variance())));
+  const skill3 = Math.max(10, Math.min(95, Math.round(skillBase + variance())));
+  const avg = (skill1 + skill2 + skill3) / 3;
+  return {
+    saveId,
+    teamId,
+    name: `${staffPick(STAFF_FIRST)} ${staffPick(STAFF_LAST)}`,
+    role,
+    region,
+    nationality: staffNationalityFor(region),
+    age: staffRand(28, 48),
+    salary: scaledSalary(role, avg),
+    skill1, skill2, skill3,
+    contractEndSeason: 2,
+    contractEndWeek: 52,
+  };
+}
+
+async function seedDefaultStaff(
+  prisma: PrismaClient,
+  saveId: string,
+  teams: ReadonlyArray<{ id: string; region: Region | string; prestige: number; isPlayerTeam: boolean }>,
+): Promise<void> {
+  const rows: ReturnType<typeof generateStaffRow>[] = [];
+  for (const t of teams) {
+    const region = t.region as Region;
+    // Manager (required, min 1) — every team gets one
+    rows.push(generateStaffRow("MANAGER", region, t.prestige, saveId, t.id));
+    // Analyst — 1 for user / low-prestige AI, 2 for AI with prestige > 70
+    const analystCount = !t.isPlayerTeam && t.prestige > 70 ? 2 : 1;
+    for (let i = 0; i < analystCount; i++) {
+      rows.push(generateStaffRow("ANALYST", region, t.prestige, saveId, t.id));
+    }
+    // Fitness — AI only (user opts in)
+    if (!t.isPlayerTeam) {
+      rows.push(generateStaffRow("FITNESS", region, t.prestige, saveId, t.id));
+    }
+  }
+  if (rows.length > 0) {
+    await prisma.staff.createMany({ data: rows });
+  }
+}
 
 /**
  * VCT 2026 Kickoff — Triple Elimination (31 matches per region)
@@ -2297,10 +2361,15 @@ export async function initializeSaveWorld(
   }
   const allSaveTeams = await prisma.team.findMany({
     where: { saveId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, region: true, prestige: true, isPlayerTeam: true },
   });
   const savedTeamByName = new Map<string, string>();
   for (const t of allSaveTeams) savedTeamByName.set(t.name, t.id);
+
+  // 3b. Seed default staff per team — required slots (1 Manager + 1 Analyst).
+  //     AI teams also get a Fitness coach; user team starts with just the
+  //     bare minimum so they can choose what to add.
+  await seedDefaultStaff(prisma, saveId, allSaveTeams);
 
   // 4. Clone players from the global "template" pool (seeded by pandascore).
   //    Template players have teamId=null (unassigned) and `currentTeam` set to

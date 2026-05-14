@@ -22,6 +22,7 @@ export const financeRouter = router({
       include: {
         players: { where: { isActive: true }, select: { salary: true } },
         coach: { select: { salary: true } },
+        staff: { select: { salary: true, role: true } },
         sponsors: {
           where: { isActive: true },
           select: { name: true, weeklyPayment: true, contractEndSeason: true, contractEndWeek: true },
@@ -32,6 +33,7 @@ export const financeRouter = router({
 
     const totalSalary = team.players.reduce((s, p) => s + p.salary, 0);
     const coachSalary = team.coach?.salary ?? 0;
+    const staffSalary = team.staff.reduce((s, st) => s + st.salary, 0);
     const sponsorIncome = team.sponsors.reduce((s, sp) => s + sp.weeklyPayment, 0);
     const weeklyRev = computeWeeklyRevenue({ prestige: team.prestige });
     const ops = computeWeeklyOperationalCost({
@@ -40,7 +42,7 @@ export const financeRouter = router({
     });
 
     const weeklyIncome = sponsorIncome + weeklyRev.total;
-    const weeklyExpense = totalSalary + coachSalary + ops.total;
+    const weeklyExpense = totalSalary + coachSalary + staffSalary + ops.total;
     const weeklyNet = weeklyIncome - weeklyExpense;
 
     return {
@@ -68,6 +70,7 @@ export const financeRouter = router({
         totalIncome: weeklyIncome,
         playerWages: totalSalary,
         coachWage: coachSalary,
+        staffWage: staffSalary,
         facility: ops.facility,
         bootcamp: ops.bootcamp,
         totalExpense: weeklyExpense,
@@ -197,6 +200,7 @@ export const financeRouter = router({
             select: { role: true, overall: true, salary: true },
           },
           coach: { select: { salary: true } },
+          staff: { select: { salary: true } },
           sponsors: {
             where: { isActive: true },
             select: { weeklyPayment: true },
@@ -210,6 +214,7 @@ export const financeRouter = router({
     // Weekly net (compact, same math as overview but skipping breakdown noise).
     const totalSalary = team.players.reduce((s, p) => s + p.salary, 0);
     const coachSalary = team.coach?.salary ?? 0;
+    const staffSalary = team.staff.reduce((s, st) => s + st.salary, 0);
     const sponsorIncome = team.sponsors.reduce((s, sp) => s + sp.weeklyPayment, 0);
     const weeklyRev = computeWeeklyRevenue({ prestige: team.prestige });
     const ops = computeWeeklyOperationalCost({
@@ -217,7 +222,7 @@ export const financeRouter = router({
       bootcampWeeksLeft: team.bootcampWeeksLeft,
     });
     const weeklyNet =
-      sponsorIncome + weeklyRev.total - totalSalary - coachSalary - ops.total;
+      sponsorIncome + weeklyRev.total - totalSalary - coachSalary - staffSalary - ops.total;
 
     // Shortlist with player fields the ticker shows.
     const shortlist = await ctx.prisma.shortlist.findMany({

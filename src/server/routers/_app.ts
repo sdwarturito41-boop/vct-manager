@@ -16,6 +16,7 @@ import { messageRouter } from "./message";
 import { saveRouter } from "./save";
 import { financeRouter } from "./finance";
 import { scoutingRouter } from "./scouting";
+import { staffRouter } from "./staff";
 
 export const appRouter = router({
   save: saveRouter,
@@ -35,6 +36,7 @@ export const appRouter = router({
   message: messageRouter,
   finance: financeRouter,
   scouting: scoutingRouter,
+  staff: staffRouter,
 });
 
 export type AppRouter = typeof appRouter;
