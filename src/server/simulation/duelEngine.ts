@@ -18,6 +18,7 @@
 
 import type { Role, Playstyle } from "@/generated/prisma/client";
 import { AGENT_META } from "@/constants/meta";
+import { VALORANT_AGENTS } from "@/constants/agents";
 import { getMapProfile, type MapProfile, type SiteProfile } from "./mapProfiles";
 
 // ──────────────────────────────────────────────────────────
@@ -397,6 +398,57 @@ function buildTeamRuntime(
     for (const a of agents) agentByPlayer.set(a.playerId, a.agentName);
   }
 
+  // Ensure the comp covers the core roles (Duelist + Controller + Sentinel).
+  // Real Valorant comps need at least one entry agent — when a team lost
+  // their natural Duelist to mercato, *someone* still flexes onto Jett/Raze
+  // instead of leaving the slot empty. We override the default agent for the
+  // best-fit flex candidate to fill any gap.
+  const roster = team.players.slice(0, 5);
+  const initialAgents = new Map<string, string>();
+  for (const p of roster) {
+    initialAgents.set(p.id, agentByPlayer.get(p.id) ?? defaultAgentForRole(p.role));
+  }
+  function agentClass(agent: string): "duelist" | "initiator" | "controller" | "sentinel" {
+    const meta = VALORANT_AGENTS.find((a) => a.name === agent);
+    if (meta) return meta.role.toLowerCase() as "duelist" | "initiator" | "controller" | "sentinel";
+    return "duelist";
+  }
+  const classesPresent = new Set<string>();
+  for (const a of initialAgents.values()) classesPresent.add(agentClass(a));
+
+  // Flex priority for a forced role override: explicit Flex role first, then
+  // a high-ACS non-IGL player, then any non-IGL, then anyone.
+  function pickFlex(excludePlayerIds: Set<string>): typeof roster[number] | undefined {
+    const remaining = roster.filter((p) => !excludePlayerIds.has(p.id));
+    return (
+      remaining.find((p) => p.role === "Flex") ??
+      [...remaining].filter((p) => p.role !== "IGL").sort((a, b) => b.acs - a.acs)[0] ??
+      remaining[0]
+    );
+  }
+  const overrideFiller: Array<{ role: "duelist" | "controller" | "sentinel"; fallback: string }> = [
+    { role: "duelist", fallback: "Jett" },
+    { role: "controller", fallback: "Omen" },
+    { role: "sentinel", fallback: "Killjoy" },
+  ];
+  const claimed = new Set<string>();
+  // Players already filling a required role can't be re-overridden.
+  for (const [pid, a] of initialAgents) {
+    const cls = agentClass(a);
+    if (cls === "duelist" || cls === "controller" || cls === "sentinel") claimed.add(pid);
+  }
+  for (const { role, fallback } of overrideFiller) {
+    if (classesPresent.has(role)) continue;
+    const candidate = pickFlex(claimed);
+    if (!candidate) continue;
+    initialAgents.set(candidate.id, fallback);
+    classesPresent.add(role);
+    claimed.add(candidate.id);
+  }
+  // Push the overrides back into agentByPlayer so the buildTeamRuntime map
+  // below uses them as the source of truth.
+  for (const [pid, a] of initialAgents) agentByPlayer.set(pid, a);
+
   // Per-match team preparation roll — represents scrims, prep, chemistry, tactics.
   // Tightened from ±10% to ±5%: combined with per-player gameDay variance, the
   // old range produced too many lopsided upsets. Underdogs can still take maps
@@ -427,8 +479,14 @@ function buildTeamRuntime(
 
     // Carry over 50% of prior-map hotness (confidence across maps in a series).
     // Streaks always reset between maps — they're a "right now" signal.
+    // Carryover between maps in a series. Old 50% retention with [0.9, 1.10]
+    // clamp made the leading team start map 3 nearly neutral — the trailing
+    // side could roll career-night gameDays and reverse-sweep through pure
+    // variance. 80% retention with [0.85, 1.15] preserves more of the form
+    // a player carries out of a dominant map, so reverse sweeps require the
+    // trailing team to actually outplay (not just outroll) the favorite.
     const prior = priorHotness?.[p.id];
-    const initialHotness = prior !== undefined ? clamp(1.0 + (prior - 1.0) * 0.5, 0.9, 1.10) : 1.0;
+    const initialHotness = prior !== undefined ? clamp(1.0 + (prior - 1.0) * 0.8, 0.85, 1.15) : 1.0;
     // Translate back to rolling component so recalc stays consistent
     const initialRolling = (initialHotness - 1.0) / 0.4; // inverse of rolling*0.4 contribution
 

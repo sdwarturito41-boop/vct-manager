@@ -1044,19 +1044,19 @@ async function createMastersBracket(
 
 /**
  * Progress the Masters double-elimination bracket (VCT 2026 Masters Santiago
- * format, 8-team double elim).
+ * format, 8-team double elim with standard VCT stage naming).
  *
  * Stage flow + day offsets relative to `bracketStart` (= UB QF day 1):
- *   D+0  UB QF1 + QF3      (4 QF matches split across 2 days)
+ *   D+0  UB QF1 + QF3       (4 QF matches split across 2 days)
  *   D+1  UB QF2 + QF4
  *   D+2  LB R1   (2 matches, UB QF losers paired)
  *   D+3  UB SF   (2 matches, UB QF winners)
- *   D+4  LB SF   (2 matches, LB R1 winners × UB SF losers, cross-bracket)
+ *   D+4  LB R2   (2 matches, LB R1 winners × UB SF losers cross-bracket)
  *   D+5  rest
  *   D+6  rest
- *   D+7  UB Final + LB Final
- *   D+8  LB GF   (UB Final loser vs LB Final winner)
- *   D+9  Grand Final
+ *   D+7  UB Final + LB SF  (LB SF = 2 LB R2 winners face each other → 1 match)
+ *   D+8  LB Final (UB Final loser vs LB SF winner — 3rd place at stake)
+ *   D+9  Grand Final (BO5 — only round in the bracket that isn't BO3)
  */
 export async function progressMastersBracket(
   prisma: PrismaClient,
@@ -1122,20 +1122,20 @@ export async function progressMastersBracket(
     }
   }
 
-  // ── UB SF done → try LB SF (needs LB R1 results too) ──
+  // ── UB SF done → try LB R2 (needs LB R1 results too) ──
   if (completedStageId === `${stagePrefix}_UB_SF`) {
-    await tryMastersLBSF(prisma, saveId, stagePrefix, S, bracketStart);
+    await tryMastersLBR2(prisma, saveId, stagePrefix, S, bracketStart);
   }
 
-  // ── LB R1 done → try LB SF (needs UB SF results too) ──
+  // ── LB R1 done → try LB R2 (needs UB SF results too) ──
   if (completedStageId === `${stagePrefix}_LB_R1`) {
-    await tryMastersLBSF(prisma, saveId, stagePrefix, S, bracketStart);
+    await tryMastersLBR2(prisma, saveId, stagePrefix, S, bracketStart);
   }
 
-  // ── LB SF done → UB Final + LB Final (both day +7) ──
-  // VCT 2026 has LB Final + Grand Final in BO5, the rest of the bracket BO3.
-  if (completedStageId === `${stagePrefix}_LB_SF`) {
-    const lbSf = await getIntlResults(`${stagePrefix}_LB_SF`);
+  // ── LB R2 done → UB Final + LB SF (both day +7) ──
+  // All bracket matches are BO3; only the Grand Final is BO5.
+  if (completedStageId === `${stagePrefix}_LB_R2`) {
+    const lbR2 = await getIntlResults(`${stagePrefix}_LB_R2`);
     const ubSf = await getIntlResults(`${stagePrefix}_UB_SF`);
     const finalsDay = bracketStart + 7;
     // UB Final = UB SF winners
@@ -1147,39 +1147,39 @@ export async function progressMastersBracket(
         "BO3",
       );
     }
-    // LB Final = 2 LB SF winners
-    if (lbSf.length >= 2 && !await intlStageExists(`${stagePrefix}_LB_FINAL`)) {
+    // LB SF = 2 LB R2 winners face each other (consolidates LB to 1 team)
+    if (lbR2.length >= 2 && !await intlStageExists(`${stagePrefix}_LB_SF`)) {
       await onDay(
-        [[lbSf[0].winner, lbSf[1].winner]],
+        [[lbR2[0].winner, lbR2[1].winner]],
         [finalsDay],
-        `${stagePrefix}_LB_FINAL`,
-        "BO5",
+        `${stagePrefix}_LB_SF`,
+        "BO3",
       );
     }
   }
 
-  // ── UB Final done → try LB GF (needs LB Final too) ──
+  // ── UB Final done → try LB Final (needs LB SF too) ──
   if (completedStageId === `${stagePrefix}_UB_FINAL`) {
-    await tryMastersLBGF(prisma, saveId, stagePrefix, S, bracketStart);
+    await tryMastersLBFinal(prisma, saveId, stagePrefix, S, bracketStart);
   }
 
-  // ── LB Final done → try LB GF ──
+  // ── LB SF done → try LB Final ──
+  if (completedStageId === `${stagePrefix}_LB_SF`) {
+    await tryMastersLBFinal(prisma, saveId, stagePrefix, S, bracketStart);
+  }
+
+  // ── LB Final done → Grand Final (UB Final W vs LB Final W) on day +9 ──
   if (completedStageId === `${stagePrefix}_LB_FINAL`) {
-    await tryMastersLBGF(prisma, saveId, stagePrefix, S, bracketStart);
-  }
-
-  // ── LB GF done → Grand Final (UB Final W vs LB GF W) on day +9 ──
-  if (completedStageId === `${stagePrefix}_LB_GF`) {
     const ubFinal = await getIntlResults(`${stagePrefix}_UB_FINAL`);
-    const lbGf = await getIntlResults(`${stagePrefix}_LB_GF`);
+    const lbFinal = await getIntlResults(`${stagePrefix}_LB_FINAL`);
     if (
       ubFinal.length >= 1 &&
-      lbGf.length >= 1 &&
+      lbFinal.length >= 1 &&
       !await intlStageExists(`${stagePrefix}_GRAND_FINAL`)
     ) {
       const gfDay = bracketStart + 9;
       await onDay(
-        [[ubFinal[0].winner, lbGf[0].winner]],
+        [[ubFinal[0].winner, lbFinal[0].winner]],
         [gfDay],
         `${stagePrefix}_GRAND_FINAL`,
         "BO5",
@@ -1189,13 +1189,13 @@ export async function progressMastersBracket(
 }
 
 /**
- * LB SF needs both LB R1 winners and UB SF losers. 4 teams, 2 matches, cross-
+ * LB R2 needs both LB R1 winners and UB SF losers. 4 teams, 2 matches, cross-
  * bracket pairings:
- *   LB SF1 = LB R1 #1 winner vs UB SF #2 loser
- *   LB SF2 = LB R1 #2 winner vs UB SF #1 loser
+ *   LB R2 #1 = LB R1 #1 winner vs UB SF #2 loser
+ *   LB R2 #2 = LB R1 #2 winner vs UB SF #1 loser
  * Cross-pairs prevent immediate UB→LB rematches.
  */
-async function tryMastersLBSF(
+async function tryMastersLBR2(
   prisma: PrismaClient,
   saveId: string,
   stagePrefix: string,
@@ -1203,7 +1203,7 @@ async function tryMastersLBSF(
   bracketStart: number,
 ) {
   const count = await prisma.match.count({
-    where: { saveId, stageId: `${stagePrefix}_LB_SF`, season: S },
+    where: { saveId, stageId: `${stagePrefix}_LB_R2`, season: S },
   });
   if (count > 0) return;
   const lbR1Matches = await prisma.match.findMany({
@@ -1225,7 +1225,7 @@ async function tryMastersLBSF(
     loser: m.winnerId === m.team1Id ? m.team2Id : m.team1Id,
   }));
 
-  const lbSfDay = bracketStart + 4;
+  const lbR2Day = bracketStart + 4;
   await createMatchesOnSpecificDays(
     prisma,
     saveId,
@@ -1233,17 +1233,17 @@ async function tryMastersLBSF(
       [lbR1[0].winner, ubSf[1].loser],
       [lbR1[1].winner, ubSf[0].loser],
     ],
-    [lbSfDay, lbSfDay],
-    `${stagePrefix}_LB_SF`,
+    [lbR2Day, lbR2Day],
+    `${stagePrefix}_LB_R2`,
     S,
   );
 }
 
 /**
- * LB GF needs both UB Final and LB Final. The UB Final loser drops to face
- * the LB Final winner in a single BO5. Day +8.
+ * LB Final needs both UB Final and LB SF results. The UB Final loser drops
+ * to face the LB SF winner. Day +8. BO5 (like Grand Final).
  */
-async function tryMastersLBGF(
+async function tryMastersLBFinal(
   prisma: PrismaClient,
   saveId: string,
   stagePrefix: string,
@@ -1251,27 +1251,27 @@ async function tryMastersLBGF(
   bracketStart: number,
 ) {
   const count = await prisma.match.count({
-    where: { saveId, stageId: `${stagePrefix}_LB_GF`, season: S },
+    where: { saveId, stageId: `${stagePrefix}_LB_FINAL`, season: S },
   });
   if (count > 0) return;
   const ubFinalM = await prisma.match.findFirst({
     where: { saveId, stageId: `${stagePrefix}_UB_FINAL`, season: S, isPlayed: true },
   });
-  const lbFinalM = await prisma.match.findFirst({
-    where: { saveId, stageId: `${stagePrefix}_LB_FINAL`, season: S, isPlayed: true },
+  const lbSfM = await prisma.match.findFirst({
+    where: { saveId, stageId: `${stagePrefix}_LB_SF`, season: S, isPlayed: true },
   });
-  if (!ubFinalM?.winnerId || !lbFinalM?.winnerId) return;
+  if (!ubFinalM?.winnerId || !lbSfM?.winnerId) return;
 
   const ubFinalLoser = ubFinalM.winnerId === ubFinalM.team1Id ? ubFinalM.team2Id : ubFinalM.team1Id;
-  const lbFinalWinner = lbFinalM.winnerId;
+  const lbSfWinner = lbSfM.winnerId;
 
-  const lbGfDay = bracketStart + 8;
+  const lbFinalDay = bracketStart + 8;
   await createMatchesOnSpecificDays(
     prisma,
     saveId,
-    [[ubFinalLoser, lbFinalWinner]],
-    [lbGfDay],
-    `${stagePrefix}_LB_GF`,
+    [[ubFinalLoser, lbSfWinner]],
+    [lbFinalDay],
+    `${stagePrefix}_LB_FINAL`,
     S,
     "BO5",
   );

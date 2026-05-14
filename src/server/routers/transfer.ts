@@ -94,9 +94,42 @@ async function resolveOfferDecision(
     const fee = offer.transferFee || 0;
     const effClauseThreshold = isDesperate ? clause * 0.9 : clause;
 
-    if (clause > 0 && fee >= effClauseThreshold) {
+    // Healthy team won't sell a core piece even at clause. Check the selling
+    // team's situation — if they're winning AND the player fills a role the
+    // team doesn't have a backup for, demand a significant premium (1.5×
+    // clause). Doesn't apply if the player WANTS_TRANSFER (`isDesperate`).
+    let healthyTeamPremium = 1.0;
+    if (!isDesperate && player.teamId) {
+      const sellerTeam = await ctx.prisma.team.findUnique({
+        where: { id: player.teamId },
+        select: {
+          wins: true,
+          losses: true,
+          players: {
+            where: { isActive: true, isRetired: false },
+            select: { role: true, id: true },
+          },
+        },
+      });
+      if (sellerTeam) {
+        const games = sellerTeam.wins + sellerTeam.losses;
+        const winPct = games > 0 ? sellerTeam.wins / games : 0.5;
+        const sameRole = sellerTeam.players.filter(
+          (pp: { role: string; id: string }) => pp.role === player.role && pp.id !== player.id,
+        ).length;
+        const wouldLeaveGap = sameRole === 0;
+        const teamHealthy =
+          sellerTeam.players.length >= 5 && (games < 3 || winPct >= 0.45);
+        if (teamHealthy && wouldLeaveGap) {
+          healthyTeamPremium = 1.5; // need fee >= 1.5× clause to even consider
+        }
+      }
+    }
+    const thresholdWithPremium = effClauseThreshold * healthyTeamPremium;
+
+    if (clause > 0 && fee >= thresholdWithPremium) {
       decision = salaryDemandMet ? "ACCEPTED" : "COUNTERED";
-    } else if (clause > 0 && fee >= Math.floor(clause * 0.8)) {
+    } else if (clause > 0 && fee >= Math.floor(thresholdWithPremium * 0.85)) {
       // Seller is open to a counter with adjusted terms
       decision = offer.negotiationRound < 3 ? "COUNTERED" : "REJECTED";
     } else {

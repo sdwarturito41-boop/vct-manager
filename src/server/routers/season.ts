@@ -445,14 +445,14 @@ export const seasonRouter = router({
       "KICKOFF_UB_FINAL": { winner: 4, loser: 0 }, // 1st (loser → MID_FINAL)
       "KICKOFF_MID_FINAL": { winner: 3, loser: 0 }, // 2nd (loser → LB_FINAL)
       "KICKOFF_LB_FINAL": { winner: 2, loser: 1 }, // 3rd / 4th (full elimination)
-      // Masters (8-team double elim): Grand Final = 1st/2nd, LB GF loser = 3rd,
-      // LB Final loser = 4th, LB SF losers = 5th-6th, LB R1 losers = 7th-8th.
+      // Masters (8-team double elim): GF = 1st/2nd, LB Final loser = 3rd,
+      // LB SF loser = 4th, LB R2 losers = 5th-6th, LB R1 losers = 7th-8th.
       "MASTERS_1_GRAND_FINAL": { winner: 4, loser: 3 },
-      "MASTERS_1_LB_GF": { winner: 0, loser: 2 }, // 3rd place
-      "MASTERS_1_LB_FINAL": { winner: 0, loser: 1 }, // 4th place
+      "MASTERS_1_LB_FINAL": { winner: 0, loser: 2 }, // 3rd place
+      "MASTERS_1_LB_SF": { winner: 0, loser: 1 }, // 4th place
       "MASTERS_2_GRAND_FINAL": { winner: 4, loser: 3 },
-      "MASTERS_2_LB_GF": { winner: 0, loser: 2 },
-      "MASTERS_2_LB_FINAL": { winner: 0, loser: 1 },
+      "MASTERS_2_LB_FINAL": { winner: 0, loser: 2 },
+      "MASTERS_2_LB_SF": { winner: 0, loser: 1 },
       // Stage 1 playoffs (8-team bracket):
       //   GF → 1st/2nd, LB Final loser → 3rd, LB R2 loser → 4th
       //   LB R1 losers (7th/8th from 4th group seeds) → no points
@@ -504,24 +504,24 @@ export const seasonRouter = router({
       "STAGE_2_PO_UB_FINAL":   { winner: 0, loser: 25_000 },
       "STAGE_2_PO_LB_R2":      { winner: 0, loser: 10_000 },
       // Masters 1 — Madrid-tier ($500k). Placement mapping:
-      //   GF W/L → 1st/2nd, LB GF loser → 3rd, LB Final loser → 4th,
-      //   LB SF losers → 5th-6th, LB R1 losers → 7th-8th.
+      //   GF W/L → 1st/2nd, LB Final loser → 3rd, LB SF loser → 4th,
+      //   LB R2 losers → 5th-6th, LB R1 losers → 7th-8th.
       "MASTERS_1_GRAND_FINAL": { winner: 175_000, loser: 100_000 },
-      "MASTERS_1_LB_GF":       { winner: 0, loser: 62_500 },
-      "MASTERS_1_LB_FINAL":    { winner: 0, loser: 37_500 },
-      "MASTERS_1_LB_SF":       { winner: 0, loser: 25_000 },
+      "MASTERS_1_LB_FINAL":    { winner: 0, loser: 62_500 },
+      "MASTERS_1_LB_SF":       { winner: 0, loser: 37_500 },
+      "MASTERS_1_LB_R2":       { winner: 0, loser: 25_000 },
       "MASTERS_1_LB_R1":       { winner: 0, loser: 17_500 },
       // Masters 2 — Shanghai-tier ($1M)
       "MASTERS_2_GRAND_FINAL": { winner: 350_000, loser: 200_000 },
-      "MASTERS_2_LB_GF":       { winner: 0, loser: 125_000 },
-      "MASTERS_2_LB_FINAL":    { winner: 0, loser: 75_000 },
-      "MASTERS_2_LB_SF":       { winner: 0, loser: 50_000 },
+      "MASTERS_2_LB_FINAL":    { winner: 0, loser: 125_000 },
+      "MASTERS_2_LB_SF":       { winner: 0, loser: 75_000 },
+      "MASTERS_2_LB_R2":       { winner: 0, loser: 50_000 },
       "MASTERS_2_LB_R1":       { winner: 0, loser: 35_000 },
       // Champions — the big one ($2.25M). Same placement structure as Masters.
       "CHAMPIONS_GRAND_FINAL": { winner: 1_000_000, loser: 400_000 },
-      "CHAMPIONS_LB_GF":       { winner: 0, loser: 250_000 },
-      "CHAMPIONS_LB_FINAL":    { winner: 0, loser: 130_000 },
-      "CHAMPIONS_LB_SF":       { winner: 0, loser: 85_000 },
+      "CHAMPIONS_LB_FINAL":    { winner: 0, loser: 250_000 },
+      "CHAMPIONS_LB_SF":       { winner: 0, loser: 130_000 },
+      "CHAMPIONS_LB_R2":       { winner: 0, loser: 85_000 },
       "CHAMPIONS_LB_R1":       { winner: 0, loser: 50_000 },
     };
     for (const result of simulatedResults) {
