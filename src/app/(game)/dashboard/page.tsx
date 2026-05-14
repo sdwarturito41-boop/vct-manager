@@ -172,21 +172,15 @@ export default async function DashboardPage() {
     throw e;
   }
 
-  const [allMatches, season, standings, messages] = await Promise.all([
-    api.match.listByTeam({ teamId: team.id }),
+  const [feed, season, standings, messages] = await Promise.all([
+    api.match.dashboardFeed({ teamId: team.id }),
     api.season.getCurrent().catch(() => null),
     api.league.standings().catch(() => []),
     api.message.list().catch(() => []),
   ]);
 
-  const matches = allMatches as Match[];
-  const playedMatches = matches.filter((m) => m.isPlayed);
-  const recentMatches = playedMatches
-    .sort((a, b) => (b.playedAt?.getTime() ?? 0) - (a.playedAt?.getTime() ?? 0))
-    .slice(0, 5);
-  const nextMatch = matches
-    .filter((m) => !m.isPlayed && m.day > 0)
-    .sort((a, b) => a.day - b.day)[0] ?? null;
+  const recentMatches = feed.recent as Match[];
+  const nextMatch = (feed.next as Match | null) ?? null;
 
   const opponentTeamId = nextMatch
     ? nextMatch.team1Id === team.id ? nextMatch.team2Id : nextMatch.team1Id
@@ -772,7 +766,7 @@ function RecentMatchesCard({
                     <img src={opp.logoUrl} alt={opp.name} className="h-5 w-5 object-contain" />
                   ) : null}
                   <span style={{ color: D.textPrimary, fontWeight: 500 }} className="truncate">
-                    {opp.tag}
+                    {opp.name}
                   </span>
                 </div>
                 {/* W/L pill + map score */}

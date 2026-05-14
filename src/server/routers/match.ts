@@ -387,14 +387,83 @@ export const matchRouter = router({
   listByTeam: saveProcedure
     .input(z.object({ teamId: z.string() }))
     .query(async ({ ctx, input }) => {
+      // Dashboard-tier query — only the scalars + the small team header
+      // fields the recent-matches card actually renders. Skipping the full
+      // team include avoids pulling every player's mapFactors / attributes
+      // Json down the wire for what is basically a 5-row card.
+      const teamSelect = {
+        id: true, name: true, tag: true, logoUrl: true,
+      } as const;
       return ctx.prisma.match.findMany({
         where: {
           saveId: ctx.save.id,
           OR: [{ team1Id: input.teamId }, { team2Id: input.teamId }],
         },
-        include: { team1: true, team2: true },
+        select: {
+          id: true,
+          stageId: true,
+          day: true,
+          week: true,
+          format: true,
+          team1Id: true,
+          team2Id: true,
+          winnerId: true,
+          score: true,
+          maps: true,
+          isPlayed: true,
+          playedAt: true,
+          team1: { select: teamSelect },
+          team2: { select: teamSelect },
+        },
         orderBy: [{ week: "asc" }, { day: "asc" }],
       });
+    }),
+
+  /**
+   * Slim dashboard feed — exactly the 5 most recent played + the next
+   * scheduled match, in two parallel DB hits. Avoids pulling the full season
+   * of matches just to render a 5-row card + 1 hero.
+   */
+  dashboardFeed: saveProcedure
+    .input(z.object({ teamId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const teamSelect = {
+        id: true, name: true, tag: true, logoUrl: true,
+      } as const;
+      const baseSelect = {
+        id: true,
+        stageId: true,
+        day: true,
+        week: true,
+        format: true,
+        team1Id: true,
+        team2Id: true,
+        winnerId: true,
+        score: true,
+        maps: true,
+        isPlayed: true,
+        playedAt: true,
+        team1: { select: teamSelect },
+        team2: { select: teamSelect },
+      } as const;
+      const where = {
+        saveId: ctx.save.id,
+        OR: [{ team1Id: input.teamId }, { team2Id: input.teamId }],
+      };
+      const [recent, next] = await Promise.all([
+        ctx.prisma.match.findMany({
+          where: { ...where, isPlayed: true },
+          select: baseSelect,
+          orderBy: { playedAt: "desc" },
+          take: 5,
+        }),
+        ctx.prisma.match.findFirst({
+          where: { ...where, isPlayed: false, day: { gt: 0 } },
+          select: baseSelect,
+          orderBy: [{ day: "asc" }, { week: "asc" }],
+        }),
+      ]);
+      return { recent, next };
     }),
 
   simulateMap: saveProcedure

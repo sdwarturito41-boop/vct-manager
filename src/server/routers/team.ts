@@ -15,9 +15,35 @@ import { ALL_ATTR_KEYS } from "@/constants/role-weights";
 
 export const teamRouter = router({
   get: protectedProcedure.query(async ({ ctx }) => {
+    // Slim the active-player include — the heaviest JSON columns
+    // (attributes, roleScores, happinessTags) are NEVER consumed by team.get
+    // callers (dashboard, roster, training, market, nav). Player detail page
+    // uses player.detail / player.attributes endpoints instead. Skipping them
+    // here cuts the payload by ~5-10× per request on a typical 5-active roster.
     const team = await ctx.prisma.team.findUnique({
       where: { userId: ctx.userId },
-      include: { players: { where: { isActive: true } } },
+      include: {
+        players: {
+          where: { isActive: true },
+          select: {
+            id: true, ign: true, firstName: true, lastName: true,
+            role: true, nationality: true, age: true,
+            acs: true, kd: true, adr: true, kast: true, hs: true,
+            rating: true, overall: true, potential: true, potentialRevealed: true,
+            salary: true, buyoutClause: true, baseBuyoutClause: true,
+            contractEndSeason: true, contractEndWeek: true,
+            happiness: true, isTransferListed: true,
+            squadStatus: true, isReserve: true, isActive: true, isRetired: true,
+            performanceBonus: true, noReleaseClause: true,
+            teamId: true, imageUrl: true, joinedWeek: true,
+            leadershipRole: true,
+            // Json columns the dashboard reads (best agent, best map).
+            mapFactors: true, agentStats: true,
+            // Skip: attributes, roleScores, happinessTags — heavy + unused by
+            // team.get callers.
+          },
+        },
+      },
     });
 
     if (!team) {

@@ -6,16 +6,29 @@ export const leagueRouter = router({
   standings: saveProcedure.query(async ({ ctx }) => {
     const userTeam = await ctx.prisma.team.findFirst({
       where: { saveId: ctx.save.id, isPlayerTeam: true },
+      select: { region: true },
     });
 
     if (!userTeam) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
     }
 
+    // Only the columns the standings card actually renders. Skips heavy
+    // scalars (mapPrep Json, budget breakdown, debt fields) that bloat the
+    // payload for a leaderboard widget.
     return ctx.prisma.team.findMany({
       where: { saveId: ctx.save.id, region: userTeam.region },
       orderBy: [{ champPts: "desc" }, { wins: "desc" }],
-      include: {
+      select: {
+        id: true,
+        name: true,
+        tag: true,
+        logoUrl: true,
+        region: true,
+        champPts: true,
+        wins: true,
+        losses: true,
+        prestige: true,
         _count: {
           select: {
             matchesAsTeam1: true,

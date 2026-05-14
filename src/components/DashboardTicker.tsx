@@ -6,30 +6,44 @@ import { formatCurrency } from "@/lib/format";
 import { D } from "@/constants/design";
 
 /**
- * Live ticker shown next to RecentMatches on the dashboard. Three rotating
- * sections (no animation library — just stacked panels so the user sees all
- * three pieces at once without scrolling):
- *   - Finances: weekly net + debt bar
- *   - Active scouting: shortlisted players + weeks until reveal
- *   - Recommended players: AI-surfaced targets based on team gaps
+ * Live ticker shown next to RecentMatches on the dashboard. Three stacked
+ * panels — Finance / Scouting / Recommended — all sourced from one tRPC
+ * call (`finance.ticker`) to keep the dashboard's TTFB low.
  */
 export function DashboardTicker() {
-  const financeQ = trpc.finance.overview.useQuery();
-  const shortlistQ = trpc.scouting.list.useQuery();
-  const recommendedQ = trpc.scouting.recommended.useQuery();
-  const seasonQ = trpc.season.getCurrent.useQuery();
+  const tickerQ = trpc.finance.ticker.useQuery();
+  const data = tickerQ.data;
 
-  const fin = financeQ.data;
-  const shortlist = shortlistQ.data ?? [];
-  const recommended = recommendedQ.data ?? [];
-  const absWeek = seasonQ.data
-    ? seasonQ.data.number * 52 + seasonQ.data.currentWeek
-    : 0;
+  if (!data) {
+    return (
+      <aside
+        className="flex flex-col gap-4 p-4"
+        style={{
+          background: D.card,
+          border: `1px solid ${D.border}`,
+          borderRadius: D.radiusCard,
+        }}
+      >
+        <Skeleton lines={3} />
+        <Divider />
+        <Skeleton lines={3} />
+        <Divider />
+        <Skeleton lines={3} />
+      </aside>
+    );
+  }
+
+  const debtPct =
+    data.debt.patience > 0 ? (data.debt.amount / data.debt.patience) * 100 : 0;
 
   return (
     <aside
-      className="flex flex-col gap-4 rounded-lg p-4"
-      style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+      className="flex flex-col gap-4 p-4"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.border}`,
+        borderRadius: D.radiusCard,
+      }}
     >
       {/* Finance pulse */}
       <section>
@@ -43,48 +57,48 @@ export function DashboardTicker() {
             details
           </Link>
         </div>
-        {fin ? (
-          <div className="flex flex-col gap-1.5">
-            <Row
-              label="Weekly net"
-              value={`${fin.weekly.net >= 0 ? "+" : ""}${formatCurrency(fin.weekly.net)}`}
-              color={fin.weekly.net >= 0 ? D.green : D.red}
-            />
-            <Row
-              label="Transfer pool"
-              value={formatCurrency(fin.buckets.transfer)}
-              color={D.gold}
-            />
-            {fin.debt.amount > 0 && (
-              <>
-                <Row
-                  label="Investor debt"
-                  value={formatCurrency(fin.debt.amount)}
-                  color={D.red}
-                />
+        <div className="flex flex-col gap-1.5">
+          <Row
+            label="Weekly net"
+            value={`${data.weeklyNet >= 0 ? "+" : ""}${formatCurrency(data.weeklyNet)}`}
+            color={data.weeklyNet >= 0 ? D.green : D.red}
+          />
+          <Row
+            label="Transfer pool"
+            value={formatCurrency(data.buckets.transfer)}
+            color={D.gold}
+          />
+          {data.debt.amount > 0 && (
+            <>
+              <Row
+                label="Investor debt"
+                value={formatCurrency(data.debt.amount)}
+                color={D.red}
+              />
+              <div
+                className="relative mt-1 h-1 w-full"
+                style={{
+                  background: "rgba(255,255,255,0.05)",
+                  borderRadius: D.radiusBadge,
+                }}
+              >
                 <div
-                  className="relative mt-1 h-1 w-full rounded"
-                  style={{ background: "rgba(255,255,255,0.05)" }}
-                >
-                  <div
-                    className="absolute left-0 top-0 h-1 rounded"
-                    style={{
-                      width: `${Math.min(100, (fin.debt.amount / fin.debt.patience) * 100)}%`,
-                      background:
-                        fin.debt.amount >= fin.debt.patience
-                          ? D.red
-                          : fin.debt.amount >= fin.debt.patience * 0.5
-                            ? D.amber
-                            : D.green,
-                    }}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        ) : (
-          <Skeleton lines={2} />
-        )}
+                  className="absolute left-0 top-0 h-1"
+                  style={{
+                    width: `${Math.min(100, debtPct)}%`,
+                    background:
+                      data.debt.amount >= data.debt.patience
+                        ? D.red
+                        : data.debt.amount >= data.debt.patience * 0.5
+                          ? D.amber
+                          : D.green,
+                    borderRadius: D.radiusBadge,
+                  }}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </section>
 
       <Divider />
@@ -94,21 +108,27 @@ export function DashboardTicker() {
         <div className="mb-2 flex items-center justify-between">
           <SectionTitle>Scouting</SectionTitle>
           <span className="text-[10px]" style={{ color: D.textSubtle }}>
-            {shortlist.length} on watchlist
+            {data.shortlist.length} on watchlist
           </span>
         </div>
-        {shortlist.length === 0 ? (
+        {data.shortlist.length === 0 ? (
           <Empty>
             Add players to your shortlist from the Market — potential reveals
-            after 4 weeks of scouting.
+            after {data.revealWeeks} weeks of scouting.
           </Empty>
         ) : (
           <div className="flex flex-col gap-1.5">
-            {shortlist.slice(0, 4).map((s) => {
-              const weeksLeft = Math.max(0, 4 - (absWeek - s.addedWeek));
+            {data.shortlist.map((s) => {
+              const weeksLeft = Math.max(
+                0,
+                data.revealWeeks - (data.absWeek - s.addedWeek),
+              );
               const isRevealed = s.player.potentialRevealed;
               return (
-                <div key={s.id} className="flex items-center justify-between text-[11px]">
+                <div
+                  key={s.id}
+                  className="flex items-center justify-between text-[11px]"
+                >
                   <Link
                     href={`/player/${s.player.id}`}
                     className="truncate hover:underline"
@@ -148,12 +168,15 @@ export function DashboardTicker() {
             market
           </Link>
         </div>
-        {recommended.length === 0 ? (
+        {data.recommended.length === 0 ? (
           <Empty>No actionable recommendations right now.</Empty>
         ) : (
           <div className="flex flex-col gap-1.5">
-            {recommended.slice(0, 4).map((p) => (
-              <div key={p.id} className="flex items-center justify-between gap-2 text-[11px]">
+            {data.recommended.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-2 text-[11px]"
+              >
                 <Link
                   href={`/player/${p.id}`}
                   className="min-w-0 truncate hover:underline"
@@ -228,8 +251,11 @@ function Skeleton({ lines = 3 }: { lines?: number }) {
       {Array.from({ length: lines }).map((_, i) => (
         <div
           key={i}
-          className="h-3 rounded"
-          style={{ background: "rgba(255,255,255,0.05)" }}
+          className="h-3"
+          style={{
+            background: "rgba(255,255,255,0.05)",
+            borderRadius: D.radiusBadge,
+          }}
         />
       ))}
     </div>
