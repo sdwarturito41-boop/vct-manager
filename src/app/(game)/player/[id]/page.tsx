@@ -125,6 +125,8 @@ export default function PlayerPage() {
   const relationsQuery = trpc.player.relationships.useQuery({ playerId }) as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const teamQuery = trpc.team.get.useQuery(undefined, { retry: false }) as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const shortlistQuery = trpc.scouting.isShortlisted.useQuery({ playerId }) as any;
 
   const invalidate = () => {
     utils.player.detail.invalidate({ playerId });
@@ -163,6 +165,11 @@ export default function PlayerPage() {
   }
 
   const isOwnPlayer = userTeam && player.teamId === userTeam.id;
+  // Stats hidden for non-roster players until scouting complete. The shortlist
+  // entry + Player.potentialRevealed flag both need to flip before raw ACS /
+  // K/D / attributes show. Own roster players are always fully visible.
+  const isOnMyShortlist = shortlistQuery.data === true;
+  const statsVisible = Boolean(isOwnPlayer) || (isOnMyShortlist && player.potentialRevealed);
   const state = stateFromScore(player.happiness);
   const stateStyle = STATE_COLOR[state];
   const happinessTags: string[] = Array.isArray(player.happinessTags)
@@ -308,13 +315,13 @@ export default function PlayerPage() {
             </div>
           ) : (
             <span className="text-[13px]" style={{ color: D.textSubtle, fontStyle: "italic" }}>
-              Free agent
+              Agent libre
             </span>
           )}
         </div>
 
-        {/* Mini radar (FM-style top-right of header) */}
-        <RadarPanelMini attrs={attrs?.attrs} />
+        {/* Mini radar (FM-style top-right of header) — masqué si non scouté */}
+        {statsVisible ? <RadarPanelMini attrs={attrs?.attrs} /> : <RadarPlaceholder />}
       </section>
 
       {/* ═══ Attributes (FM-style: tech/mental/phys center | manager sidebar right) ═══ */}
@@ -325,9 +332,18 @@ export default function PlayerPage() {
           borderBottom: `1px solid ${D.border}`,
         }}
       >
-        <AttrGroup title="Technique" keys={GROUP_TECH} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
-        <AttrGroup title="Mental" keys={GROUP_MENTAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
-        <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+        {statsVisible ? (
+          <>
+            <AttrGroup title="Technique" keys={GROUP_TECH} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+            <AttrGroup title="Mental" keys={GROUP_MENTAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+            <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+          </>
+        ) : (
+          <UnscoutedPlaceholder
+            isOnShortlist={isOnMyShortlist}
+            potentialRevealed={player.potentialRevealed}
+          />
+        )}
 
         {/* Right sidebar: role + overall + happiness */}
         <div className="flex flex-col gap-4">
@@ -478,23 +494,38 @@ export default function PlayerPage() {
             </div>
           )}
 
-          {/* Recent form stats */}
-          <div
-            className="rounded p-4"
-            style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-          >
-            <div className="text-[9px] mb-3" style={{ color: D.textSubtle }}>
-              Recent form
+          {/* Stats récentes — masquées sans scouting */}
+          {statsVisible ? (
+            <div
+              className="rounded p-4"
+              style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+            >
+              <div className="text-[9px] mb-3" style={{ color: D.textSubtle }}>
+                Forme récente
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px]" style={{ color: D.textPrimary }}>
+                <MiniStat label="ACS" value={formatStat(player.acs, 0)} accent={D.gold} />
+                <MiniStat label="K/D" value={formatStat(player.kd, 2)} />
+                <MiniStat label="ADR" value={formatStat(player.adr, 0)} />
+                <MiniStat label="KAST" value={`${formatStat(player.kast, 0)}%`} />
+                <MiniStat label="HS" value={`${formatStat(player.hs, 0)}%`} />
+                <MiniStat label="Rating" value={formatStat(player.rating, 2)} />
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]" style={{ color: D.textPrimary }}>
-              <MiniStat label="ACS" value={formatStat(player.acs, 0)} accent={D.gold} />
-              <MiniStat label="K/D" value={formatStat(player.kd, 2)} />
-              <MiniStat label="ADR" value={formatStat(player.adr, 0)} />
-              <MiniStat label="KAST" value={`${formatStat(player.kast, 0)}%`} />
-              <MiniStat label="HS" value={`${formatStat(player.hs, 0)}%`} />
-              <MiniStat label="Rating" value={formatStat(player.rating, 2)} />
+          ) : (
+            <div
+              className="rounded p-4"
+              style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+            >
+              <div className="text-[9px] mb-2" style={{ color: D.textSubtle }}>
+                Forme récente
+              </div>
+              <p className="text-[11px]" style={{ color: D.textSubtle }}>
+                Stats indisponibles — ajoute le joueur à ta shortlist pour
+                lancer le scouting.
+              </p>
             </div>
-          </div>
+          )}
         </div>
       </section>
 
@@ -1190,6 +1221,67 @@ function RelationList({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ─── Placeholders affichés quand le joueur n'est pas scouté ───
+
+function UnscoutedPlaceholder({
+  isOnShortlist,
+  potentialRevealed,
+}: {
+  isOnShortlist: boolean;
+  potentialRevealed: boolean;
+}) {
+  return (
+    <div
+      className="col-span-3 flex flex-col items-center justify-center gap-3 py-12"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.borderFaint}`,
+        borderRadius: D.radiusCard,
+      }}
+    >
+      <div
+        className="flex h-14 w-14 items-center justify-center text-[24px]"
+        style={{
+          color: D.textSubtle,
+          background: "rgba(255,255,255,0.04)",
+          borderRadius: 999,
+        }}
+      >
+        ?
+      </div>
+      <div className="text-center">
+        <div className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
+          Stats indisponibles
+        </div>
+        <p
+          className="mt-1 max-w-md text-[11px] leading-relaxed"
+          style={{ color: D.textSubtle }}
+        >
+          {isOnShortlist && !potentialRevealed
+            ? "Ton analyste scoute ce joueur — les stats se révéleront bientôt."
+            : "Ajoute ce joueur à ta shortlist pour lancer le scouting. La vitesse de révélation dépend du skill de ton Analyste."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function RadarPlaceholder() {
+  return (
+    <div
+      className="flex h-[140px] w-[140px] items-center justify-center"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.borderFaint}`,
+        borderRadius: D.radiusCard,
+        color: D.textSubtle,
+      }}
+    >
+      <span className="text-[18px]">?</span>
     </div>
   );
 }

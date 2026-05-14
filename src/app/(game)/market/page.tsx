@@ -1,1355 +1,537 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc-client";
-import { formatCurrency, formatStat } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 import { countryToFlag } from "@/lib/country-flag";
 import { D, roleColor } from "@/constants/design";
 import { ShortlistButton } from "@/components/ShortlistButton";
 
-type RoleFilter = "IGL" | "Duelist" | "Initiator" | "Sentinel" | "Controller" | "Flex" | "";
-type RegionFilter = "EMEA" | "Americas" | "Pacific" | "China" | "";
-type TabKey = "FA" | "BUYOUT" | "OFFERS";
+/**
+ * Recruitment Hub — FM26-inspired single page covering :
+ *   - Objectifs du board (rôles à combler, urgences)
+ *   - Manques de l'effectif
+ *   - Contrats expirants
+ *   - Shortlist (scouting actif)
+ *   - Agents libres + Marché des transferts
+ *
+ * Visibilité des stats :
+ *   - Joueur NON scouté → nom · rôle · région · âge · salaire (rien d'autre)
+ *   - Joueur EN SCOUTING (sur shortlist, pas révélé) → "scouting Xw"
+ *   - Joueur SCOUTÉ → stats complètes
+ */
 
-const ROLES: RoleFilter[] = ["", "IGL", "Duelist", "Initiator", "Sentinel", "Controller", "Flex"];
-const REGIONS: RegionFilter[] = ["", "EMEA", "Americas", "Pacific", "China"];
-const CONTRACT_LENGTHS: { label: string; weeks: number }[] = [
-  { label: "26w", weeks: 26 },
-  { label: "52w", weeks: 52 },
-  { label: "104w", weeks: 104 },
-];
-
-interface MarketPlayer {
+type Candidate = {
   id: string;
   ign: string;
-  firstName: string;
-  lastName: string;
+  firstName?: string;
+  lastName?: string;
+  role: string;
+  region: string;
   nationality: string;
   age: number;
-  role: string;
-  imageUrl: string | null;
-  region: string;
   salary: number;
+  imageUrl: string | null;
+  overall: number | null;
   acs: number;
   kd: number;
-  adr: number;
   kast: number;
-  hs: number;
-  teamId: string | null;
-  buyoutClause: number;
-  contractEndSeason: number;
-  contractEndWeek: number;
-  isTransferListed?: boolean;
-  happiness?: number;
-  team?: { id: string; name: string; tag: string; logoUrl: string | null; region: string } | null;
-}
-
-interface OfferRow {
-  id: string;
-  playerId: string;
-  fromTeamId: string;
-  toTeamId: string | null;
-  offerType: "FREE_AGENT_SIGNING" | "BUYOUT" | "CONTRACT_EXTENSION";
-  transferFee: number;
-  proposedSalary: number;
-  contractLengthWeeks: number;
-  signingBonus: number;
-  sellOnPercentage: number;
-  loyaltyBonus: number;
-  negotiationRound: number;
-  parentOfferId: string | null;
-  deadlineAt: string | Date | null;
-  status: "PENDING" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "COUNTERED";
-  week: number;
-  season: number;
-  createdAt: string | Date;
-  player: { id: string; ign: string; role: string; imageUrl: string | null; salary: number; region: string };
-  toTeam?: { id: string; name: string; tag: string; logoUrl: string | null } | null;
-  fromTeam?: { id: string; name: string; tag: string; logoUrl: string | null } | null;
-}
-
-const STATUS_COLOR: Record<string, { bg: string; color: string }> = {
-  PENDING: { bg: "rgba(198,155,58,0.1)", color: D.gold },
-  ACCEPTED: { bg: "rgba(76,175,125,0.1)", color: D.green },
-  REJECTED: { bg: "rgba(255,70,85,0.1)", color: D.red },
-  EXPIRED: { bg: "rgba(255,255,255,0.04)", color: D.textSubtle },
-  COUNTERED: { bg: "rgba(96,165,250,0.1)", color: D.blue },
+  potential: number;
+  potentialRevealed: boolean;
+  isScoutedByMe: boolean;
+  scoutingProgressWeeks: number;
+  scoutingTotalWeeks: number;
+  buyoutClause?: number;
+  team?: { id: string; name: string; tag: string; logoUrl: string | null } | null;
+  currentTeam?: string | null;
 };
 
-export default function MarketPage() {
-  const [tab, setTab] = useState<TabKey>("FA");
-  const [role, setRole] = useState<RoleFilter>("");
-  const [region, setRegion] = useState<RegionFilter>("");
-  const [minSalary, setMinSalary] = useState<string>("");
-  const [maxSalary, setMaxSalary] = useState<string>("");
-  const [offerTarget, setOfferTarget] = useState<MarketPlayer | null>(null);
-  const [counterTarget, setCounterTarget] = useState<OfferRow | null>(null);
+export default function RecruitmentHubPage() {
+  const hubQuery = trpc.recruitment.hub.useQuery();
+  const data = hubQuery.data;
+  const [activeFilter, setActiveFilter] = useState<"ALL" | "FA" | "BUYOUT" | "SHORTLIST">("ALL");
 
-  const utils = trpc.useUtils();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const teamQuery = trpc.team.get.useQuery(undefined, { retry: false }) as any;
-  const team = teamQuery.data as { id: string; budget: number; name: string; tag: string } | undefined;
+  if (!data) {
+    return (
+      <div className="p-10 text-sm" style={{ color: D.textMuted }}>
+        Chargement du recrutement…
+      </div>
+    );
+  }
 
-  const filters = useMemo(
-    () => ({
-      region: region || undefined,
-      role: role || undefined,
-      minSalary: minSalary ? parseInt(minSalary, 10) : undefined,
-      maxSalary: maxSalary ? parseInt(maxSalary, 10) : undefined,
-    }),
-    [region, role, minSalary, maxSalary],
-  );
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const freeAgentsQuery = trpc.transfer.listFreeAgents.useQuery(filters, {
-    enabled: tab === "FA",
-  }) as any;
-  const faData = freeAgentsQuery.data as
-    | { all: MarketPlayer[]; byRegion: Record<string, MarketPlayer[]> }
-    | undefined;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const marketQuery = trpc.transfer.listMarketPlayers.useQuery(filters, {
-    enabled: tab === "BUYOUT",
-  }) as any;
-  const marketPlayers = marketQuery.data as MarketPlayer[] | undefined;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const offersQuery = trpc.transfer.myOffers.useQuery(undefined, {
-    enabled: tab === "OFFERS",
-  }) as any;
-  const offers = offersQuery.data as { made: OfferRow[]; received: OfferRow[] } | undefined;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const respondMutation = trpc.transfer.respondToOffer.useMutation({
-    onSuccess: () => {
-      utils.transfer.myOffers.invalidate();
-      utils.team.get.invalidate();
-    },
-  }) as any;
-
-  const invalidateAll = () => {
-    utils.team.get.invalidate();
-    utils.transfer.listFreeAgents.invalidate();
-    utils.transfer.listMarketPlayers.invalidate();
-    utils.transfer.myOffers.invalidate();
-  };
-
-  const tabs: { key: TabKey; label: string }[] = [
-    { key: "FA", label: "Agents libres" },
-    { key: "BUYOUT", label: "Marché des transferts" },
-    { key: "OFFERS", label: "Mes offres" },
-  ];
+  const shortlistCount = data.shortlist.length;
+  const scoutedCount = data.shortlist.filter((s) => s.player.isScoutedByMe).length;
 
   return (
     <div className="flex min-h-full flex-col">
       {/* Hero */}
       <section
-        className="px-10 pt-8 pb-6"
+        className="relative px-10 pt-8 pb-6"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
         <div className="flex items-start justify-between gap-6">
           <div>
-            <div
-              className="text-[11px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Sign free agents & negotiate buyouts
+            <div className="text-[11px] font-medium" style={{ color: D.textSubtle }}>
+              Centre de recrutement
             </div>
             <h1
-              className="mt-1 text-[34px] font-medium leading-none "
+              className="mt-1 text-[34px] font-medium leading-none"
               style={{ color: D.textPrimary }}
             >
-              Transfer Market
+              Recrutement
             </h1>
-          </div>
-
-          {team && (
-            <div className="flex flex-col items-end gap-1">
-              <span
-                className="text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
-              >
-                Available Budget
-              </span>
-              <span
-                className="text-[22px] font-medium tabular-nums"
-                style={{ color: D.gold }}
-              >
-                {formatCurrency(team.budget)}
+            <div
+              className="mt-2 flex items-center gap-3 text-[11px]"
+              style={{ color: D.textMuted }}
+            >
+              <span>Enveloppe transferts {formatCurrency(data.team.transferEnvelope)}</span>
+              <span>·</span>
+              <span>
+                Analyste skill {data.team.analystSkill || "—"} · révélation {data.team.revealWeeks} sem
               </span>
             </div>
-          )}
-        </div>
-
-        {/* Pill tabs */}
-        <div className="mt-6 flex gap-2">
-          {tabs.map((t) => {
-            const active = tab === t.key;
-            return (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className="rounded px-4 py-2 text-[11px] font-medium transition-colors"
-                style={{
-                  background: active ? D.textPrimary : "transparent",
-                  color: active ? D.bg : D.textMuted,
-                  border: active
-                    ? `1px solid ${D.textPrimary}`
-                    : `1px solid ${D.border}`,
-                }}
-              >
-                {t.label}
-              </button>
-            );
-          })}
+          </div>
         </div>
       </section>
 
-      {/* Filters */}
-      {tab !== "OFFERS" && (
+      {/* Métriques rapides */}
+      <section
+        className="grid grid-cols-4"
+        style={{ borderBottom: `1px solid ${D.border}` }}
+      >
+        <MetricCell
+          label="Shortlist"
+          value={String(shortlistCount)}
+          sub={`${scoutedCount} scouté(s)`}
+          accent={D.amber}
+        />
+        <MetricCell
+          label="Agents libres"
+          value={String(data.freeAgents.length)}
+          sub="Disponibles dans la région"
+          accent={D.green}
+        />
+        <MetricCell
+          label="Marché transferts"
+          value={String(data.buyoutMarket.length)}
+          sub="Joueurs listés"
+          accent={D.primary}
+        />
+        <MetricCell
+          label="Contrats expirants"
+          value={String(data.expiring.length)}
+          sub="Moins de 8 semaines"
+          accent={data.expiring.length > 0 ? D.red : D.textSubtle}
+          last
+        />
+      </section>
+
+      {/* Objectifs du board */}
+      {data.objectives.length > 0 && (
         <section
-          className="flex flex-wrap items-end gap-4 px-10 py-4"
+          className="px-10 py-6"
           style={{ borderBottom: `1px solid ${D.border}` }}
         >
-          <FilterSelect
-            label="Rôle"
-            value={role}
-            options={ROLES}
-            onChange={(v) => setRole(v as RoleFilter)}
-            emptyLabel="All Roles"
-          />
-          <FilterSelect
-            label="Région"
-            value={region}
-            options={REGIONS}
-            onChange={(v) => setRegion(v as RegionFilter)}
-            emptyLabel="All Regions"
-          />
-          <FilterInput
-            label="Salaire min"
-            value={minSalary}
-            onChange={setMinSalary}
-            placeholder="0"
-          />
-          <FilterInput
-            label="Salaire max"
-            value={maxSalary}
-            onChange={setMaxSalary}
-            placeholder="—"
-          />
+          <h2
+            className="text-[13px] font-medium mb-3"
+            style={{ color: D.textPrimary }}
+          >
+            Objectifs du board
+          </h2>
+          <div className="grid grid-cols-3 gap-3">
+            {data.objectives.map((o, i) => (
+              <div
+                key={i}
+                className="px-4 py-3"
+                style={{
+                  background: D.card,
+                  border: `1px solid ${objectiveBorderColor(o.kind)}`,
+                  borderRadius: D.radiusCard,
+                }}
+              >
+                <div
+                  className="text-[10px] font-medium uppercase tracking-wider"
+                  style={{ color: objectiveColor(o.kind) }}
+                >
+                  {objectiveKindLabel(o.kind)}
+                </div>
+                <div
+                  className="mt-1 text-[12px]"
+                  style={{ color: D.textPrimary }}
+                >
+                  {o.label}
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
-      {/* Tab content */}
-      <div className="flex-1">
-        {tab === "FA" && (
-          <FreeAgentsTab
-            data={faData}
-            isLoading={freeAgentsQuery.isLoading}
-            onOffer={(p) => setOfferTarget(p)}
-          />
-        )}
-        {tab === "BUYOUT" && (
-          <BuyoutMarketTab
-            players={marketPlayers}
-            isLoading={marketQuery.isLoading}
-            onOffer={(p) => setOfferTarget(p)}
-          />
-        )}
-        {tab === "OFFERS" && (
-          <OffersTab
-            data={offers}
-            isLoading={offersQuery.isLoading}
-            userTeamId={team?.id ?? ""}
-            onRespond={(offerId, action) =>
-              respondMutation.mutate({ offerId, action })
-            }
-            onCounter={(o) => setCounterTarget(o)}
-            respondPending={respondMutation.isPending as boolean}
-          />
-        )}
-      </div>
-
-      {/* Offer modal */}
-      {offerTarget && team && (
-        <OfferModal
-          player={offerTarget}
-          userTeamId={team.id}
-          userBudget={team.budget}
-          onClose={() => setOfferTarget(null)}
-          onDone={() => {
-            setOfferTarget(null);
-            invalidateAll();
-          }}
-        />
-      )}
-
-      {/* Counter-offer modal */}
-      {counterTarget && team && (
-        <CounterOfferModal
-          offer={counterTarget}
-          onClose={() => setCounterTarget(null)}
-          onDone={() => {
-            setCounterTarget(null);
-            invalidateAll();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-// ───────────────────────── Filters ─────────────────────────
-
-function FilterSelect({
-  label,
-  value,
-  options,
-  onChange,
-  emptyLabel,
-}: {
-  label: string;
-  value: string;
-  options: readonly string[];
-  onChange: (v: string) => void;
-  emptyLabel: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label
-        className="text-[10px] font-medium "
-        style={{ color: D.textSubtle }}
+      {/* Manques effectif + contrats expirants côte à côte */}
+      <section
+        className="grid grid-cols-2 gap-px"
+        style={{ backgroundColor: D.border, borderBottom: `1px solid ${D.border}` }}
       >
-        {label}
-      </label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded px-3 py-2 text-[12px] outline-none"
-        style={{
-          background: D.card,
-          color: D.textPrimary,
-          border: `1px solid ${D.border}`,
-        }}
-      >
-        {options.map((r) => (
-          <option key={r} value={r}>
-            {r || emptyLabel}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-function FilterInput({
-  label,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label
-        className="text-[10px] font-medium "
-        style={{ color: D.textSubtle }}
-      >
-        {label}
-      </label>
-      <input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-32 rounded px-3 py-2 text-[12px] outline-none tabular-nums"
-        style={{
-          background: D.card,
-          color: D.textPrimary,
-          border: `1px solid ${D.border}`,
-        }}
-      />
-    </div>
-  );
-}
-
-// ───────────────────────── Loading / Empty ─────────────────────────
-
-function CenterMsg({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-[40vh] items-center justify-center">
-      <span className="text-[11px]" style={{ color: D.textSubtle }}>
-        {children}
-      </span>
-    </div>
-  );
-}
-
-// ───────────────────────── Free agents ─────────────────────────
-
-function FreeAgentsTab({
-  data,
-  isLoading,
-  onOffer,
-}: {
-  data?: { all: MarketPlayer[]; byRegion: Record<string, MarketPlayer[]> };
-  isLoading: boolean;
-  onOffer: (p: MarketPlayer) => void;
-}) {
-  if (isLoading) return <CenterMsg>Loading free agents...</CenterMsg>;
-  if (!data || data.all.length === 0)
-    return <CenterMsg>No free agents match your filters.</CenterMsg>;
-
-  const regionOrder = ["EMEA", "Americas", "Pacific", "China"];
-  return (
-    <div>
-      {regionOrder
-        .filter((r) => data.byRegion[r]?.length)
-        .map((r) => (
-          <section
-            key={r}
-            style={{ borderBottom: `1px solid ${D.border}` }}
+        <div className="px-10 py-6" style={{ backgroundColor: D.bg }}>
+          <h2
+            className="text-[13px] font-medium mb-3"
+            style={{ color: D.textPrimary }}
           >
-            <div
-              className="flex items-center justify-between px-10 py-4"
-              style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-            >
-              <span
-                className="text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
+            Manques de l'effectif
+          </h2>
+          <div className="flex flex-col gap-2">
+            {data.rosterGaps.map((g) => (
+              <div
+                key={g.role}
+                className="flex items-center justify-between px-3 py-2"
+                style={{
+                  background: D.card,
+                  border: `1px solid ${D.borderFaint}`,
+                  borderRadius: D.radiusStat,
+                }}
               >
-                {r}
-              </span>
-              <span
-                className="text-[10px] font-medium tabular-nums"
-                style={{ color: D.textMuted }}
-              >
-                {data.byRegion[r].length} players
-              </span>
-            </div>
-            <MarketRowHeader kind="FA" />
-            {data.byRegion[r].map((p) => (
-              <MarketPlayerRow
-                key={p.id}
-                player={p}
-                kind="FA"
-                onOffer={() => onOffer(p)}
-              />
+                <div className="flex items-center gap-2">
+                  <span
+                    className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+                    style={{
+                      background: `${roleColor(g.role)}20`,
+                      color: roleColor(g.role),
+                      borderRadius: D.radiusBadge,
+                    }}
+                  >
+                    {g.role}
+                  </span>
+                  <span className="text-[11px]" style={{ color: D.textMuted }}>
+                    {g.count > 0
+                      ? `${g.count} joueur(s) · OVR ${g.avgOverall}`
+                      : "Aucun joueur"}
+                  </span>
+                </div>
+                <span
+                  className="text-[10px] font-medium uppercase"
+                  style={{
+                    color:
+                      g.status === "MISSING"
+                        ? D.red
+                        : g.status === "WEAK"
+                          ? D.amber
+                          : D.green,
+                  }}
+                >
+                  {g.status === "MISSING"
+                    ? "Manquant"
+                    : g.status === "WEAK"
+                      ? "Faible"
+                      : "OK"}
+                </span>
+              </div>
             ))}
-          </section>
+          </div>
+        </div>
+
+        <div className="px-10 py-6" style={{ backgroundColor: D.bg }}>
+          <h2
+            className="text-[13px] font-medium mb-3"
+            style={{ color: D.textPrimary }}
+          >
+            Contrats expirants
+          </h2>
+          {data.expiring.length === 0 ? (
+            <p className="text-[11px]" style={{ color: D.textSubtle }}>
+              Aucun contrat n'expire dans les 8 prochaines semaines.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {data.expiring.map((p) => (
+                <Link
+                  key={p.id}
+                  href={`/player/${p.id}`}
+                  className="flex items-center justify-between px-3 py-2 transition-colors hover:bg-white/2"
+                  style={{
+                    background: D.card,
+                    border: `1px solid ${D.borderFaint}`,
+                    borderRadius: D.radiusStat,
+                  }}
+                >
+                  <div>
+                    <div className="text-[12px] font-medium" style={{ color: D.textPrimary }}>
+                      {p.ign}
+                    </div>
+                    <div className="text-[10px]" style={{ color: D.textSubtle }}>
+                      {p.role} · OVR {p.overall ?? "—"} · {formatCurrency(p.salary)}/sem
+                    </div>
+                  </div>
+                  <span
+                    className="text-[10px] font-medium"
+                    style={{ color: p.weeksLeft <= 2 ? D.red : D.amber }}
+                  >
+                    {p.weeksLeft} sem
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Filtres + listing */}
+      <section className="flex flex-col">
+        <div
+          className="flex items-center gap-2 px-10 py-4"
+          style={{ borderBottom: `1px solid ${D.border}` }}
+        >
+          {(["ALL", "SHORTLIST", "FA", "BUYOUT"] as const).map((k) => (
+            <button
+              key={k}
+              onClick={() => setActiveFilter(k)}
+              className="rounded px-3 py-1.5 text-[11px] font-medium transition-colors"
+              style={{
+                background:
+                  activeFilter === k ? "rgba(124,92,252,0.15)" : "transparent",
+                color: activeFilter === k ? D.primary : D.textMuted,
+                border: `1px solid ${activeFilter === k ? D.primary : D.borderFaint}`,
+                borderRadius: D.radiusBadge,
+              }}
+            >
+              {k === "ALL"
+                ? "Tous"
+                : k === "SHORTLIST"
+                  ? `Shortlist · ${shortlistCount}`
+                  : k === "FA"
+                    ? "Agents libres"
+                    : "Marché transferts"}
+            </button>
+          ))}
+        </div>
+
+        {/* SHORTLIST */}
+        {(activeFilter === "ALL" || activeFilter === "SHORTLIST") && shortlistCount > 0 && (
+          <CandidateSection
+            title="Joueurs sous surveillance"
+            subtitle="Ta shortlist — les stats se révèlent à mesure que ton analyste les scoute."
+            candidates={data.shortlist.map((s) => s.player as Candidate)}
+          />
+        )}
+
+        {/* AGENTS LIBRES */}
+        {(activeFilter === "ALL" || activeFilter === "FA") && (
+          <CandidateSection
+            title="Agents libres"
+            subtitle="Sans Analyste, tu vois juste leur identité — ajoute à la shortlist pour révéler les stats."
+            candidates={data.freeAgents as Candidate[]}
+          />
+        )}
+
+        {/* MARCHÉ TRANSFERTS */}
+        {(activeFilter === "ALL" || activeFilter === "BUYOUT") && data.buyoutMarket.length > 0 && (
+          <CandidateSection
+            title="Marché des transferts"
+            subtitle="Joueurs sous contrat mis sur la liste des transferts."
+            candidates={data.buyoutMarket as Candidate[]}
+          />
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ─────────────────────────── Subcomponents ───────────────────────────
+
+function CandidateSection({
+  title,
+  subtitle,
+  candidates,
+}: {
+  title: string;
+  subtitle: string;
+  candidates: Candidate[];
+}) {
+  if (candidates.length === 0) {
+    return (
+      <div
+        className="px-10 py-6"
+        style={{ borderBottom: `1px solid ${D.border}` }}
+      >
+        <h2 className="text-[13px] font-medium" style={{ color: D.textPrimary }}>
+          {title}
+        </h2>
+        <p className="mt-1 text-[11px]" style={{ color: D.textSubtle }}>
+          Rien à afficher dans cette section.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div style={{ borderBottom: `1px solid ${D.border}` }}>
+      <div className="px-10 pt-6 pb-3">
+        <h2 className="text-[13px] font-medium" style={{ color: D.textPrimary }}>
+          {title}
+        </h2>
+        <p className="mt-0.5 text-[10px]" style={{ color: D.textSubtle }}>
+          {subtitle}
+        </p>
+      </div>
+      <div>
+        {candidates.map((c) => (
+          <CandidateRow key={c.id} candidate={c} />
         ))}
+      </div>
     </div>
   );
 }
 
-// ───────────────────────── Buyout Market ─────────────────────────
-
-function BuyoutMarketTab({
-  players,
-  isLoading,
-  onOffer,
-}: {
-  players?: MarketPlayer[];
-  isLoading: boolean;
-  onOffer: (p: MarketPlayer) => void;
-}) {
-  if (isLoading) return <CenterMsg>Loading market...</CenterMsg>;
-  if (!players || players.length === 0)
-    return <CenterMsg>No contracted players match your filters.</CenterMsg>;
+function CandidateRow({ candidate }: { candidate: Candidate }) {
+  const c = candidate;
+  const isScouted = c.isScoutedByMe;
+  const isScouting =
+    !isScouted && c.scoutingProgressWeeks > 0 && c.scoutingTotalWeeks > 0;
+  const weeksLeft = Math.max(0, c.scoutingTotalWeeks - c.scoutingProgressWeeks);
 
   return (
-    <section style={{ borderBottom: `1px solid ${D.border}` }}>
-      <MarketRowHeader kind="BUYOUT" />
-      {players.map((p) => (
-        <MarketPlayerRow
-          key={p.id}
-          player={p}
-          kind="BUYOUT"
-          onOffer={() => onOffer(p)}
-        />
-      ))}
-    </section>
-  );
-}
-
-// ───────────────────────── Market row ─────────────────────────
-
-function MarketRowHeader({ kind }: { kind: "FA" | "BUYOUT" }) {
-  const cols =
-    kind === "FA"
-      ? "40px 1fr 80px 80px 80px 160px"
-      : "40px 1fr 80px 80px 100px 120px 160px";
-  return (
-    <div
-      className="grid items-center gap-3 px-10 py-3 text-[10px] font-medium "
+    <Link
+      href={`/player/${c.id}`}
+      className="grid items-center gap-3 px-10 py-3 transition-colors hover:bg-white/2"
       style={{
-        gridTemplateColumns: cols,
-        color: D.textSubtle,
-        borderBottom: `1px solid ${D.borderFaint}`,
-      }}
-    >
-      <span />
-      <span>Player</span>
-      <span>Role</span>
-      <span>Region</span>
-      {kind === "BUYOUT" && <span>Team</span>}
-      <span className="text-right">
-        {kind === "FA" ? "Salaire/sem" : "Clause"}
-      </span>
-      <span className="text-right">Action</span>
-    </div>
-  );
-}
-
-function MarketPlayerRow({
-  player,
-  kind,
-  onOffer,
-}: {
-  player: MarketPlayer;
-  kind: "FA" | "BUYOUT";
-  onOffer: () => void;
-}) {
-  const cols =
-    kind === "FA"
-      ? "40px 1fr 80px 80px 80px 160px"
-      : "40px 1fr 80px 80px 100px 120px 160px";
-
-  return (
-    <div
-      className="grid items-center gap-3 px-10 py-3 transition-colors"
-      style={{
-        gridTemplateColumns: cols,
-        borderBottom: `1px solid ${D.borderFaint}`,
+        gridTemplateColumns: "44px 1fr 100px 1fr 120px 120px",
+        borderTop: `1px solid ${D.borderFaint}`,
       }}
     >
       {/* Avatar */}
-      {player.imageUrl ? (
+      {c.imageUrl ? (
         <img
-          src={player.imageUrl}
-          alt={player.ign}
-          className="h-8 w-8 rounded-full object-cover"
+          src={c.imageUrl}
+          alt={c.ign}
+          className="h-9 w-9 rounded-full object-cover"
           style={{ border: `1px solid ${D.borderFaint}` }}
         />
       ) : (
         <div
-          className="flex h-8 w-8 items-center justify-center rounded-full"
-          style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+          className="flex h-9 w-9 items-center justify-center rounded-full"
+          style={{
+            background: D.card,
+            border: `1px solid ${D.borderFaint}`,
+          }}
         >
           <span
-            className="text-[11px] font-medium"
+            className="text-[12px] font-medium"
             style={{ color: D.textMuted }}
           >
-            {player.ign.charAt(0).toUpperCase()}
+            {c.ign.charAt(0).toUpperCase()}
           </span>
         </div>
       )}
 
-      {/* Identity + stats */}
-      <div className="flex min-w-0 flex-col">
+      {/* Identité (toujours visible) */}
+      <div className="min-w-0 flex flex-col">
         <div className="flex items-center gap-2">
           <span
             className="truncate text-[13px] font-medium"
             style={{ color: D.textPrimary }}
           >
-            {player.ign}
+            {c.ign}
           </span>
-          <span className="text-[12px]">
-            {countryToFlag(player.nationality)}
+          <span className="text-[12px]">{countryToFlag(c.nationality)}</span>
+          <span className="text-[10px]" style={{ color: D.textSubtle }}>
+            {c.age} ans
           </span>
-          <span
-            className="text-[10px] font-medium "
-            style={{ color: D.textSubtle }}
-          >
-            Age {player.age}
-          </span>
-          {player.isTransferListed && (
-            <span
-              className="rounded px-1.5 py-0.5 text-[9px] font-medium "
+        </div>
+        <div className="text-[10px]" style={{ color: D.textSubtle }}>
+          {c.region}
+          {c.team?.tag && ` · ${c.team.tag}`}
+          {!c.team && c.currentTeam && ` · ${c.currentTeam} (libre)`}
+        </div>
+      </div>
+
+      {/* Rôle */}
+      <span
+        className="text-[11px] font-medium"
+        style={{ color: roleColor(c.role) }}
+      >
+        {c.role}
+      </span>
+
+      {/* Stats — masquées si pas scouté */}
+      <div className="flex items-center gap-3 text-[11px] tabular-nums">
+        {isScouted ? (
+          <>
+            <StatChip label="OVR" value={c.overall ?? "—"} color={D.gold} />
+            <StatChip label="ACS" value={Math.round(c.acs)} />
+            <StatChip label="K/D" value={c.kd.toFixed(2)} />
+            <StatChip label="POT" value={c.potential} color={D.primary} />
+          </>
+        ) : isScouting ? (
+          <div className="flex flex-col gap-1 w-full">
+            <span className="text-[10px]" style={{ color: D.amber }}>
+              Scouting · {weeksLeft} sem restantes
+            </span>
+            <div
+              className="h-1 w-32"
               style={{
-                background: "rgba(255,70,85,0.1)",
-                color: D.red,
+                background: "rgba(255,255,255,0.05)",
+                borderRadius: D.radiusBadge,
               }}
             >
-              Listé
-            </span>
-          )}
-        </div>
-        <div
-          className="flex items-center gap-3 text-[10px] tabular-nums"
-          style={{ color: D.textSubtle }}
-        >
-          <span>
-            ACS{" "}
-            <span style={{ color: D.gold }}>{formatStat(player.acs, 0)}</span>
-          </span>
-          <span>
-            K/D{" "}
-            <span style={{ color: D.textPrimary }}>
-              {formatStat(player.kd, 2)}
-            </span>
-          </span>
-          <span>
-            ADR{" "}
-            <span style={{ color: D.textPrimary }}>
-              {formatStat(player.adr, 0)}
-            </span>
-          </span>
-        </div>
-      </div>
-
-      {/* Role */}
-      <span
-        className="text-[11px] font-medium "
-        style={{ color: roleColor(player.role) }}
-      >
-        {player.role}
-      </span>
-
-      {/* Region */}
-      <span
-        className="text-[11px] font-medium "
-        style={{ color: D.textMuted }}
-      >
-        {player.region}
-      </span>
-
-      {/* Team (buyout only) */}
-      {kind === "BUYOUT" && (
-        <div className="flex items-center gap-2">
-          {player.team?.logoUrl ? (
-            <img
-              src={player.team.logoUrl}
-              alt={player.team.name}
-              className="h-5 w-5 object-contain"
-            />
-          ) : (
-            <div
-              className="h-5 w-5 rounded"
-              style={{ background: D.card }}
-            />
-          )}
-          <span
-            className="text-[11px] font-medium "
-            style={{ color: D.textPrimary }}
-          >
-            {player.team?.tag ?? "—"}
-          </span>
-        </div>
-      )}
-
-      {/* Money */}
-      <div className="flex flex-col items-end">
-        <span
-          className="text-[13px] font-medium tabular-nums"
-          style={{ color: D.gold }}
-        >
-          {kind === "FA"
-            ? formatCurrency(player.salary)
-            : formatCurrency(player.buyoutClause)}
-        </span>
-        {kind === "BUYOUT" && (
-          <span
-            className="text-[10px] tabular-nums"
-            style={{ color: D.textSubtle }}
-          >
-            {formatCurrency(player.salary)}/wk
-          </span>
-        )}
-      </div>
-
-      {/* Action */}
-      <div className="flex items-center justify-end gap-1.5">
-        <ShortlistButton playerId={player.id} size="sm" />
-        <button
-          onClick={onOffer}
-          className="rounded px-3 py-1.5 text-[10px] font-medium transition-colors"
-          style={{
-            background: "rgba(255,70,85,0.1)",
-            color: D.red,
-            border: `1px solid rgba(255,70,85,0.25)`,
-          }}
-        >
-          {kind === "FA" ? "Signer" : "Faire une offre"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ───────────────────────── Offers ─────────────────────────
-
-function OffersTab({
-  data,
-  isLoading,
-  userTeamId,
-  onRespond,
-  onCounter,
-  respondPending,
-}: {
-  data?: { made: OfferRow[]; received: OfferRow[] };
-  isLoading: boolean;
-  userTeamId: string;
-  onRespond: (offerId: string, action: "ACCEPT" | "REJECT") => void;
-  onCounter: (offer: OfferRow) => void;
-  respondPending: boolean;
-}) {
-  if (isLoading) return <CenterMsg>Loading offers...</CenterMsg>;
-  if (!data || (data.made.length === 0 && data.received.length === 0))
-    return <CenterMsg>No transfer activity yet.</CenterMsg>;
-
-  return (
-    <div>
-      {data.received.length > 0 && (
-        <section style={{ borderBottom: `1px solid ${D.border}` }}>
-          <div
-            className="flex items-center justify-between px-10 py-4"
-            style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-          >
-            <span
-              className="text-[10px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Offres reçues
-            </span>
-            <span
-              className="text-[10px] font-medium tabular-nums"
-              style={{ color: D.textMuted }}
-            >
-              {data.received.length}
-            </span>
-          </div>
-          {data.received.map((o) => (
-            <OfferRow
-              key={o.id}
-              offer={o}
-              direction="IN"
-              userTeamId={userTeamId}
-              onRespond={onRespond}
-              onCounter={onCounter}
-              respondPending={respondPending}
-            />
-          ))}
-        </section>
-      )}
-
-      {data.made.length > 0 && (
-        <section style={{ borderBottom: `1px solid ${D.border}` }}>
-          <div
-            className="flex items-center justify-between px-10 py-4"
-            style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-          >
-            <span
-              className="text-[10px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Offres envoyées
-            </span>
-            <span
-              className="text-[10px] font-medium tabular-nums"
-              style={{ color: D.textMuted }}
-            >
-              {data.made.length}
-            </span>
-          </div>
-          {data.made.map((o) => (
-            <OfferRow
-              key={o.id}
-              offer={o}
-              direction="OUT"
-              userTeamId={userTeamId}
-              onRespond={onRespond}
-              onCounter={onCounter}
-              respondPending={respondPending}
-            />
-          ))}
-        </section>
-      )}
-    </div>
-  );
-}
-
-function OfferRow({
-  offer,
-  direction,
-  onRespond,
-  onCounter,
-  respondPending,
-}: {
-  offer: OfferRow;
-  direction: "IN" | "OUT";
-  userTeamId: string;
-  onRespond: (offerId: string, action: "ACCEPT" | "REJECT") => void;
-  onCounter: (offer: OfferRow) => void;
-  respondPending: boolean;
-}) {
-  const status = STATUS_COLOR[offer.status] ?? {
-    bg: "rgba(255,255,255,0.04)",
-    color: D.textSubtle,
-  };
-  const otherTeam = direction === "IN" ? offer.fromTeam : offer.toTeam;
-
-  return (
-    <div
-      className="grid items-center gap-3 px-10 py-3"
-      style={{
-        gridTemplateColumns: "40px 1fr 180px 1fr 180px",
-        borderBottom: `1px solid ${D.borderFaint}`,
-      }}
-    >
-      {/* Player photo */}
-      {offer.player.imageUrl ? (
-        <img
-          src={offer.player.imageUrl}
-          alt={offer.player.ign}
-          className="h-8 w-8 rounded-full object-cover"
-          style={{ border: `1px solid ${D.borderFaint}` }}
-        />
-      ) : (
-        <div
-          className="flex h-8 w-8 items-center justify-center rounded-full"
-          style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-        >
-          <span
-            className="text-[11px] font-medium"
-            style={{ color: D.textMuted }}
-          >
-            {offer.player.ign.charAt(0).toUpperCase()}
-          </span>
-        </div>
-      )}
-
-      <div className="flex min-w-0 flex-col">
-        <span
-          className="truncate text-[13px] font-medium"
-          style={{ color: D.textPrimary }}
-        >
-          {offer.player.ign}
-        </span>
-        <span
-          className="text-[10px] font-medium "
-          style={{ color: D.textSubtle }}
-        >
-          {offer.player.role} · {offer.player.region}
-        </span>
-      </div>
-
-      <div className="flex flex-col">
-        <span
-          className="text-[10px] font-medium "
-          style={{ color: D.textSubtle }}
-        >
-          {offer.offerType.replace(/_/g, " ")}
-        </span>
-        {otherTeam ? (
-          <div className="mt-1 flex items-center gap-2">
-            {otherTeam.logoUrl ? (
-              <img
-                src={otherTeam.logoUrl}
-                alt={otherTeam.name}
-                className="h-4 w-4 object-contain"
+              <div
+                className="h-1"
+                style={{
+                  width: `${Math.min(100, (c.scoutingProgressWeeks / c.scoutingTotalWeeks) * 100)}%`,
+                  background: D.amber,
+                  borderRadius: D.radiusBadge,
+                }}
               />
-            ) : (
-              <div className="h-4 w-4 rounded" style={{ background: D.card }} />
-            )}
-            <span className="text-[12px]" style={{ color: D.textPrimary }}>
-              {otherTeam.name}
-            </span>
+            </div>
           </div>
         ) : (
-          <span
-            className="mt-1 text-[11px]"
-            style={{ color: D.textSubtle, fontStyle: "italic" }}
-          >
-            Free agent
+          <span className="text-[10px]" style={{ color: D.textSubtle }}>
+            Stats inconnues — ajoute à la shortlist
           </span>
         )}
       </div>
 
-      <div className="flex items-center gap-6 tabular-nums">
-        {offer.transferFee > 0 && (
-          <div className="flex flex-col">
-            <span
-              className="text-[10px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Fee
-            </span>
-            <span
-              className="text-[12px] font-medium"
-              style={{ color: D.textPrimary }}
-            >
-              {formatCurrency(offer.transferFee)}
-            </span>
-          </div>
-        )}
-        <div className="flex flex-col">
-          <span
-            className="text-[10px] font-medium "
-            style={{ color: D.textSubtle }}
-          >
-            Salary
-          </span>
-          <span className="text-[12px] font-medium" style={{ color: D.gold }}>
-            {formatCurrency(offer.proposedSalary)}/wk
-          </span>
-        </div>
-        <div className="flex flex-col">
-          <span
-            className="text-[10px] font-medium "
-            style={{ color: D.textSubtle }}
-          >
-            Length
-          </span>
-          <span
-            className="text-[12px] font-medium"
-            style={{ color: D.textPrimary }}
-          >
-            {offer.contractLengthWeeks}w
-          </span>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-end gap-2">
+      {/* Salaire / Clause (toujours visibles) */}
+      <div className="flex flex-col items-end text-right">
         <span
-          className="rounded px-2 py-0.5 text-[10px] font-medium "
-          style={{ background: status.bg, color: status.color }}
+          className="text-[12px] font-medium tabular-nums"
+          style={{ color: D.gold }}
         >
-          {offer.status}
+          {formatCurrency(c.salary)}/sem
         </span>
-        {offer.negotiationRound > 1 && (
-          <span
-            className="rounded px-2 py-0.5 text-[10px] "
-            style={{ background: D.card, color: D.textMuted, border: `1px solid ${D.borderFaint}` }}
-          >
-            Round {offer.negotiationRound}
+        {c.buyoutClause != null && c.buyoutClause > 0 && (
+          <span className="text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
+            Clause {formatCurrency(c.buyoutClause)}
           </span>
         )}
-        {direction === "IN" && offer.status === "PENDING" && (
-          <>
-            <button
-              disabled={respondPending}
-              onClick={() => onRespond(offer.id, "REJECT")}
-              className="rounded px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-40"
-              style={{
-                border: `1px solid ${D.border}`,
-                color: D.textMuted,
-              }}
-            >
-              Reject
-            </button>
-            {offer.negotiationRound < 3 && (
-              <button
-                disabled={respondPending}
-                onClick={() => onCounter(offer)}
-                className="rounded px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-40"
-                style={{
-                  background: "rgba(96,165,250,0.1)",
-                  color: D.blue,
-                  border: `1px solid rgba(96,165,250,0.3)`,
-                }}
-              >
-                Counter
-              </button>
-            )}
-            <button
-              disabled={respondPending}
-              onClick={() => onRespond(offer.id, "ACCEPT")}
-              className="rounded px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-40"
-              style={{
-                background: "rgba(76,175,125,0.12)",
-                color: D.green,
-                border: `1px solid rgba(76,175,125,0.3)`,
-              }}
-            >
-              Accept
-            </button>
-          </>
-        )}
       </div>
-    </div>
-  );
-}
 
-// ───────────────────────── Offer Modal ─────────────────────────
-
-function OfferModal({
-  player,
-  userBudget,
-  onClose,
-  onDone,
-}: {
-  player: MarketPlayer;
-  userTeamId: string;
-  userBudget: number;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const isBuyout = player.teamId !== null;
-  const defaultSalary = isBuyout
-    ? Math.ceil(player.salary * 1.2)
-    : player.salary;
-  const defaultFee = isBuyout ? player.buyoutClause : 0;
-
-  const [proposedSalary, setProposedSalary] = useState<number>(defaultSalary);
-  const [contractLengthWeeks, setContractLengthWeeks] = useState<number>(52);
-  const [transferFee, setTransferFee] = useState<number>(defaultFee);
-  const [signingBonus, setSigningBonus] = useState<number>(0);
-  const [sellOnPercentage, setSellOnPercentage] = useState<number>(0);
-  const [loyaltyBonus, setLoyaltyBonus] = useState<number>(0);
-  const [performanceBonus, setPerformanceBonus] = useState<number>(0);
-  const [noReleaseClause, setNoReleaseClause] = useState<boolean>(false);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const makeOffer = trpc.transfer.makeOffer.useMutation({
-    onSuccess: () => onDone(),
-  }) as any;
-
-  const upfront =
-    (isBuyout ? transferFee : proposedSalary * 4) + signingBonus;
-  const insufficient = upfront > userBudget;
-
-  const handleSubmit = () => {
-    makeOffer.mutate({
-      playerId: player.id,
-      offerType: isBuyout ? "BUYOUT" : "FREE_AGENT_SIGNING",
-      transferFee: isBuyout ? transferFee : undefined,
-      proposedSalary,
-      contractLengthWeeks,
-      signingBonus: signingBonus || undefined,
-      sellOnPercentage: sellOnPercentage || undefined,
-      loyaltyBonus: loyaltyBonus || undefined,
-      performanceBonus: performanceBonus || undefined,
-      noReleaseClause: noReleaseClause || undefined,
-    });
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{
-        background: "rgba(0,0,0,0.6)",
-        backdropFilter: "blur(6px)",
-      }}
-      onClick={onClose}
-    >
+      {/* Actions */}
       <div
-        className="w-full max-w-lg rounded-lg"
-        style={{
-          background: D.surface,
-          border: `1px solid ${D.border}`,
-        }}
+        className="flex items-center justify-end gap-1.5"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-6 py-4"
-          style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-        >
-          <div>
-            <div
-              className="text-[10px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              {isBuyout ? "Offre de transfert" : "Signer un agent libre"}
-            </div>
-            <h2
-              className="mt-1 text-[22px] font-medium "
-              style={{ color: D.textPrimary }}
-            >
-              {player.ign}
-            </h2>
-            <div
-              className="mt-1 text-[11px] font-medium "
-              style={{ color: D.textMuted }}
-            >
-              {player.role} · {player.region}
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-[12px] transition-colors"
-            style={{ color: D.textMuted }}
-          >
-            Close
-          </button>
-        </div>
-
-        {/* Context row */}
-        <div
-          className="grid grid-cols-3"
-          style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-        >
-          <ModalMetric
-            label="Salaire actuel"
-            value={formatCurrency(player.salary)}
-          />
-          {isBuyout ? (
-            <ModalMetric
-              label="Clause libératoire"
-              value={formatCurrency(player.buyoutClause)}
-              accent={D.gold}
-            />
-          ) : (
-            <ModalMetric label="K/D" value={formatStat(player.kd, 2)} />
-          )}
-          <ModalMetric
-            label="ACS"
-            value={formatStat(player.acs, 0)}
-            accent={D.gold}
-            last
-          />
-        </div>
-
-        <div className="flex flex-col gap-5 px-6 py-5">
-          {isBuyout && (
-            <div>
-              <label
-                className="mb-2 block text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
-              >
-                Transfer Fee
-              </label>
-              <input
-                type="number"
-                value={transferFee}
-                onChange={(e) =>
-                  setTransferFee(parseInt(e.target.value || "0", 10))
-                }
-                className="w-full rounded px-3 py-2.5 text-[13px] outline-none tabular-nums"
-                style={{
-                  background: D.card,
-                  color: D.textPrimary,
-                  border: `1px solid ${D.border}`,
-                }}
-              />
-              <p
-                className="mt-2 text-[10px] leading-relaxed"
-                style={{ color: D.textSubtle }}
-              >
-                {transferFee >= player.buyoutClause
-                  ? "Meets buyout clause — auto-accepted."
-                  : transferFee >= Math.floor(player.buyoutClause * 0.7)
-                    ? "Below clause — selling team will consider (50/50)."
-                    : "Too low — likely rejected."}
-              </p>
-            </div>
-          )}
-
-          <div>
-            <label
-              className="mb-2 block text-[10px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Proposed Salary (per week)
-            </label>
-            <input
-              type="number"
-              value={proposedSalary}
-              onChange={(e) =>
-                setProposedSalary(parseInt(e.target.value || "0", 10))
-              }
-              className="w-full rounded px-3 py-2.5 text-[13px] outline-none tabular-nums"
-              style={{
-                background: D.card,
-                color: D.textPrimary,
-                border: `1px solid ${D.border}`,
-              }}
-            />
-            <p
-              className="mt-2 text-[10px] leading-relaxed"
-              style={{ color: D.textSubtle }}
-            >
-              {isBuyout
-                ? `Player demands at least ${formatCurrency(Math.ceil(player.salary * 1.2))}/wk to move.`
-                : proposedSalary >= player.salary
-                  ? "Meets asking salary — signing should go through."
-                  : "Below asking — player may decline."}
-            </p>
-          </div>
-
-          <div>
-            <label
-              className="mb-2 block text-[10px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Contract Length
-            </label>
-            <div className="flex gap-2">
-              {CONTRACT_LENGTHS.map((c) => {
-                const active = contractLengthWeeks === c.weeks;
-                return (
-                  <button
-                    key={c.weeks}
-                    onClick={() => setContractLengthWeeks(c.weeks)}
-                    className="flex-1 rounded px-3 py-2 text-[11px] font-medium transition-colors"
-                    style={{
-                      background: active
-                        ? "rgba(255,70,85,0.1)"
-                        : "transparent",
-                      color: active ? D.red : D.textMuted,
-                      border: active
-                        ? `1px solid rgba(255,70,85,0.3)`
-                        : `1px solid ${D.border}`,
-                    }}
-                  >
-                    {c.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Extra leverage — signing bonus, sell-on, loyalty */}
-          <div className="grid grid-cols-3 gap-3">
-            <FieldInput
-              label="Prime de signature"
-              value={signingBonus}
-              onChange={setSigningBonus}
-              hint="versée à la signature"
-            />
-            <FieldInput
-              label="Pourcentage de revente"
-              value={sellOnPercentage}
-              onChange={setSellOnPercentage}
-              max={50}
-              hint="% sur revente future"
-            />
-            <FieldInput
-              label="Prime de fidélité"
-              value={loyaltyBonus}
-              onChange={setLoyaltyBonus}
-              hint="versée en fin de contrat"
-            />
-            <FieldInput
-              label="Prime playoffs"
-              value={performanceBonus}
-              onChange={setPerformanceBonus}
-              hint="versée si l'équipe atteint Masters/Champions"
-            />
-          </div>
-
-          {/* No-release toggle */}
-          <label
-            className="flex items-center justify-between rounded px-3 py-2.5 cursor-pointer"
-            style={{
-              background: noReleaseClause ? "rgba(198,155,58,0.08)" : D.card,
-              border: `1px solid ${noReleaseClause ? D.gold : D.borderFaint}`,
-            }}
-          >
-            <div className="flex flex-col">
-              <span className="text-[11px] font-medium" style={{ color: D.textPrimary }}>
-                No-release clause
-              </span>
-              <span className="text-[10px]" style={{ color: D.textSubtle }}>
-                Hard veto on future buyouts (Star-tier protection)
-              </span>
-            </div>
-            <input
-              type="checkbox"
-              checked={noReleaseClause}
-              onChange={(e) => setNoReleaseClause(e.target.checked)}
-              style={{ accentColor: D.gold }}
-            />
-          </label>
-
-          {/* Upfront */}
-          <div
-            className="flex items-center justify-between rounded px-3 py-2.5"
-            style={{
-              background: D.card,
-              border: `1px solid ${D.borderFaint}`,
-            }}
-          >
-            <span
-              className="text-[10px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Coût initial {isBuyout ? "(indemnité)" : "(4 sem avance salaire)"}
-            </span>
-            <span
-              className="text-[14px] font-medium tabular-nums"
-              style={{ color: insufficient ? D.red : D.gold }}
-            >
-              {formatCurrency(upfront)}
-            </span>
-          </div>
-
-          {makeOffer.error && (
-            <div
-              className="rounded px-3 py-2 text-[11px]"
-              style={{
-                background: "rgba(255,70,85,0.08)",
-                color: D.red,
-                border: `1px solid rgba(255,70,85,0.25)`,
-              }}
-            >
-              {makeOffer.error.message}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={onClose}
-              className="rounded px-4 py-2 text-[11px] font-medium transition-colors"
-              style={{
-                border: `1px solid ${D.border}`,
-                color: D.textMuted,
-              }}
-            >
-              Annuler
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={
-                insufficient || makeOffer.isPending || proposedSalary <= 0
-              }
-              className="rounded px-4 py-2 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-              style={{
-                background: "rgba(255,70,85,0.1)",
-                color: D.red,
-                border: `1px solid rgba(255,70,85,0.3)`,
-              }}
-            >
-              {makeOffer.isPending ? "Envoi…" : "Envoyer l'offre"}
-            </button>
-          </div>
-        </div>
+        <ShortlistButton playerId={c.id} size="sm" />
       </div>
-    </div>
+    </Link>
   );
 }
 
-function ModalMetric({
+function StatChip({
   label,
   value,
-  accent,
-  last,
+  color,
 }: {
   label: string;
-  value: string;
-  accent?: string;
-  last?: boolean;
+  value: string | number;
+  color?: string;
 }) {
   return (
-    <div
-      className="flex flex-col gap-1 px-5 py-4"
-      style={{ borderRight: last ? undefined : `1px solid ${D.borderFaint}` }}
-    >
-      <span
-        className="text-[10px] font-medium "
-        style={{ color: D.textSubtle }}
-      >
+    <div className="flex flex-col items-center">
+      <span className="text-[9px]" style={{ color: D.textSubtle }}>
         {label}
       </span>
       <span
-        className="text-[16px] font-medium tabular-nums"
-        style={{ color: accent ?? D.textPrimary }}
+        className="text-[12px] font-medium tabular-nums"
+        style={{ color: color ?? D.textPrimary }}
       >
         {value}
       </span>
@@ -1357,253 +539,60 @@ function ModalMetric({
   );
 }
 
-// ───────────────────────── Field input (compact) ─────────────────────────
-
-function FieldInput({
+function MetricCell({
   label,
   value,
-  onChange,
-  hint,
-  max,
+  sub,
+  accent,
+  last,
 }: {
   label: string;
-  value: number;
-  onChange: (n: number) => void;
-  hint?: string;
-  max?: number;
+  value: string;
+  sub?: string;
+  accent?: string;
+  last?: boolean;
 }) {
   return (
-    <div>
-      <label
-        className="mb-1.5 block text-[10px] font-medium "
+    <div
+      className="flex flex-col gap-1 px-6 py-5"
+      style={last ? undefined : { borderRight: `1px solid ${D.borderFaint}` }}
+    >
+      <span
+        className="text-[10px] font-medium uppercase tracking-wider"
         style={{ color: D.textSubtle }}
       >
         {label}
-      </label>
-      <input
-        type="number"
-        value={value}
-        min={0}
-        max={max}
-        onChange={(e) => onChange(parseFloat(e.target.value || "0"))}
-        className="w-full rounded px-2 py-2 text-[12px] outline-none tabular-nums"
-        style={{
-          background: D.card,
-          color: D.textPrimary,
-          border: `1px solid ${D.border}`,
-        }}
-      />
-      {hint && (
-        <p
-          className="mt-1 text-[9px] "
-          style={{ color: D.textSubtle }}
-        >
-          {hint}
-        </p>
+      </span>
+      <span
+        className="text-[22px] font-medium tabular-nums"
+        style={{ color: accent ?? D.textPrimary }}
+      >
+        {value}
+      </span>
+      {sub && (
+        <span className="text-[10px]" style={{ color: D.textSubtle }}>
+          {sub}
+        </span>
       )}
     </div>
   );
 }
 
-// ───────────────────────── Counter-Offer Modal ─────────────────────────
-
-function CounterOfferModal({
-  offer,
-  onClose,
-  onDone,
-}: {
-  offer: OfferRow;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [transferFee, setTransferFee] = useState<number>(offer.transferFee);
-  const [proposedSalary, setProposedSalary] = useState<number>(offer.proposedSalary);
-  const [contractLengthWeeks, setContractLengthWeeks] = useState<number>(offer.contractLengthWeeks);
-  const [signingBonus, setSigningBonus] = useState<number>(offer.signingBonus);
-  const [sellOnPercentage, setSellOnPercentage] = useState<number>(offer.sellOnPercentage);
-  const [loyaltyBonus, setLoyaltyBonus] = useState<number>(offer.loyaltyBonus);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const respondMutation = trpc.transfer.respondToOffer.useMutation({
-    onSuccess: () => onDone(),
-  }) as any;
-
-  const handleSubmit = () => {
-    respondMutation.mutate({
-      offerId: offer.id,
-      action: "COUNTER",
-      counter: {
-        transferFee: offer.offerType === "BUYOUT" ? transferFee : undefined,
-        proposedSalary,
-        contractLengthWeeks,
-        signingBonus: signingBonus || undefined,
-        sellOnPercentage: sellOnPercentage || undefined,
-        loyaltyBonus: loyaltyBonus || undefined,
-      },
-    });
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)" }}
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-2xl rounded-lg"
-        style={{ background: D.surface, border: `1px solid ${D.border}` }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-6 py-4"
-          style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-        >
-          <div>
-            <div
-              className="text-[10px] font-medium "
-              style={{ color: D.textSubtle }}
-            >
-              Counter Offer · Round {offer.negotiationRound + 1}/3
-            </div>
-            <h2
-              className="mt-1 text-[22px] font-medium "
-              style={{ color: D.textPrimary }}
-            >
-              {offer.player.ign}
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-[12px] "
-            style={{ color: D.textMuted }}
-          >
-            Close
-          </button>
-        </div>
-
-        {/* Their offer reference */}
-        <div
-          className="grid grid-cols-4"
-          style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-        >
-          <ModalMetric label="Their Fee" value={formatCurrency(offer.transferFee)} />
-          <ModalMetric
-            label="Their Salary"
-            value={`${formatCurrency(offer.proposedSalary)}/wk`}
-          />
-          <ModalMetric label="Their Length" value={`${offer.contractLengthWeeks}w`} />
-          <ModalMetric
-            label="Their Bonus"
-            value={formatCurrency(offer.signingBonus)}
-            last
-          />
-        </div>
-
-        <div className="flex flex-col gap-5 px-6 py-5">
-          {offer.offerType === "BUYOUT" && (
-            <FieldInput
-              label="Your Transfer Fee"
-              value={transferFee}
-              onChange={setTransferFee}
-            />
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <FieldInput
-              label="Your Proposed Salary"
-              value={proposedSalary}
-              onChange={setProposedSalary}
-              hint="/ week"
-            />
-            <div>
-              <label
-                className="mb-1.5 block text-[10px] font-medium "
-                style={{ color: D.textSubtle }}
-              >
-                Contract Length
-              </label>
-              <div className="flex gap-1">
-                {[26, 52, 104].map((w) => {
-                  const active = contractLengthWeeks === w;
-                  return (
-                    <button
-                      key={w}
-                      onClick={() => setContractLengthWeeks(w)}
-                      className="flex-1 rounded px-2 py-2 text-[11px] font-medium "
-                      style={{
-                        background: active
-                          ? "rgba(255,70,85,0.1)"
-                          : "transparent",
-                        color: active ? D.red : D.textMuted,
-                        border: active
-                          ? `1px solid rgba(255,70,85,0.3)`
-                          : `1px solid ${D.border}`,
-                      }}
-                    >
-                      {w}w
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <FieldInput
-              label="Signing Bonus"
-              value={signingBonus}
-              onChange={setSigningBonus}
-            />
-            <FieldInput
-              label="Sell-on %"
-              value={sellOnPercentage}
-              onChange={setSellOnPercentage}
-              max={50}
-            />
-            <FieldInput
-              label="Loyalty Bonus"
-              value={loyaltyBonus}
-              onChange={setLoyaltyBonus}
-            />
-          </div>
-
-          {respondMutation.error && (
-            <div
-              className="rounded px-3 py-2 text-[11px]"
-              style={{
-                background: "rgba(255,70,85,0.08)",
-                color: D.red,
-                border: `1px solid rgba(255,70,85,0.25)`,
-              }}
-            >
-              {respondMutation.error.message}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-3">
-            <button
-              onClick={onClose}
-              className="rounded px-4 py-2 text-[11px] font-medium "
-              style={{ border: `1px solid ${D.border}`, color: D.textMuted }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={respondMutation.isPending || proposedSalary <= 0}
-              className="rounded px-4 py-2 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-40"
-              style={{
-                background: "rgba(96,165,250,0.1)",
-                color: D.blue,
-                border: `1px solid rgba(96,165,250,0.3)`,
-              }}
-            >
-              {respondMutation.isPending ? "Sending..." : "Send Counter"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+function objectiveKindLabel(kind: "ROLE_GAP" | "UPGRADE" | "DEPTH"): string {
+  switch (kind) {
+    case "ROLE_GAP": return "Poste vacant";
+    case "UPGRADE": return "Renfort";
+    case "DEPTH": return "Profondeur";
+  }
+}
+function objectiveColor(kind: "ROLE_GAP" | "UPGRADE" | "DEPTH"): string {
+  switch (kind) {
+    case "ROLE_GAP": return D.red;
+    case "UPGRADE": return D.amber;
+    case "DEPTH": return D.primary;
+  }
+}
+function objectiveBorderColor(kind: "ROLE_GAP" | "UPGRADE" | "DEPTH"): string {
+  const c = objectiveColor(kind);
+  return `${c}30`;
 }
