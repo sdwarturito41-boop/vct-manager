@@ -1591,27 +1591,37 @@ export async function initializeRegionalStage(
     const omegaRounds = roundRobinSchedule(omega);
     const roundCount = Math.max(alphaRounds.length, omegaRounds.length);
 
-    const broadcastDays = MATCH_DAYS[region];
+    // V2 calendar — use the per-stage weekday override (EMEA Stage 1 group =
+    // Wed-Fri ISO). Snap to the calendar Monday of `firstWeekStart` so the
+    // Mon→Sun scan covers the correct calendar week.
+    const broadcastDays = weekdaysForStage(`${stageId}_GROUP`, region);
+    const stageMonday = mondayOf(firstWeekStart);
     const matchData: Array<{
       saveId: string;
       team1Id: string; team2Id: string; stageId: string;
       format: MatchFormat; day: number; week: number; season: number;
     }> = [];
 
-    // Each "round" = 1 week, each team plays once in the week
+    // Each "round" = 1 week. Resolve match days as real calendar weekdays
+    // inside the Mon→Sun span of the round's calendar week.
     for (let r = 0; r < roundCount; r++) {
-      const weekStart = firstWeekStart + r * 7;
+      const weekMonday = stageMonday + r * 7;
       const alphaMatches = alphaRounds[r] ?? [];
       const omegaMatches = omegaRounds[r] ?? [];
       const pairsPerGroup = Math.max(alphaMatches.length, omegaMatches.length);
 
-      // We need `pairsPerGroup` broadcast days with 1 Alpha + 1 Omega per day
-      const daysNeeded = pairsPerGroup;
-      const availableDays = broadcastDays.slice(0, Math.max(daysNeeded, broadcastDays.length));
-      // Cycle through broadcast days if we need more slots than available
+      // Find the absolute days in this calendar week whose real ISO weekday
+      // is in `broadcastDays`.
+      const slots: number[] = [];
+      for (let offset = 0; offset < 7; offset++) {
+        const d = weekMonday + offset;
+        if (broadcastDays.includes(dayOfWeek(d))) slots.push(d);
+      }
+      if (slots.length === 0) slots.push(weekMonday);
+
+      // Cycle through slots if we need more pair-days than weekdays available
       for (let i = 0; i < pairsPerGroup; i++) {
-        const dow = availableDays[i % availableDays.length];
-        const day = weekStart + dow - 1;
+        const day = slots[i % slots.length];
         const week = Math.ceil(day / 7);
 
         const aPair = alphaMatches[i];
