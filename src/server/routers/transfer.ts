@@ -4,6 +4,9 @@ import { router, protectedProcedure, saveProcedure } from "../trpc";
 import type { OfferStatus } from "@/generated/prisma/client";
 import { effectiveBuyoutClause, stateFromScore } from "@/server/mercato/happiness";
 import { handleTeamDeparture } from "@/server/mercato/relationships";
+import { isRosterLocked, isTransferWindowOpen } from "@/server/mercato/locks";
+import { countRoster, assignSigningSlot, canSign, MAX_TOTAL_ROSTER } from "@/server/mercato/rosterCap";
+import { debitTransfer, totalAvailable } from "@/server/finance/budgets";
 
 const OFFER_DEADLINE_HOURS = 72;
 
@@ -59,7 +62,17 @@ async function resolveOfferDecision(
   // WANTS_TRANSFER players push the selling team to accept at -30% clause
   // and halve the salary-demand rigidity.
   const isDesperate = stateFromScore(player.happiness) === "WANTS_TRANSFER";
-  const salaryDemandMet = offer.proposedSalary >= Math.ceil(player.salary * (isDesperate ? 1.05 : 1.2));
+  // FM-style — salary demand scales with squad status. A Star demands +40%
+  // over current pay to consider moving; a Prospect accepts -25%.
+  const statusMultiplier: Record<string, number> = {
+    STAR: 1.40,
+    STARTER: 1.20,
+    ROTATION: 1.10,
+    RESERVE: 1.00,
+    PROSPECT: 0.90,
+  };
+  const demandMul = isDesperate ? 1.05 : (statusMultiplier[player.squadStatus] ?? 1.20);
+  const salaryDemandMet = offer.proposedSalary >= Math.ceil(player.salary * demandMul);
 
   // Counter-offer path: we're replying to a round-1+ offer. Compare total
   // cost against the parent offer to decide accept / counter / reject.
@@ -94,12 +107,46 @@ async function resolveOfferDecision(
     const fee = offer.transferFee || 0;
     const effClauseThreshold = isDesperate ? clause * 0.9 : clause;
 
-    // Healthy team won't sell a core piece even at clause. Check the selling
-    // team's situation — if they're winning AND the player fills a role the
-    // team doesn't have a backup for, demand a significant premium (1.5×
-    // clause). Doesn't apply if the player WANTS_TRANSFER (`isDesperate`).
+    // No-release clause — hard veto regardless of fee, no premium can buy
+    // these. Overridden only by WANTS_TRANSFER (player still wants out).
+    if (player.noReleaseClause && !isDesperate) {
+      await ctx.prisma.transferOffer.update({
+        where: { id: offerId },
+        data: { status: "REJECTED" },
+      });
+      return "REJECTED";
+    }
+
+    // Roster Lock gate — if either team (buyer or seller) is frozen for an
+    // international tournament, the offer is rejected outright. Checked
+    // BEFORE the viability gate because lock supersedes all other terms.
+    const season = await ctx.prisma.season.findFirst({
+      where: { saveId: offer.saveId, isActive: true },
+      select: { currentDay: true, currentStage: true },
+    });
+    const currentDay = season?.currentDay ?? 0;
+    const buyerLocked =
+      offer.fromTeam.rosterLockedUntilDay != null &&
+      offer.fromTeam.rosterLockedUntilDay >= currentDay;
+    const sellerLocked =
+      offer.toTeam?.rosterLockedUntilDay != null &&
+      offer.toTeam.rosterLockedUntilDay >= currentDay;
+    if (buyerLocked || sellerLocked) {
+      await ctx.prisma.transferOffer.update({
+        where: { id: offerId },
+        data: { status: "REJECTED" },
+      });
+      return "REJECTED";
+    }
+
+    // Hard viability gate — a sale that breaks the seller's roster
+    // (drops below 5 players, or removes the team's last Duelist /
+    // Controller / Sentinel / Initiator when they currently have one)
+    // is rejected outright. No premium can buy these — even WANTS_TRANSFER
+    // can't override (player has to wait for the team to acquire a
+    // replacement first).
     let healthyTeamPremium = 1.0;
-    if (!isDesperate && player.teamId) {
+    if (player.teamId) {
       const sellerTeam = await ctx.prisma.team.findUnique({
         where: { id: player.teamId },
         select: {
@@ -112,16 +159,48 @@ async function resolveOfferDecision(
         },
       });
       if (sellerTeam) {
-        const games = sellerTeam.wins + sellerTeam.losses;
-        const winPct = games > 0 ? sellerTeam.wins / games : 0.5;
-        const sameRole = sellerTeam.players.filter(
-          (pp: { role: string; id: string }) => pp.role === player.role && pp.id !== player.id,
-        ).length;
-        const wouldLeaveGap = sameRole === 0;
-        const teamHealthy =
-          sellerTeam.players.length >= 5 && (games < 3 || winPct >= 0.45);
-        if (teamHealthy && wouldLeaveGap) {
-          healthyTeamPremium = 1.5; // need fee >= 1.5× clause to even consider
+        const after = sellerTeam.players.filter(
+          (pp: { role: string; id: string }) => pp.id !== player.id,
+        );
+        if (after.length < 5) {
+          await ctx.prisma.transferOffer.update({
+            where: { id: offerId },
+            data: { status: "REJECTED" },
+          });
+          return "REJECTED";
+        }
+        const REQUIRED_ROLES = ["Duelist", "Controller", "Sentinel", "Initiator"] as const;
+        for (const required of REQUIRED_ROLES) {
+          const beforeCount = sellerTeam.players.filter(
+            (pp: { role: string }) => pp.role === required,
+          ).length;
+          const afterCount = after.filter(
+            (pp: { role: string }) => pp.role === required,
+          ).length;
+          if (beforeCount > 0 && afterCount === 0) {
+            await ctx.prisma.transferOffer.update({
+              where: { id: offerId },
+              data: { status: "REJECTED" },
+            });
+            return "REJECTED";
+          }
+        }
+
+        // Healthy-team premium — if seller is winning AND the player fills
+        // a role with no backup, demand 1.5× clause. Doesn't apply if
+        // WANTS_TRANSFER.
+        if (!isDesperate) {
+          const games = sellerTeam.wins + sellerTeam.losses;
+          const winPct = games > 0 ? sellerTeam.wins / games : 0.5;
+          const sameRole = sellerTeam.players.filter(
+            (pp: { role: string; id: string }) => pp.role === player.role && pp.id !== player.id,
+          ).length;
+          const wouldLeaveGap = sameRole === 0;
+          const teamHealthy =
+            sellerTeam.players.length >= 5 && (games < 3 || winPct >= 0.45);
+          if (teamHealthy && wouldLeaveGap) {
+            healthyTeamPremium = 1.5;
+          }
         }
       }
     }
@@ -269,17 +348,42 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
   const newContractEndSeason = currentSeason + Math.floor(totalWeeks / 52);
   const newContractEndWeek = totalWeeks % 52 === 0 ? 52 : totalWeeks % 52;
 
+  // Resolve buyer's open slot — active first, reserve otherwise. If buyer
+  // is full (10 contracted), this offer must have raced past the makeOffer
+  // gate; we abort the apply silently rather than over-stuffing the roster.
+  const buyerRoster = await ctx.prisma.player.findMany({
+    where: { teamId: offer.fromTeamId, isRetired: false },
+    select: { isActive: true, isRetired: true, isReserve: true },
+  });
+  const slot = assignSigningSlot(countRoster(buyerRoster));
+  if (slot === null && offer.offerType !== "CONTRACT_EXTENSION") return;
+  const willBeReserve = slot === "reserve";
+
   const updates: unknown[] = [];
 
   const newBuyoutClause = Math.ceil(offer.proposedSalary * 30);
 
   if (offer.offerType === "BUYOUT") {
-    // Buyer pays transferFee + signingBonus. Seller receives transferFee.
+    // Buyer pays transferFee + signingBonus from transferBudget (fallback to
+    // operational `budget`). Seller receives transferFee into operational
+    // budget (a one-shot capital injection, not a transfer envelope refill —
+    // Phase 3 board will rebalance at next season start).
     const buyerOutlay = offer.transferFee + offer.signingBonus;
+    const res = debitTransfer(
+      {
+        budget: offer.fromTeam.budget,
+        transferBudget: offer.fromTeam.transferBudget,
+        wageBudgetSeason: offer.fromTeam.wageBudgetSeason,
+      },
+      buyerOutlay,
+    );
     updates.push(
       ctx.prisma.team.update({
         where: { id: offer.fromTeamId },
-        data: { budget: { decrement: buyerOutlay } },
+        data: {
+          transferBudget: res.transferBudget,
+          budget: res.budget,
+        },
       }),
     );
     if (offer.toTeamId) {
@@ -295,6 +399,7 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
         where: { id: offer.playerId },
         data: {
           teamId: offer.fromTeamId,
+          isReserve: willBeReserve,
           salary: offer.proposedSalary,
           contractEndSeason: newContractEndSeason,
           contractEndWeek: newContractEndWeek,
@@ -308,12 +413,25 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
       }),
     );
   } else if (offer.offerType === "FREE_AGENT_SIGNING") {
-    // Upfront = 4w salary + signingBonus
+    // Upfront = 4w salary + signingBonus. All charged to transferBudget
+    // (FA signing is an acquisition cost, not an ongoing wage hit — wages
+    // start flowing next payroll Monday from wageBudgetSeason).
     const buyerOutlay = offer.proposedSalary * 4 + offer.signingBonus;
+    const res = debitTransfer(
+      {
+        budget: offer.fromTeam.budget,
+        transferBudget: offer.fromTeam.transferBudget,
+        wageBudgetSeason: offer.fromTeam.wageBudgetSeason,
+      },
+      buyerOutlay,
+    );
     updates.push(
       ctx.prisma.team.update({
         where: { id: offer.fromTeamId },
-        data: { budget: { decrement: buyerOutlay } },
+        data: {
+          transferBudget: res.transferBudget,
+          budget: res.budget,
+        },
       }),
     );
     updates.push(
@@ -321,6 +439,7 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
         where: { id: offer.playerId },
         data: {
           teamId: offer.fromTeamId,
+          isReserve: willBeReserve,
           salary: offer.proposedSalary,
           contractEndSeason: newContractEndSeason,
           contractEndWeek: newContractEndWeek,
@@ -334,12 +453,25 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
       }),
     );
   } else if (offer.offerType === "CONTRACT_EXTENSION") {
-    // Extension pays signingBonus upfront, raises salary, resets clause
+    // Extension pays signingBonus upfront — charged to transferBudget
+    // (acquisition-style retention cost). New salary flows weekly through
+    // wageBudgetSeason once payroll runs.
     if (offer.signingBonus > 0) {
+      const res = debitTransfer(
+        {
+          budget: offer.fromTeam.budget,
+          transferBudget: offer.fromTeam.transferBudget,
+          wageBudgetSeason: offer.fromTeam.wageBudgetSeason,
+        },
+        offer.signingBonus,
+      );
       updates.push(
         ctx.prisma.team.update({
           where: { id: offer.fromTeamId },
-          data: { budget: { decrement: offer.signingBonus } },
+          data: {
+            transferBudget: res.transferBudget,
+            budget: res.budget,
+          },
         }),
       );
     }
@@ -522,10 +654,58 @@ export const transferRouter = router({
       const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
       if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
+      // Transfer window gate (closed during off-season).
+      if (!isTransferWindowOpen(season)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Transfer window is closed (off-season).",
+        });
+      }
+
+      // Buyer roster lock — your team frozen → no signings, no buyouts.
+      if (isRosterLocked(team, season.currentDay)) {
+        const daysLeft = (team.rosterLockedUntilDay ?? 0) - season.currentDay;
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Your team is under Roster Lock for ${daysLeft} more day(s) (international tournament).`,
+        });
+      }
+
       const player = await ctx.prisma.player.findUnique({
         where: { id: input.playerId },
       });
       if (!player) throw new TRPCError({ code: "NOT_FOUND", message: "Player not found." });
+
+      // Roster cap — incoming signings need a slot (active or reserve).
+      // Doesn't apply to CONTRACT_EXTENSION (player already on the roster).
+      if (input.offerType === "BUYOUT" || input.offerType === "FREE_AGENT_SIGNING") {
+        const roster = await ctx.prisma.player.findMany({
+          where: { teamId: team.id, isRetired: false },
+          select: { isActive: true, isRetired: true, isReserve: true },
+        });
+        const counts = countRoster(roster);
+        if (!canSign(counts)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Roster full (${counts.active + counts.reserve}/${MAX_TOTAL_ROSTER}). Release a player before signing.`,
+          });
+        }
+      }
+
+      // Seller roster lock — target's current team frozen → no buyouts.
+      if (input.offerType === "BUYOUT" && player.teamId) {
+        const sellerTeam = await ctx.prisma.team.findUnique({
+          where: { id: player.teamId },
+          select: { rosterLockedUntilDay: true, name: true },
+        });
+        if (sellerTeam && isRosterLocked(sellerTeam, season.currentDay)) {
+          const daysLeft = (sellerTeam.rosterLockedUntilDay ?? 0) - season.currentDay;
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `${sellerTeam.name} is under Roster Lock for ${daysLeft} more day(s) — no buyouts possible.`,
+          });
+        }
+      }
 
       // Validate offer type against player state
       if (input.offerType === "FREE_AGENT_SIGNING" && player.teamId) {
@@ -589,11 +769,16 @@ export const transferRouter = router({
               : o.signingBonus;
         return sum + up;
       }, 0);
-      if (committed + upfrontCost > team.budget) {
-        const remaining = Math.max(0, team.budget - committed);
+      // Transfer envelope = dedicated transferBudget + operational fallback.
+      // Phase 3 slider will reshape transferBudget; for now the fallback to
+      // operational matches debitTransfer behavior so any check that the
+      // amount fits across the two is honest.
+      const transferEnvelope = team.transferBudget + team.budget;
+      if (committed + upfrontCost > transferEnvelope) {
+        const remaining = Math.max(0, transferEnvelope - committed);
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: `Not enough free budget. Need $${upfrontCost.toLocaleString()}, only $${remaining.toLocaleString()} uncommitted after pending offers.`,
+          message: `Not enough free transfer budget. Need $${upfrontCost.toLocaleString()}, only $${remaining.toLocaleString()} uncommitted (transfer + operational).`,
         });
       }
 

@@ -14,6 +14,8 @@ import { playstyleRouter } from "./playstyle";
 import { patchRouter } from "./patch";
 import { messageRouter } from "./message";
 import { saveRouter } from "./save";
+import { financeRouter } from "./finance";
+import { scoutingRouter } from "./scouting";
 
 export const appRouter = router({
   save: saveRouter,
@@ -31,6 +33,8 @@ export const appRouter = router({
   playstyle: playstyleRouter,
   patch: patchRouter,
   message: messageRouter,
+  finance: financeRouter,
+  scouting: scoutingRouter,
 });
 
 export type AppRouter = typeof appRouter;

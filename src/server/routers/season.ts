@@ -18,6 +18,16 @@ import {
 import { dayOfWeek } from "@/lib/game-date";
 import { MASTERS_FORMAT } from "@/constants/masters-format";
 import { applyPatchToMeta } from "@/constants/meta";
+import {
+  allocateSeasonBudget,
+  debitWages,
+  needsInitialSplit,
+  totalAvailable,
+} from "@/server/finance/budgets";
+import { reconcileDebt } from "@/server/finance/investor";
+import { computeWeeklyRevenue } from "@/server/finance/revenue";
+import { computeWeeklyOperationalCost } from "@/server/finance/operations";
+import { SCOUTING_REVEAL_WEEKS } from "@/server/routers/scouting";
 import { runAiOfferResolutions } from "./transfer";
 import { invalidateSponsorOffersCache } from "./sponsor";
 import { invalidateCoachOffersCache } from "./coach";
@@ -40,6 +50,9 @@ type SimTeamInput = {
   skillUtility: number;
   skillTeamplay: number;
   playstyle: Team["playstyle"];
+  ecoDiscipline?: number;
+  mapPrep?: unknown;
+  adaptationRating?: number;
   players: Pick<Player, "id" | "ign" | "acs" | "kd" | "adr" | "kast" | "hs" | "role" | "overall">[];
 };
 
@@ -65,6 +78,9 @@ function buildSimTeam(team: SimTeamInput): SimTeam {
     skillUtility: team.skillUtility,
     skillTeamplay: team.skillTeamplay,
     playstyle: team.playstyle,
+    ecoDiscipline: team.ecoDiscipline,
+    mapPrep: (team.mapPrep ?? {}) as Record<string, number>,
+    adaptationRating: team.adaptationRating,
   };
 }
 
@@ -139,6 +155,7 @@ export const seasonRouter = router({
     const teamScalars = {
       id: true, name: true, tag: true, logoUrl: true, region: true,
       skillAim: true, skillUtility: true, skillTeamplay: true, playstyle: true,
+      ecoDiscipline: true, mapPrep: true, adaptationRating: true,
     } as const;
     const todaysMatches = await ctx.prisma.match.findMany({
       where: {
@@ -158,14 +175,14 @@ export const seasonRouter = router({
           select: {
             ...teamScalars,
             players: { where: { isActive: true }, select: playerSelect },
-            coach: { select: { utilityBoost: true } },
+            coach: { select: { utilityBoost: true, scoutingSkill: true, trainingEff: true } },
           },
         },
         team2: {
           select: {
             ...teamScalars,
             players: { where: { isActive: true }, select: playerSelect },
-            coach: { select: { utilityBoost: true } },
+            coach: { select: { utilityBoost: true, scoutingSkill: true, trainingEff: true } },
           },
         },
       },
@@ -262,6 +279,10 @@ export const seasonRouter = router({
         {
           team1CoachBoost: match.team1.coach?.utilityBoost,
           team2CoachBoost: match.team2.coach?.utilityBoost,
+          team1CoachAdaptation: match.team1.coach?.scoutingSkill,
+          team2CoachAdaptation: match.team2.coach?.scoutingSkill,
+          team1CoachMental: match.team1.coach?.trainingEff,
+          team2CoachMental: match.team2.coach?.trainingEff,
           team1Pairs: pairMaps.get(match.team1Id),
           team2Pairs: pairMaps.get(match.team2Id),
         },
@@ -949,19 +970,92 @@ export const seasonRouter = router({
           sponsors: { where: { isActive: true }, select: { weeklyPayment: true } },
         },
       });
+      const investorEvents: Array<{ teamId: string; teamName: string; kind: "INVESTOR_WARNING" | "ORG_BANKRUPTCY"; debt: number }> = [];
 
       const budgetUpdates: Array<ReturnType<typeof ctx.prisma.team.update>> = [];
       for (const t of allTeams) {
         const totalSalary = t.players.reduce((sum, p) => sum + p.salary, 0);
         const coachSalary = t.coach?.salary ?? 0;
         const sponsorIncome = t.sponsors.reduce((sum, s) => sum + s.weeklyPayment, 0);
-        const net = sponsorIncome - totalSalary - coachSalary;
-        if (net === 0) continue;
-        const newBudget = Math.max(0, t.budget + net);
+        const totalWageOut = totalSalary + coachSalary;
+        if (totalWageOut === 0 && sponsorIncome === 0) continue;
+
+        // Lazy migration — if a team still has the legacy single-budget
+        // state, split into the 3 buckets before applying this week's flow.
+        let snapshot = {
+          budget: t.budget,
+          transferBudget: t.transferBudget,
+          wageBudgetSeason: t.wageBudgetSeason,
+          seasonStartBudget: t.seasonStartBudget,
+        };
+        let extraSplitFields: { seasonStartBudget?: number } = {};
+        if (needsInitialSplit(snapshot)) {
+          const split = allocateSeasonBudget({ totalCapital: t.budget });
+          snapshot = {
+            budget: split.budget,
+            transferBudget: split.transferBudget,
+            wageBudgetSeason: split.wageBudgetSeason,
+            seasonStartBudget: split.seasonStartBudget,
+          };
+          extraSplitFields = { seasonStartBudget: split.seasonStartBudget };
+        }
+
+        // Phase 4 — weekly Riot stipend + merch revenue, on top of sponsors.
+        const weeklyRev = computeWeeklyRevenue({ prestige: t.prestige });
+        const totalIncome = sponsorIncome + weeklyRev.total;
+        // All income → operational (budget). Phase 3 slider lets the board
+        // skim a portion off the top for transferBudget refill.
+        const afterIncome = {
+          ...snapshot,
+          budget: snapshot.budget + totalIncome,
+        };
+        // Wages drain wageBudgetSeason first, fall back to operational.
+        const afterWages = debitWages(afterIncome, totalWageOut);
+
+        // Phase 5 — operational outflows (facility + bootcamp). Decrement
+        // bootcampWeeksLeft if active.
+        const opsCost = computeWeeklyOperationalCost({
+          facilityTier: t.facilityTier,
+          bootcampWeeksLeft: t.bootcampWeeksLeft,
+        });
+        afterWages.budget -= opsCost.total;
+        const newBootcampWeeks = Math.max(0, t.bootcampWeeksLeft - 1);
+
+        // Phase 2 — debt reconciliation. If operational dropped below 0,
+        // accumulate debt; if surplus exists, pay down debt. Fires investor
+        // warning at 50% patience, bankruptcy at 100%.
+        const reconciled = reconcileDebt(
+          {
+            budget: afterWages.budget,
+            debt: t.debt,
+            investorPatience: t.investorPatience,
+            isBankrupt: t.isBankrupt,
+            lastWarningWeek: t.lastWarningWeek,
+          },
+          newWeek,
+        );
+        if (reconciled.event) {
+          investorEvents.push({
+            teamId: t.id,
+            teamName: t.name,
+            kind: reconciled.event.kind,
+            debt: reconciled.event.debt,
+          });
+        }
+
         budgetUpdates.push(
           ctx.prisma.team.update({
             where: { id: t.id },
-            data: { budget: newBudget },
+            data: {
+              budget: reconciled.budget,
+              transferBudget: afterWages.transferBudget,
+              wageBudgetSeason: afterWages.wageBudgetSeason,
+              debt: reconciled.debt,
+              isBankrupt: reconciled.isBankrupt,
+              lastWarningWeek: reconciled.lastWarningWeek,
+              bootcampWeeksLeft: newBootcampWeeks,
+              ...extraSplitFields,
+            },
           }),
         );
         salaryDeductions.push({
@@ -970,13 +1064,67 @@ export const seasonRouter = router({
           totalSalary,
           coachSalary,
           sponsorIncome,
-          newBudget,
+          newBudget: totalAvailable(afterWages),
         });
       }
       // Batch all team-budget writes in a single round-trip instead of one
       // sequential round-trip per team.
       if (budgetUpdates.length > 0) {
         await ctx.prisma.$transaction(budgetUpdates);
+      }
+
+      // Investor events → inbox messages. Only fire for the user's team
+      // (AI bankruptcies trigger separately at the league level).
+      if (investorEvents.length > 0) {
+        const userTeam = await ctx.prisma.team.findFirst({
+          where: { saveId: ctx.save.id, isPlayerTeam: true },
+          select: { id: true },
+        });
+        if (userTeam) {
+          const userEvents = investorEvents.filter((e) => e.teamId === userTeam.id);
+          if (userEvents.length > 0) {
+            await ctx.prisma.message.createMany({
+              data: userEvents.map((e) => ({
+                saveId: ctx.save.id,
+                teamId: userTeam.id,
+                category: "BOARD" as const,
+                fromName: "Board",
+                fromRole: "Investor",
+                subject:
+                  e.kind === "ORG_BANKRUPTCY"
+                    ? "Investor pulling out — bankruptcy"
+                    : "Investor warning — debt rising",
+                body:
+                  e.kind === "ORG_BANKRUPTCY"
+                    ? `Your accumulated debt of $${e.debt.toLocaleString()} has exceeded the limit. The investor is exiting the org. You have one season to recover.`
+                    : `Your debt has reached $${e.debt.toLocaleString()}. The investor is concerned about sustainability — bring the books closer to balance before next quarter.`,
+                eventType: e.kind,
+                requiresAction: e.kind === "ORG_BANKRUPTCY",
+                week: newWeek,
+                season: season.number,
+              })),
+            });
+          }
+        }
+      }
+
+      // ── Scouting V1 — auto-reveal potential for shortlisted players ──
+      // After SCOUTING_REVEAL_WEEKS on the shortlist, the player's potential
+      // becomes visible to the shortlist owner (via potentialRevealed flag).
+      const absWeek = season.number * 52 + newWeek;
+      const matureShortlists = await ctx.prisma.shortlist.findMany({
+        where: {
+          saveId: ctx.save.id,
+          addedWeek: { lte: absWeek - SCOUTING_REVEAL_WEEKS },
+          player: { potentialRevealed: false },
+        },
+        select: { playerId: true },
+      });
+      if (matureShortlists.length > 0) {
+        await ctx.prisma.player.updateMany({
+          where: { id: { in: matureShortlists.map((s) => s.playerId) } },
+          data: { potentialRevealed: true },
+        });
       }
     }
 

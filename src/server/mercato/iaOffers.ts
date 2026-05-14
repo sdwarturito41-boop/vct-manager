@@ -1,6 +1,8 @@
 import type { PrismaClient, Player, Team } from "@/generated/prisma/client";
 import { playerRating } from "./marketRate";
 import { effectiveBuyoutClause, stateFromScore } from "./happiness";
+import { isRosterLocked, isTransferWindowOpen } from "./locks";
+import { countRoster, canSign } from "./rosterCap";
 
 const MIN_INTEREST = 35;
 const MAX_OFFERS_PER_TEAM_PER_WEEK = 2;
@@ -15,21 +17,25 @@ const OFFER_DEADLINE_HOURS = 72;
  */
 function teamNeedsRecruitment(
   team: Team & {
-    players: Pick<Player, "role" | "acs" | "kd" | "adr">[];
+    players: Pick<Player, "role" | "acs" | "kd" | "adr" | "isReserve">[];
   },
 ): boolean {
+  // Starters only — reserves don't fill a tournament slot. A team with 4
+  // starters + 5 reserves still needs a 5th starter.
+  const starters = team.players.filter((p) => !p.isReserve);
+
   // 1. Roster gap — must recruit to fill the 5-active-roster slot
-  if (team.players.length < 5) return true;
+  if (starters.length < 5) return true;
 
   // 2. Role gap — comp is unbalanced, recruit to cover a missing role
-  const rolesPresent = new Set(team.players.map((p) => p.role));
+  const rolesPresent = new Set(starters.map((p) => p.role));
   // 4 distinct roles is the minimum for a sensible Valorant comp
   // (Duelist/Initiator/Sentinel/Controller; IGL is often a flex of one of these).
   if (rolesPresent.size < 4) return true;
 
   // 3. Weak link — there's a player notably below the rest of the squad,
   //    so the team would shop for an upgrade
-  const ratings = team.players.map((p) => playerRating(p));
+  const ratings = starters.map((p) => playerRating(p));
   const avg = ratings.reduce((s, r) => s + r, 0) / ratings.length;
   const min = Math.min(...ratings);
   if (avg > 0 && min < avg * 0.80) return true;
@@ -59,10 +65,10 @@ function rand(lo: number, hi: number): number {
  * - 0.1 if 2+ in that role
  */
 function needRoleMultiplier(
-  team: Team & { players: Pick<Player, "role" | "acs" | "kd" | "adr">[] },
+  team: Team & { players: Pick<Player, "role" | "acs" | "kd" | "adr" | "isReserve">[] },
   role: Player["role"],
 ): number {
-  const sameRole = team.players.filter((p) => p.role === role);
+  const sameRole = team.players.filter((p) => !p.isReserve && p.role === role);
   if (sameRole.length === 0) return 1.0;
   if (sameRole.length >= 2) return 0.1;
   const r = playerRating(sameRole[0]);
@@ -74,7 +80,7 @@ function needRoleMultiplier(
  * Returns an interest value 0-100+.
  */
 function computeInterest(
-  team: Team & { players: Pick<Player, "role" | "acs" | "kd" | "adr">[] },
+  team: Team & { players: Pick<Player, "role" | "acs" | "kd" | "adr" | "isReserve">[] },
   target: Pick<Player, "role" | "region" | "acs" | "kd" | "adr">,
   offerUpfront: number,
   happinessBonus: number,
@@ -161,12 +167,18 @@ export async function runAiTransferActivity(
   currentWeek: number,
   currentSeason: number,
 ): Promise<{ offersCreated: number }> {
+  // Transfer window — closed during off-season halts all AI activity for the
+  // week. Real VCT keeps the window open during competitive stages.
+  const season = await prisma.season.findFirst({ where: { saveId, isActive: true } });
+  if (season && !isTransferWindowOpen(season)) return { offersCreated: 0 };
+  const currentDay = season?.currentDay ?? 0;
+
   const aiTeams = await prisma.team.findMany({
     where: { saveId, isPlayerTeam: false },
     include: {
       players: {
-        where: { isActive: true },
-        select: { role: true, acs: true, kd: true, adr: true },
+        where: { isActive: true, isRetired: false },
+        select: { role: true, acs: true, kd: true, adr: true, isActive: true, isRetired: true, isReserve: true },
       },
     },
   });
@@ -249,18 +261,36 @@ export async function runAiTransferActivity(
   }> = [];
   let offersCreated = 0;
 
+  // Pre-build a set of locked team IDs so we skip both buyers and sellers
+  // currently under Roster Lock. Single query for all teams in the save.
+  const teamLocks = await prisma.team.findMany({
+    where: { saveId, rosterLockedUntilDay: { gte: currentDay } },
+    select: { id: true },
+  });
+  const lockedTeamIds = new Set(teamLocks.map((t) => t.id));
+
   for (const team of aiTeams) {
     // Skip healthy teams entirely — they don't shop the market when nothing
     // is broken. Cuts the typical week's transfer churn from ~15 moves to a
     // handful tied to actual roster needs.
     if (!teamNeedsRecruitment(team)) continue;
 
+    // Roster Lock — qualified-for-tournament teams are frozen as buyers.
+    if (isRosterLocked(team, currentDay)) continue;
+
+    // Roster cap — team can't sign anyone if already at 10 contracted.
+    if (!canSign(countRoster(team.players))) continue;
+
     let offersThisWeek = 0;
     let upfrontCommitted = pendingUpfrontByTeam.get(team.id) ?? 0;
 
-    // Filter targets: exclude own players + cooldowned players (in-memory lookups)
+    // Filter targets: exclude own players + cooldowned players + players on
+    // a roster-locked team (their seller can't accept regardless of fee).
     const eligibleTargets: SlimTarget[] = allTargets.filter(
-      (t) => t.teamId !== team.id && !cooldownSet.has(`${team.id}|${t.id}`),
+      (t) =>
+        t.teamId !== team.id &&
+        !cooldownSet.has(`${team.id}|${t.id}`) &&
+        !(t.teamId && lockedTeamIds.has(t.teamId)),
     );
 
     // Score + sort

@@ -51,6 +51,12 @@ export interface SimTeamInput {
   skillUtility: number;
   skillTeamplay: number;
   playstyle?: Playstyle;
+  /** Tier 2 — eco discipline (0-100, default 50). Compounds with playstyle on save threshold. */
+  ecoDiscipline?: number;
+  /** Tier 2 — per-map preparation level (0-100, default 50). Subtle rating multiplier on that map. */
+  mapPrep?: Record<string, number>;
+  /** Tier 2 — adaptation rating (0-100, default 50). Drives mid-match audibles + halftime shifts. */
+  adaptationRating?: number;
 }
 
 interface RoundStats {
@@ -82,6 +88,15 @@ interface PlayerState {
   isUsingUltThisRound: boolean;
   /** When the player pops a duel-type ult, the +mechEdge bonus for their own duels this round. */
   ultMechEdgeThisRound: number;
+  // ── Tier 3 micro stats (0-100) — derived from existing player attrs. ──
+  /** Game IQ: positional sense + crosshair placement decisions. Affects duel edge. */
+  gameIQ: number;
+  /** Aggression: peek-first vs hold-the-angle tendency. Weights entry-fragger pick. */
+  aggression: number;
+  /** Utility IQ: how impactful the player's ability usage is. Scales ability emit prob. */
+  utilityIQ: number;
+  /** Consistency: variance of per-map performance. Star instable (low) vs role-player stable (high). */
+  consistencyRating: number;
   total: RoundStats;
   perRound: RoundStats[];
 }
@@ -126,6 +141,24 @@ interface TeamRuntime {
   pairs?: Map<string, number>;
   /** Cached map attack bias — same for both teams in the same match. */
   mapAtkBias: number;
+  /** Cached playstyle behavioral multipliers (Tier 1 wiring). */
+  playstyleMods: PlaystyleMods;
+  /** Coach adaptation 0-100 (default 50) — dampens loss-streak tilt for this team. */
+  coachAdaptation: number;
+  /** Coach mental 0-100 (default 50) — raises tilt resistance for this team's players. */
+  coachMental: number;
+  /** Team adaptation rating (0-100). Drives halftime + loss-streak audibles. */
+  adaptationRating: number;
+  /**
+   * Cumulative duel-prob boost the team has earned from successful tactical
+   * adaptations this match. Halftime success = +0.025; intra-half loss-streak
+   * audible = +0.015. Capped at +0.06 to avoid runaway. Applied as a small
+   * edge in duelWinProb. The leading team can't gain this — it represents
+   * "the trailing side figured something out", not "the leader got better".
+   */
+  adaptationEdge: number;
+  /** True once this team has used its intra-half audible. Resets at halftime. */
+  lossStreakAdaptedThisHalf: boolean;
   // ── Team-level ult effects active THIS ROUND ──
   /** Info-ult active (Sova/Fade/Cypher/Skye): infoEdge across all team duels. */
   ultInfoEdge: number;
@@ -213,8 +246,12 @@ export interface DuelMapOptions {
   team1StartsAttack?: boolean;
   currentWeek?: number;
   agentMastery?: Record<string, number>;
-  team1CoachBoost?: number;
+  team1CoachBoost?: number;        // utilityBoost (prep)
   team2CoachBoost?: number;
+  team1CoachAdaptation?: number;   // scoutingSkill — mid-match reads, dampens snowball
+  team2CoachAdaptation?: number;
+  team1CoachMental?: number;       // trainingEff — raises player tilt resistance
+  team2CoachMental?: number;
   /**
    * Optional: carryover hotness from the previous map in a BO3/BO5 series.
    * playerId → end-of-previous-map hotness. 50% is retained as starting confidence.
@@ -391,19 +428,71 @@ function computeRating(p: SimPlayerInput, mapName: string, agentName: string, ag
   return baseRating * mapFactor * masteryBonus * metaBonus * overallMultiplier;
 }
 
-function rollGameDay(): number {
+function rollGameDay(consistencyRating: number = 50): number {
   // Per-player game-day variance — moderately tight. Old ranges (career night
   // 1.25-1.55, disaster 0.62-0.78) compounded with mapFactor, teamPrepRoll and
   // overall multipliers to produce 13-0 stomps even when a team was an 80%
   // favorite. The tails are still meaningful but no longer override the
   // baseline rating gap.
+  //
+  // Tier 3 — consistency dampens the deviation from 1.0. A 100-consistency
+  // role player rolls in a tight band (0.96-1.04 even on a "great" tier),
+  // while a 0-consistency star inflates the tails further.
   const roll = Math.random();
-  if (roll < 0.03) return randFloat(1.15, 1.30); // career night
-  if (roll < 0.12) return randFloat(1.05, 1.15); // great game
-  if (roll < 0.88) return randFloat(0.92, 1.08); // normal (76%)
-  if (roll < 0.97) return randFloat(0.85, 0.92); // off day
-  return randFloat(0.72, 0.85); // disaster
+  let raw: number;
+  if (roll < 0.03) raw = randFloat(1.15, 1.30);
+  else if (roll < 0.12) raw = randFloat(1.05, 1.15);
+  else if (roll < 0.88) raw = randFloat(0.92, 1.08);
+  else if (roll < 0.97) raw = randFloat(0.85, 0.92);
+  else raw = randFloat(0.72, 0.85);
+
+  // Variance scaling: consistency 50 = 1.0× (default), 100 = 0.4× (tight),
+  // 0 = 1.2× (volatile). The deviation from 1.0 is rescaled, the median
+  // stays at 1.0.
+  const variance = consistencyRating >= 50
+    ? 1.0 - (consistencyRating - 50) / 83  // 50→1.0, 100→0.4
+    : 1.0 + (50 - consistencyRating) / 250; // 50→1.0, 0→1.2
+  return 1.0 + (raw - 1.0) * variance;
 }
+
+/**
+ * Derive Tier 3 micro stats from a player's underlying attributes. Lets every
+ * player get differentiated game IQ / aggression / utility usage / consistency
+ * without requiring new DB fields. All values clamped to [10, 95].
+ */
+function deriveMicroStats(p: SimPlayerInput): {
+  gameIQ: number;
+  aggression: number;
+  utilityIQ: number;
+  consistencyRating: number;
+} {
+  const roleBonus: Record<string, { iq: number; agg: number; util: number }> = {
+    IGL:        { iq: 15, agg:  0,  util:  5 },
+    Sentinel:   { iq: 10, agg: -10, util: 10 },
+    Controller: { iq:  8, agg:  -5, util: 18 },
+    Initiator:  { iq:  5, agg:   5, util: 15 },
+    Duelist:    { iq:  0, agg:  20, util:  -5 },
+    Flex:       { iq:  5, agg:   5, util:   5 },
+  };
+  const rb = roleBonus[p.role] ?? { iq: 0, agg: 0, util: 0 };
+  const kast = p.kast ?? 70;
+  const acs = p.acs ?? 200;
+
+  // KAST is the strongest IQ proxy — players with high KAST consistently
+  // contribute (kill / assist / survive / trade) round after round.
+  const gameIQ = clamp(50 + (kast - 70) * 1.5 + rb.iq, 10, 95);
+  // ACS reflects fragging volume which correlates with peeking + aggression.
+  const aggression = clamp(50 + (acs - 200) / 5 + rb.agg, 10, 95);
+  const utilityIQ = clamp(50 + rb.util + (kast - 70) * 0.5, 10, 95);
+  // Consistency: closer to "central tendency" KAST → higher consistency,
+  // wildly variable KAST → low consistency. Hard to model purely from
+  // available fields; use KAST as a rough proxy on the assumption that
+  // chronic high-KAST players are the most stable contributors.
+  const consistencyRating = clamp(40 + (kast - 70) * 1.2, 15, 90);
+
+  return { gameIQ, aggression, utilityIQ, consistencyRating };
+}
+
 
 function buildTeamRuntime(
   team: SimTeamInput,
@@ -418,22 +507,39 @@ function buildTeamRuntime(
     for (const a of agents) agentByPlayer.set(a.playerId, a.agentName);
   }
 
-  // Ensure the comp covers the core roles (Duelist + Controller + Sentinel).
-  // Real Valorant comps need at least one entry agent — when a team lost
-  // their natural Duelist to mercato, *someone* still flexes onto Jett/Raze
-  // instead of leaving the slot empty. We override the default agent for the
-  // best-fit flex candidate to fill any gap.
+  // Ensure the comp covers the core roles (Duelist + Controller + Sentinel +
+  // Initiator). Real Valorant comps need every primary role — when a team
+  // lost their natural Duelist to mercato, *someone* still flexes onto a
+  // duelist agent. Agent picks now respect each player's `agentPool` mastery
+  // (via `agentMastery`) instead of defaulting everyone to Jett / Omen / etc.
   const roster = team.players.slice(0, 5);
   const initialAgents = new Map<string, string>();
+  const ALL_CLASSES: ReadonlyArray<"Duelist" | "Initiator" | "Controller" | "Sentinel"> = [
+    "Duelist", "Initiator", "Controller", "Sentinel",
+  ];
   for (const p of roster) {
-    initialAgents.set(p.id, agentByPlayer.get(p.id) ?? defaultAgentForRole(p.role));
+    const preset = agentByPlayer.get(p.id);
+    if (preset) {
+      initialAgents.set(p.id, preset);
+      continue;
+    }
+    // Map player role → agent class. IGL / Flex pick the class they're most
+    // mastered in across all 4. Single-class roles pick best agent in that
+    // class.
+    let cls: "Duelist" | "Initiator" | "Controller" | "Sentinel";
+    if (p.role === "IGL" || p.role === "Flex") {
+      cls = bestMasteredClassForPlayer(p.id, agentMastery, ALL_CLASSES);
+    } else {
+      cls = p.role as "Duelist" | "Initiator" | "Controller" | "Sentinel";
+    }
+    initialAgents.set(p.id, bestMasteredAgentForClass(p.id, cls, agentMastery));
   }
-  function agentClass(agent: string): "duelist" | "initiator" | "controller" | "sentinel" {
+  function agentClass(agent: string): "Duelist" | "Initiator" | "Controller" | "Sentinel" {
     const meta = VALORANT_AGENTS.find((a) => a.name === agent);
-    if (meta) return meta.role.toLowerCase() as "duelist" | "initiator" | "controller" | "sentinel";
-    return "duelist";
+    if (meta) return meta.role;
+    return "Duelist";
   }
-  const classesPresent = new Set<string>();
+  const classesPresent = new Set<"Duelist" | "Initiator" | "Controller" | "Sentinel">();
   for (const a of initialAgents.values()) classesPresent.add(agentClass(a));
 
   // Flex priority for a forced role override: explicit Flex role first, then
@@ -446,23 +552,27 @@ function buildTeamRuntime(
       remaining[0]
     );
   }
-  const overrideFiller: Array<{ role: "duelist" | "controller" | "sentinel"; fallback: string }> = [
-    { role: "duelist", fallback: "Jett" },
-    { role: "controller", fallback: "Omen" },
-    { role: "sentinel", fallback: "Killjoy" },
+  // Gap-fill order: Duelist > Controller > Sentinel > Initiator. Duelist
+  // first because no-entry comps are catastrophic; Initiator last because
+  // many teams already cover info via Sova/Fade naturally and going without
+  // is the least crippling gap.
+  const requiredClasses: ReadonlyArray<"Duelist" | "Controller" | "Sentinel" | "Initiator"> = [
+    "Duelist", "Controller", "Sentinel", "Initiator",
   ];
   const claimed = new Set<string>();
   // Players already filling a required role can't be re-overridden.
   for (const [pid, a] of initialAgents) {
     const cls = agentClass(a);
-    if (cls === "duelist" || cls === "controller" || cls === "sentinel") claimed.add(pid);
+    if (requiredClasses.includes(cls as typeof requiredClasses[number])) claimed.add(pid);
   }
-  for (const { role, fallback } of overrideFiller) {
-    if (classesPresent.has(role)) continue;
+  for (const cls of requiredClasses) {
+    if (classesPresent.has(cls)) continue;
     const candidate = pickFlex(claimed);
     if (!candidate) continue;
-    initialAgents.set(candidate.id, fallback);
-    classesPresent.add(role);
+    // Pick the best-mastered agent of the missing class for this candidate
+    // instead of hardcoding Jett / Omen / Killjoy / Fade.
+    initialAgents.set(candidate.id, bestMasteredAgentForClass(candidate.id, cls, agentMastery));
+    classesPresent.add(cls);
     claimed.add(candidate.id);
   }
   // Push the overrides back into agentByPlayer so the buildTeamRuntime map
@@ -475,11 +585,25 @@ function buildTeamRuntime(
   // (mapFactor + agent mastery + lucky duels) but not because of one prep roll.
   const teamPrepRoll = randFloat(0.95, 1.05);
 
+  // Tier 2 — per-map preparation level. A team that practised Haven hard
+  // performs measurably better on Haven (±10% multiplier on rating). Combines
+  // with per-player `mapFactor` (which is individual map affinity) so a
+  // team-wide bonus + an individual's natural map preference both matter.
+  const mapPrepValue =
+    typeof team.mapPrep === "object" && team.mapPrep
+      ? team.mapPrep[mapName] ?? 50
+      : 50;
+  const mapPrepMultiplier = 1.0 + (mapPrepValue - 50) / 500;
+
   const players: PlayerState[] = team.players.slice(0, 5).map((p) => {
     const agent = agentByPlayer.get(p.id) ?? defaultAgentForRole(p.role);
     const baseRating = computeRating(p, mapName, agent, agentMastery);
-    const gameDay = rollGameDay();
-    const rating = baseRating * gameDay * teamPrepRoll;
+    // Tier 3 — derive per-player micro stats from underlying attrs. Used for
+    // gameIQ (duel edge), aggression (entry pick weight), utilityIQ (ability
+    // emit prob), and consistencyRating (per-player variance damping).
+    const micro = deriveMicroStats(p);
+    const gameDay = rollGameDay(micro.consistencyRating);
+    const rating = baseRating * gameDay * teamPrepRoll * mapPrepMultiplier;
 
     // Tilt resistance — high = doesn't tilt easily (Boaster, Chronicle types).
     // Derived from role/leadership:
@@ -535,6 +659,10 @@ function buildTeamRuntime(
       ultMax: ULT_MAX_BY_AGENT[agent] ?? 7,
       isUsingUltThisRound: false,
       ultMechEdgeThisRound: 0,
+      gameIQ: micro.gameIQ,
+      aggression: micro.aggression,
+      utilityIQ: micro.utilityIQ,
+      consistencyRating: micro.consistencyRating,
       total: { k: 0, d: 0, a: 0, fk: 0, fd: 0, damage: 0 },
       perRound: [],
     };
@@ -575,6 +703,12 @@ function buildTeamRuntime(
     awperId,
     inSaveMode: false,
     mapAtkBias: getMapProfile(mapName).attackBias,
+    playstyleMods: getPlaystyleMods(team.playstyle),
+    coachAdaptation: 50,
+    coachMental: 50,
+    adaptationRating: team.adaptationRating ?? 50,
+    adaptationEdge: 0,
+    lossStreakAdaptedThisHalf: false,
     ultInfoEdge: 0,
     ultZoneEdge: 0,
     ultLockdownEdge: 0,
@@ -654,6 +788,39 @@ const ULT_CONFIG: Record<string, UltConfig> = {
   Harbor:   { type: "lockdown", positionalEdge: 0.14 }, // Reckoning forces vacate
 };
 
+/**
+ * Per-playstyle behavioral multipliers. Wired into the round + buy logic so
+ * an "Aggressive" team peeks more, force-buys earlier, and pressures sites
+ * harder; a "Defensive" team holds angles, abuses utility, and saves more.
+ *
+ * All values are multipliers against baseline so the default ("Balanced")
+ * stays at 1.0 and the engine behaves identically to the pre-Tier-1 path.
+ */
+interface PlaystyleMods {
+  /** Multiplier on the 12% setup-phase duel chance + 15% info-phase duel chance. */
+  setupDuelChance: number;
+  /** Multiplier on the 3000 save-threshold (lower = forces force buys, higher = saves more). */
+  forceBuyThreshold: number;
+  /** Multiplier on postplant duel cadence — higher = more rapid duels (aggressive retake feel). */
+  postplantAggression: number;
+  /** Multiplier on team utility (ability) edge — applied team-wide. */
+  midRoundUtility: number;
+}
+function getPlaystyleMods(ps: Playstyle | undefined): PlaystyleMods {
+  switch (ps) {
+    case "Aggressive":
+      return { setupDuelChance: 1.5, forceBuyThreshold: 0.85, postplantAggression: 1.20, midRoundUtility: 0.90 };
+    case "Tactical":
+      return { setupDuelChance: 0.75, forceBuyThreshold: 1.00, postplantAggression: 1.00, midRoundUtility: 1.30 };
+    case "Defensive":
+      return { setupDuelChance: 0.65, forceBuyThreshold: 1.10, postplantAggression: 0.85, midRoundUtility: 1.10 };
+    case "Balanced":
+    case "Flex":
+    default:
+      return { setupDuelChance: 1.00, forceBuyThreshold: 1.00, postplantAggression: 1.00, midRoundUtility: 1.00 };
+  }
+}
+
 function defaultAgentForRole(role: Role): string {
   switch (role) {
     case "Duelist": return "Jett";
@@ -663,6 +830,68 @@ function defaultAgentForRole(role: Role): string {
     case "IGL": return "Omen";
     default: return "Jett";
   }
+}
+
+/**
+ * Mastery-aware agent picker. Among agents of a given class (Duelist /
+ * Initiator / Controller / Sentinel), returns the one the player has the
+ * most stars on. Falls back to the class default when no mastery data.
+ * Used so AI teams play agents their players actually know, instead of
+ * everyone defaulting to Jett / Omen / Killjoy / Fade.
+ */
+function bestMasteredAgentForClass(
+  playerId: string,
+  agentClass: "Duelist" | "Initiator" | "Controller" | "Sentinel",
+  agentMastery: Record<string, number> | undefined,
+): string {
+  const candidates = VALORANT_AGENTS.filter((a) => a.role === agentClass);
+  if (candidates.length === 0) return defaultAgentForRole(agentClass as Role);
+  if (!agentMastery) {
+    // No data — return the class default (Jett / Fade / Omen / Killjoy).
+    return defaultAgentForRole(agentClass as Role);
+  }
+  let bestAgent = candidates[0].name;
+  let bestStars = -1;
+  for (const a of candidates) {
+    const stars = agentMastery[`${playerId}:${a.name}`] ?? 0;
+    if (stars > bestStars) {
+      bestStars = stars;
+      bestAgent = a.name;
+    }
+  }
+  // If no agent has any mastery (all 0), prefer the class default — keeps
+  // historical agent picks (Jett / Omen / etc.) for teams without mastery
+  // data, instead of arbitrarily picking the first agent in the list.
+  if (bestStars <= 0) return defaultAgentForRole(agentClass as Role);
+  return bestAgent;
+}
+
+/**
+ * For a player with a flexible role (IGL / Flex), pick the agent class
+ * they're most mastered in across all 4 classes. Used by the gap-fill step
+ * so a Flex who's 5-star on Killjoy gets put on Sentinel rather than the
+ * hardcoded Jett.
+ */
+function bestMasteredClassForPlayer(
+  playerId: string,
+  agentMastery: Record<string, number> | undefined,
+  classesAvailable: ReadonlyArray<"Duelist" | "Initiator" | "Controller" | "Sentinel">,
+): "Duelist" | "Initiator" | "Controller" | "Sentinel" {
+  if (!agentMastery || classesAvailable.length === 0) {
+    return classesAvailable[0] ?? "Duelist";
+  }
+  let bestClass = classesAvailable[0];
+  let bestStars = -1;
+  for (const cls of classesAvailable) {
+    for (const a of VALORANT_AGENTS.filter((x) => x.role === cls)) {
+      const stars = agentMastery[`${playerId}:${a.name}`] ?? 0;
+      if (stars > bestStars) {
+        bestStars = stars;
+        bestClass = cls;
+      }
+    }
+  }
+  return bestClass;
 }
 
 // ──────────────────────────────────────────────────────────
@@ -967,7 +1196,17 @@ function planBuys(
   // R2, which depleted their economy and meant R3 (with loss-bonus stacked)
   // still couldn't full-buy rifles. Pros actually full-eco R2 to GUARANTEE
   // a rifle buy at R3 — bumping the cap to 3000 matches that behavior.
-  const shouldSave = avgCredits < 3000 && armedCount < 3;
+  //
+  // Playstyle scales the threshold: Aggressive teams (0.85×) save less and
+  // force-buy with whatever they have. Defensive teams (1.10×) save deeper
+  // to guarantee the next round's full buy. Multiplier ≤1 = more force-buy.
+  //
+  // Tier 2 — eco discipline compounds: a 100-discipline team waits patiently
+  // for the right buy round (×1.20), a 0-discipline team forces relentlessly
+  // (×0.80). At default 50 the multiplier is 1.0 so behaviour is unchanged.
+  const ecoFactor = 1.0 + ((team.input.ecoDiscipline ?? 50) - 50) / 250;
+  const saveCap = 3000 * team.playstyleMods.forceBuyThreshold * ecoFactor;
+  const shouldSave = avgCredits < saveCap && armedCount < 3;
 
   if (shouldSave) {
     team.inSaveMode = true;
@@ -1164,8 +1403,18 @@ function duelWinProb(
   const mechanicalEdge = (attacker.rating * attacker.hotness - defender.rating * defender.hotness) * 0.12;
 
   // ── Team tilt (team-wide, subtler) ──
-  const attTilt = attackerTeam ? Math.max(-0.05, -0.012 * attackerTeam.lossStreak) + Math.min(0.03, 0.008 * attackerTeam.winStreak) : 0;
-  const defTilt = defenderTeam ? Math.max(-0.05, -0.012 * defenderTeam.lossStreak) + Math.min(0.03, 0.008 * defenderTeam.winStreak) : 0;
+  // Coach adaptation dampens loss-streak tilt: a 100-scout coach halves the
+  // negative drag from losing rounds (mid-match reads + tactical reset).
+  const attAdaptScale = attackerTeam ? 1 - (attackerTeam.coachAdaptation - 50) / 100 : 1;
+  const defAdaptScale = defenderTeam ? 1 - (defenderTeam.coachAdaptation - 50) / 100 : 1;
+  const attTilt = attackerTeam
+    ? Math.max(-0.05, -0.012 * attackerTeam.lossStreak) * attAdaptScale +
+      Math.min(0.03, 0.008 * attackerTeam.winStreak)
+    : 0;
+  const defTilt = defenderTeam
+    ? Math.max(-0.05, -0.012 * defenderTeam.lossStreak) * defAdaptScale +
+      Math.min(0.03, 0.008 * defenderTeam.winStreak)
+    : 0;
   // Moderated by individual tiltResistance
   const attTiltScaled = attTilt * (1.2 - attacker.tiltResistance);
   const defTiltScaled = defTilt * (1.2 - defender.tiltResistance);
@@ -1246,7 +1495,19 @@ function duelWinProb(
     (attUltDuel + attTeamUltInfo + attTeamUltZone + attTeamUltAbility * 0.7 + attTeamUltLockdown * 0.6) -
     (defUltDuel + defTeamUltInfo + defTeamUltZone + defTeamUltAbility * 0.7 + defTeamUltLockdown * 0.6);
 
-  const raw = 0.5 + mechanicalEdge + tiltEdge + positionalEdge + infoEdge + agentInDuelEdge + agentInfoEdge + agentPhaseBonus + agentDefBonus + weaponEdge + armorEdge + abilityEdge + relationEdge + mapBiasEdge + clutchEdge + ultEdge + luck;
+  // Tier 3 — Game IQ edge: crosshair placement, positional reads, pre-aim.
+  // Range 10-95 (centered 50). At max delta (95 vs 10 = ±85) this is ±5%, so
+  // a smart player without raw rating advantage can still nick duels. Defender
+  // gets a slight boost (1.2×) because positional reads matter more when
+  // holding angles — pre-aim beats peek mechanics.
+  const gameIQEdge = ((attacker.gameIQ - 50) - (defender.gameIQ - 50) * 1.2) / 1700;
+
+  // Tier 2 — adaptation edge: trailing side gains a small duel-prob boost
+  // when their adaptation rating triggers a successful tactical shift (see
+  // tryHalftimeAdapt + tryMidHalfAdapt). Max ±0.06.
+  const adaptEdge = (attackerTeam?.adaptationEdge ?? 0) - (defenderTeam?.adaptationEdge ?? 0);
+
+  const raw = 0.5 + mechanicalEdge + tiltEdge + positionalEdge + infoEdge + agentInDuelEdge + agentInfoEdge + agentPhaseBonus + agentDefBonus + weaponEdge + armorEdge + abilityEdge + relationEdge + mapBiasEdge + clutchEdge + ultEdge + gameIQEdge + adaptEdge + luck;
   // Tighter clamp — no duel is ever a guaranteed win
   return clamp(raw, 0.15, 0.85);
 }
@@ -1456,11 +1717,20 @@ const SENTINEL_AGENTS: Record<string, string> = {
   Vyse:     "razorvine",
 };
 
+// Tier 3 — Utility IQ scales per-ability emit probability. A high-utilityIQ
+// initiator/controller (Crashies, FNS) lands more flashes / well-timed darts /
+// proper smokes per round; a low-utilityIQ player wastes utility or mis-times
+// it. 10-95 maps to 0.60× - 1.40× of base emit probability.
+function utilityIQFactor(p: PlayerState): number {
+  return 0.6 + (p.utilityIQ - 10) / 85 * 0.8;
+}
+
 function emitInfoPhaseAssists(attackers: TeamRuntime, ctx: RoundContext): void {
+  const teamUtilMul = attackers.playstyleMods.midRoundUtility;
   for (const p of attackers.players) {
     const entry = INFO_AGENTS[p.agent];
     if (!entry) continue;
-    if (!rand(entry.chance)) continue;
+    if (!rand(entry.chance * utilityIQFactor(p) * teamUtilMul)) continue;
     ctx.pendingAssists.push({
       playerId: p.input.id,
       teamId: p.teamId,
@@ -1474,11 +1744,13 @@ function emitInfoPhaseAssists(attackers: TeamRuntime, ctx: RoundContext): void {
 }
 
 function emitExecutionFlashes(attackers: TeamRuntime, ctx: RoundContext, utilityStrength: number): void {
+  const teamUtilMul = attackers.playstyleMods.midRoundUtility;
   for (const p of attackers.players) {
     const source = FLASH_AGENTS[p.agent];
     if (!source) continue;
-    // Higher utility → more flashes land
-    if (!rand(0.45 + utilityStrength * 1.5)) continue;
+    // Higher utility → more flashes land, scaled by per-player utilityIQ
+    // and team playstyle midRoundUtility (Tactical 1.30 / Aggressive 0.90).
+    if (!rand((0.45 + utilityStrength * 1.5) * utilityIQFactor(p) * teamUtilMul)) continue;
     ctx.pendingAssists.push({
       playerId: p.input.id,
       teamId: p.teamId,
@@ -1492,10 +1764,11 @@ function emitExecutionFlashes(attackers: TeamRuntime, ctx: RoundContext, utility
 }
 
 function emitControllerSmokes(attackers: TeamRuntime, ctx: RoundContext): void {
+  const teamUtilMul = attackers.playstyleMods.midRoundUtility;
   for (const p of attackers.players) {
     const source = CONTROLLER_AGENTS[p.agent];
     if (!source) continue;
-    if (!rand(0.75)) continue;
+    if (!rand(0.75 * utilityIQFactor(p) * teamUtilMul)) continue;
     ctx.pendingAssists.push({
       playerId: p.input.id,
       teamId: p.teamId,
@@ -1509,10 +1782,11 @@ function emitControllerSmokes(attackers: TeamRuntime, ctx: RoundContext): void {
 }
 
 function emitPostPlantLockdown(attackers: TeamRuntime, ctx: RoundContext): void {
+  const teamUtilMul = attackers.playstyleMods.midRoundUtility;
   for (const p of attackers.players) {
     const source = POSTPLANT_LOCKDOWN_AGENTS[p.agent];
     if (!source) continue;
-    if (!rand(0.6)) continue;
+    if (!rand(0.6 * utilityIQFactor(p) * teamUtilMul)) continue;
     ctx.pendingAssists.push({
       playerId: p.input.id,
       teamId: p.teamId,
@@ -1526,10 +1800,11 @@ function emitPostPlantLockdown(attackers: TeamRuntime, ctx: RoundContext): void 
 }
 
 function emitSentinelTraps(defenders: TeamRuntime, ctx: RoundContext): void {
+  const teamUtilMul = defenders.playstyleMods.midRoundUtility;
   for (const p of defenders.players) {
     const source = SENTINEL_AGENTS[p.agent];
     if (!source) continue;
-    if (!rand(0.55)) continue;
+    if (!rand(0.55 * utilityIQFactor(p) * teamUtilMul)) continue;
     ctx.pendingAssists.push({
       playerId: p.input.id,
       teamId: p.teamId,
@@ -1759,7 +2034,7 @@ function simulateRound(
   // PHASE 1 — SETUP (0s to 15s)
   // ═════════════════════════════════════════════════
   roundCtx.time = 5;
-  if (rand(0.12 * mapProfile.midImportance)) {
+  if (rand(0.12 * mapProfile.midImportance * attackers.playstyleMods.setupDuelChance)) {
     const att = pickAliveAttacker(attackers, alive.attackers, false);
     const def = pickAliveDefender(defenders, alive.defenders);
     if (att && def) {
@@ -1785,7 +2060,7 @@ function simulateRound(
   const { infoLevel, counterInfo } = computeInfoPhase(attackers, defenders, mapProfile);
   const netInfoAdvantage = clamp(infoLevel - counterInfo, 0, 0.20);
 
-  if (rand(0.15)) {
+  if (rand(0.15 * attackers.playstyleMods.setupDuelChance)) {
     const att = pickAliveAttacker(attackers, alive.attackers, false);
     const def = pickAliveDefender(defenders, alive.defenders);
     if (att && def) {
@@ -2051,7 +2326,11 @@ function simulateRound(
         abilityBonus: clamp(0.03 + postPlantAdvantage, 0, 0.20),
       }, roundCtx);
 
-      roundCtx.time += randFloat(3, 6);
+      // Postplant cadence — defenders' aggression dictates how quickly they
+      // commit to retake duels. Aggressive defense pushes site faster (lower
+      // cadence), defensive defense waits for picks (higher cadence).
+      const cadenceScale = 1 / defenders.playstyleMods.postplantAggression;
+      roundCtx.time += randFloat(3 * cadenceScale, 6 * cadenceScale);
     }
 
     // Defuse decision — defenders alive AND attackers wiped → attempt defuse.
@@ -2343,8 +2622,14 @@ function pickEntryFragger(team: TeamRuntime, alive: Set<string>): PlayerState | 
     if (designated) return designated;
   }
 
-  // Weighted by entryProb (agent) × hotness^2 (hot players get entry priority).
-  const weights = candidates.map((p) => getAgentMod(p.agent).entryProb * Math.pow(p.hotness, 2));
+  // Weighted by entryProb (agent) × hotness^2 × aggression factor. Aggression
+  // 10-95 maps to a 0.55-1.45 multiplier — a high-aggression Aspas/Less type
+  // takes entry duels even off a non-Duelist agent, while a passive star
+  // (low aggression, high gameIQ) takes second contact more often.
+  const weights = candidates.map((p) => {
+    const aggrFactor = 0.55 + (p.aggression - 10) / 85 * 0.9;
+    return getAgentMod(p.agent).entryProb * Math.pow(p.hotness, 2) * aggrFactor;
+  });
   const total = weights.reduce((s, w) => s + w, 0);
   let r = Math.random() * total;
   for (let i = 0; i < candidates.length; i++) {
@@ -2607,6 +2892,37 @@ function updateMomentum(team: TeamRuntime, wonRound: boolean): void {
   }
 }
 
+/**
+ * Halftime adaptation — only the trailing side rolls. The deeper the deficit,
+ * the higher the chance their coaching staff finds something in the H1 vods.
+ * On success, +0.025 adaptationEdge propagates into every H2 duel.
+ */
+function tryHalftimeAdapt(team: TeamRuntime, opponent: TeamRuntime): void {
+  const deficit = opponent.score - team.score;
+  if (deficit < 3) return; // 9-3 minimum to even consider; comfortable lead = no shift
+  // Probability scales with adaptationRating AND deficit. A 50-rated staff
+  // trailing 3-9 fires ~40% of the time; 80-rated trailing 2-10 fires ~75%.
+  const deficitBoost = Math.min(0.25, (deficit - 3) * 0.05);
+  const prob = (team.adaptationRating / 100) * 0.6 + deficitBoost;
+  if (Math.random() >= prob) return;
+  team.adaptationEdge = Math.min(0.06, team.adaptationEdge + 0.025);
+}
+
+/**
+ * Intra-half audible — fires once per half when a team's lossStreak hits
+ * 3+. Smaller bonus than halftime (the IGL is calling it on the fly without
+ * coaching input). One-shot per half so we don't snowball this.
+ */
+function tryMidHalfAdapt(team: TeamRuntime): void {
+  if (team.lossStreakAdaptedThisHalf) return;
+  if (team.lossStreak < 3) return;
+  // 50-rated team has 25% chance after a 3-round streak, 95-rated has ~48%.
+  const prob = (team.adaptationRating / 100) * 0.5;
+  if (Math.random() >= prob) return;
+  team.adaptationEdge = Math.min(0.06, team.adaptationEdge + 0.015);
+  team.lossStreakAdaptedThisHalf = true;
+}
+
 // ──────────────────────────────────────────────────────────
 // Main exports
 // ──────────────────────────────────────────────────────────
@@ -2624,6 +2940,23 @@ export function simulateMapDuel(
 
   if (options.team1CoachBoost) team1.input.skillUtility += options.team1CoachBoost * 0.05;
   if (options.team2CoachBoost) team2.input.skillUtility += options.team2CoachBoost * 0.05;
+
+  // Coach decomposition (Tier 1) — adaptation dampens loss-streak tilt,
+  // mental raises team tilt resistance. Defaults 50 keep behavior neutral.
+  team1.coachAdaptation = options.team1CoachAdaptation ?? 50;
+  team2.coachAdaptation = options.team2CoachAdaptation ?? 50;
+  team1.coachMental = options.team1CoachMental ?? 50;
+  team2.coachMental = options.team2CoachMental ?? 50;
+  // Apply mental coach to every player's tilt resistance retroactively. Goes
+  // from -0.10 at 0 to +0.10 at 100 (centered on 50).
+  const applyMentalBoost = (team: TeamRuntime) => {
+    const bonus = (team.coachMental - 50) / 500;
+    for (const p of team.players) {
+      p.tiltResistance = clamp(p.tiltResistance + bonus, 0.35, 0.95);
+    }
+  };
+  applyMentalBoost(team1);
+  applyMentalBoost(team2);
 
   const team1StartsAttack = options.team1StartsAttack ?? true;
   const rounds: RoundEvent[] = [];
@@ -2714,6 +3047,10 @@ export function simulateMapDuel(
     if (outcome.winner === 1) team1.score += 1; else team2.score += 1;
     updateMomentum(team1, outcome.winner === 1);
     updateMomentum(team2, outcome.winner === 2);
+    // Tier 2 — intra-half audible. After 3+ rounds lost in a row, the losing
+    // team rolls adaptation. Capped at one trigger per half.
+    tryMidHalfAdapt(team1);
+    tryMidHalfAdapt(team2);
     awardCredits(team1, outcome.winner === 1, outcome.spiked && t1Attack);
     awardCredits(team2, outcome.winner === 2, outcome.spiked && !t1Attack);
 
@@ -2790,7 +3127,14 @@ export function simulateMapDuel(
       t.winStreak = 0;
       t.lossStreak = 0;
       t.lossesBonus = 0;
+      // Reset intra-half audible flag — both sides get one fresh chance in H2.
+      t.lossStreakAdaptedThisHalf = false;
     }
+    // Tier 2 — halftime adaptation roll. The trailing side checks if their
+    // coaching staff found something. Applies before any H2 round so the
+    // H2 pistol already feels the shift.
+    tryHalftimeAdapt(team1, team2);
+    tryHalftimeAdapt(team2, team1);
     team1Survivors = new Set(team1.players.map((p) => p.input.id));
     team2Survivors = new Set(team2.players.map((p) => p.input.id));
 

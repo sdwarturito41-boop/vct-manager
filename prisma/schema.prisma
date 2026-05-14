@@ -43,6 +43,7 @@ model Save {
   playerAgentPools PlayerAgentPool[]
   playerRelations PlayerRelation[]
   playerStatSnapshots PlayerStatSnapshot[]
+  shortlists      Shortlist[]
 }
 
 model Team {
@@ -58,7 +59,40 @@ model Team {
   tag            String
   region         Region
   logoUrl        String?
+  // Operational / general pool. Receives sponsor income, prize money, player
+  // sale proceeds. Acts as the fallback when transferBudget or wageBudget
+  // run dry. Renamed conceptually from "budget" to "operationalBudget" but
+  // the column stays `budget` for backward-compat on all existing writers.
   budget         Int      @default(1000000)
+  // FM-style allocations — board-controlled pools refilled at season start.
+  // 30%/55%/15% default split of the season's projected revenue.
+  transferBudget    Int @default(0)
+  wageBudgetSeason  Int @default(0)
+  // Snapshot of total available capital at season start. Used for board
+  // accounting + investor patience math (Phase 2). Reset each season.
+  seasonStartBudget Int @default(0)
+  // Phase 2 — accumulated red ink. Grows whenever weekly wages or transfer
+  // outlays drag operational budget below 0. Triggers warning at 50% of
+  // investorPatience, bankruptcy at 100%.
+  debt              Int @default(0)
+  // Maximum sustained deficit the org's investor will tolerate before
+  // pulling the plug. Scales with prestige (richer orgs = more patient
+  // capital). Default $2M.
+  investorPatience  Int @default(2000000)
+  // True once the bankruptcy event has fired — prevents the warning loop
+  // and is consumed by UI / game-over flow. Resetting requires recovery
+  // (debt back below threshold + 4 weeks).
+  isBankrupt        Boolean @default(false)
+  // Latest week an INVESTOR_WARNING event fired for this team. Used to
+  // throttle: at most one warning per 4 weeks so we don't spam the inbox.
+  lastWarningWeek   Int @default(0)
+  // Phase 5 — operational infrastructure.
+  //   facilityTier 1-5 (1 = rented apartment, 5 = dedicated training compound).
+  //   Higher tier = better weekly skill upkeep, higher fixed cost.
+  facilityTier      Int @default(1)
+  //   bootcampWeeksLeft > 0 → team is in intensive prep (Masters week, etc).
+  //   Costs $5k/week extra, grants prep boost to mapPrep via training mechanic.
+  bootcampWeeksLeft Int @default(0)
   players        Player[]
   skillAim         Int       @default(0)
   skillUtility     Int       @default(0)
@@ -69,12 +103,26 @@ model Team {
   champPts        Int       @default(0)
   prestige        Int       @default(50)
   playstyle       Playstyle @default(Balanced)
+  // Tier 2 macro layer:
+  //   ecoDiscipline (0-100): willingness to deep save vs force buy
+  //   mapPrep: per-map preparation level 0-100, Json keyed by map name
+  //   adaptationRating (0-100): mid-match tactical shifts (halftime, losing
+  //     streak audibles). Derived from IGL gameIQ + coach scoutingSkill at
+  //     match-build time.
+  ecoDiscipline   Int        @default(50)
+  mapPrep         Json       @default("{}")
+  adaptationRating Int       @default(50)
+  // VCT Roster Lock — when set to a future day, this team is FROZEN: no
+  // buying, no selling, no releases. Set at international tournament
+  // qualification, cleared (or expired) at tournament end. Null = unlocked.
+  rosterLockedUntilDay Int?
   coachId         String?
   coach           Coach?    @relation(fields: [coachId], references: [id], onDelete: SetNull)
   sponsors        Sponsor[]
   incomingTransferOffers TransferOffer[] @relation("OffersToTeam")
   outgoingTransferOffers TransferOffer[] @relation("OffersFromTeam")
   trainingSessions       TrainingSession[]
+  shortlist              Shortlist[]
   messages        Message[]
   createdAt       DateTime  @default(now())
   matchesAsTeam1  Match[]   @relation("Team1")
@@ -109,6 +157,32 @@ model Player {
   pandascoreId  String?
   isActive      Boolean    @default(true)
   isRetired     Boolean    @default(false)
+  // VCT Reserve Roster — max 10 contracted players total (5 active + 5
+  // reserve). Reserve doesn't play official matches, can be promoted to
+  // active when a starter is benched / injured. Age min 17 for reserve,
+  // 18 for active.
+  isReserve     Boolean    @default(false)
+  // FM-style squad status — drives salary expectations + happiness reaction
+  // to playing time. Defaults to STARTER on signing; user re-tiers via the
+  // roster UI.
+  squadStatus   SquadStatus @default(STARTER)
+  // Hidden ceiling rating (overall 0-20 scale). Defaults match current
+  // overall (no growth) for legacy players. Higher than `overall` = the
+  // player still has room to grow. Set by save seeding for new generations.
+  potential     Int        @default(10)
+  // Once true, `potential` is visible in UI. Initially false for all
+  // players; user must scout (add to shortlist + wait) to reveal.
+  potentialRevealed Boolean @default(false)
+  // Contract clauses — one-shot bonus paid when team reaches playoffs of
+  // any stage. Stored at signing time.
+  performanceBonus Int     @default(0)
+  // Tracks the latest season that already paid out this bonus (-1 = never).
+  // Prevents double-payout within the same season if the team makes both
+  // Masters and Champions.
+  performanceBonusPaidSeason Int @default(-1)
+  // No-release clause — a hard veto on any BUYOUT offer regardless of fee.
+  // Real VCT stars sometimes carry these (the org refuses any sale).
+  noReleaseClause Boolean  @default(false)
   teamId        String?
   // Cascade delete: when a save is deleted its teams cascade, and their players
   // go with them. Otherwise cloned players pollute the template pool as orphans.
@@ -135,6 +209,7 @@ model Player {
   relationsA        PlayerRelation[] @relation("RelPlayerA")
   relationsB        PlayerRelation[] @relation("RelPlayerB")
   statSnapshots     PlayerStatSnapshot[]
+  shortlistedBy     Shortlist[]
   // Mercato V4 — extended stats scraped from VLR + derived attributes
   rating            Float      @default(1.0)
   kpr               Float      @default(0.65)
@@ -292,6 +367,20 @@ enum MessageCategory {
   MARKET
   NEWS
   MEDIA
+}
+
+// FM-style squad status — drives salary demands + happiness reaction to playing time.
+//   STAR     — face of the franchise, demands +40% vs fair pay, drops hard if benched
+//   STARTER  — regular starter, baseline pay
+//   ROTATION — flex / backup that scrims often, slight pay penalty (-10%)
+//   RESERVE  — depth piece, doesn't play official, accepts -25%
+//   PROSPECT — young talent, accepts -40% in exchange for development time
+enum SquadStatus {
+  STAR
+  STARTER
+  ROTATION
+  RESERVE
+  PROSPECT
 }
 
 model Injury {
@@ -603,4 +692,23 @@ model PlayerStatSnapshot {
   @@unique([playerId, season, week])
   @@index([saveId, playerId])
   @@index([saveId, season, week])
+}
+
+// Per-team shortlist of scouted players. Used by the scouting V1 system:
+// adding a player to your shortlist triggers progressive revelation of
+// hidden attributes (potential first) over the next ~4 weeks of weekly ticks.
+model Shortlist {
+  id          String   @id @default(cuid())
+  saveId      String
+  save        Save     @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  teamId      String
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId    String
+  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  addedWeek   Int      // absolute week index (season * 52 + week)
+  createdAt   DateTime @default(now())
+
+  @@unique([teamId, playerId])
+  @@index([saveId, teamId])
+  @@index([saveId, playerId])
 }

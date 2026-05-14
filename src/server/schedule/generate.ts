@@ -760,6 +760,70 @@ export async function initializeMasters(
     prisma, saveId, pairs, `${stagePrefix}_SWISS_R1`, afterDay, seasonNumber,
   );
 
+  // VCT Roster Lock — all 12 qualified teams are FROZEN for the duration of
+  // the tournament. Real VCT keeps the lock active even after a team is
+  // eliminated (you can't react to a bad Swiss run by panic-signing). Swiss
+  // takes ~10 days, bracket ~9 more, plus 1-week pre-lock buffer to match
+  // the real-world "lock starts a week before tournament begins" rule.
+  const TOURNAMENT_LOCK_DAYS = 30;
+  const lockUntil = afterDay + TOURNAMENT_LOCK_DAYS;
+  await prisma.team.updateMany({
+    where: {
+      id: { in: qualifiedTeams.map((q) => q.teamId) },
+      saveId,
+    },
+    data: { rosterLockedUntilDay: lockUntil },
+  });
+
+  // Phase 5 — international travel cost. One-shot $20k per qualified team
+  // deducted from operational budget when the bracket is set. Real orgs pay
+  // for flights, accommodation, on-site staff for the bootcamp + tournament.
+  const INTERNATIONAL_TRAVEL_COST = 20_000;
+  await prisma.team.updateMany({
+    where: {
+      id: { in: qualifiedTeams.map((q) => q.teamId) },
+      saveId,
+    },
+    data: { budget: { decrement: INTERNATIONAL_TRAVEL_COST } },
+  });
+
+  // Contract performance bonuses — pay each qualified team's roster their
+  // contracted bonus, ONCE per season (tracked via performanceBonusPaidSeason).
+  // Real orgs honour playoffs bonuses written into the contract; the org's
+  // operational budget eats the cost. Only applies to players whose bonus
+  // hasn't been paid yet this season.
+  const qualifiedTeamIds = qualifiedTeams.map((q) => q.teamId);
+  const bonusRecipients = await prisma.player.findMany({
+    where: {
+      teamId: { in: qualifiedTeamIds },
+      performanceBonus: { gt: 0 },
+      performanceBonusPaidSeason: { lt: seasonNumber },
+    },
+    select: { id: true, teamId: true, performanceBonus: true },
+  });
+  if (bonusRecipients.length > 0) {
+    // Aggregate per team, then deduct.
+    const totalsByTeam = new Map<string, number>();
+    for (const p of bonusRecipients) {
+      if (p.teamId) {
+        totalsByTeam.set(p.teamId, (totalsByTeam.get(p.teamId) ?? 0) + p.performanceBonus);
+      }
+    }
+    const teamDebits = Array.from(totalsByTeam.entries()).map(([teamId, total]) =>
+      prisma.team.update({
+        where: { id: teamId },
+        data: { budget: { decrement: total } },
+      }),
+    );
+    await Promise.all([
+      ...teamDebits,
+      prisma.player.updateMany({
+        where: { id: { in: bonusRecipients.map((p) => p.id) } },
+        data: { performanceBonusPaidSeason: seasonNumber },
+      }),
+    ]);
+  }
+
   return { matchesScheduled: pairs.length };
 }
 

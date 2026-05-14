@@ -45,9 +45,10 @@ export const MAIN_TABS: readonly MainTab[] = [
   },
   {
     label: "Club",
-    href: "/staff",
-    paths: ["/staff", "/sponsors"],
+    href: "/finance",
+    paths: ["/staff", "/sponsors", "/finance"],
     subs: [
+      { label: "Finance", href: "/finance" },
       { label: "Staff", href: "/staff" },
       { label: "Sponsors", href: "/sponsors" },
     ],

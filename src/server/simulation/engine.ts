@@ -35,6 +35,12 @@ export interface SimTeam {
   skillUtility: number;
   skillTeamplay: number;
   playstyle?: Playstyle;
+  /** Tier 2 — willingness to deep save vs force buy (0-100, default 50). */
+  ecoDiscipline?: number;
+  /** Tier 2 — per-map preparation level keyed by map name (0-100, default 50). */
+  mapPrep?: Record<string, number>;
+  /** Tier 2 — adaptation rating 0-100 (default 50). Drives mid-match audibles. */
+  adaptationRating?: number;
 }
 
 // ── Playstyle bonuses ──
@@ -145,8 +151,16 @@ export interface SimMapOptions {
   team1StartsAttack?: boolean;
   currentWeek?: number; // for synergy calculation
   agentMastery?: Record<string, number>; // "playerId:agentName" → stars (0-5)
-  team1CoachBoost?: number; // 0-100 coach utilityBoost (boosts team1 skillUtility by boost/100 * 0.05)
-  team2CoachBoost?: number; // 0-100 coach utilityBoost (boosts team2 skillUtility by boost/100 * 0.05)
+  // Coach attributes decomposed (Tier 1) — 0-100, default 50.
+  //   prep / utilityBoost  : execution + utility coordination
+  //   adaptation / scout   : mid-match reads, dampens loss-streak tilt
+  //   mental / trainingEff : raises team tilt resistance
+  team1CoachBoost?: number;      // = utilityBoost (prep)
+  team2CoachBoost?: number;
+  team1CoachAdaptation?: number; // = scoutingSkill
+  team2CoachAdaptation?: number;
+  team1CoachMental?: number;     // = trainingEff
+  team2CoachMental?: number;
   /** Mercato V3 — pre-fetched pair maps (DUO/CLASH strengths) for each side. */
   team1Pairs?: Map<string, number>;
   team2Pairs?: Map<string, number>;
@@ -777,6 +791,10 @@ export function simulateMap(
     agentMastery: options?.agentMastery,
     team1CoachBoost: options?.team1CoachBoost,
     team2CoachBoost: options?.team2CoachBoost,
+    team1CoachAdaptation: options?.team1CoachAdaptation,
+    team2CoachAdaptation: options?.team2CoachAdaptation,
+    team1CoachMental: options?.team1CoachMental,
+    team2CoachMental: options?.team2CoachMental,
     priorHotness: options?.priorHotness,
     team1Pairs: options?.team1Pairs,
     team2Pairs: options?.team2Pairs,
@@ -806,6 +824,10 @@ export function simulateMatch(
   matchOptions?: {
     team1CoachBoost?: number;
     team2CoachBoost?: number;
+    team1CoachAdaptation?: number;
+    team2CoachAdaptation?: number;
+    team1CoachMental?: number;
+    team2CoachMental?: number;
     team1Pairs?: Map<string, number>;
     team2Pairs?: Map<string, number>;
   },
@@ -827,6 +849,10 @@ export function simulateMatch(
     const result = simulateMap(team1, team2, mapName, {
       team1CoachBoost: matchOptions?.team1CoachBoost,
       team2CoachBoost: matchOptions?.team2CoachBoost,
+      team1CoachAdaptation: matchOptions?.team1CoachAdaptation,
+      team2CoachAdaptation: matchOptions?.team2CoachAdaptation,
+      team1CoachMental: matchOptions?.team1CoachMental,
+      team2CoachMental: matchOptions?.team2CoachMental,
       team1Pairs: matchOptions?.team1Pairs,
       team2Pairs: matchOptions?.team2Pairs,
       priorHotness, // carry confidence between maps
