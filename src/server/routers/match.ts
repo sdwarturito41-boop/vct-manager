@@ -32,6 +32,7 @@ function buildSimTeam(team: Team & { players: Player[] }): SimTeam {
       hs: p.hs,
       role: p.role,
       overall: p.overall,
+      formMomentum: p.formMomentum,
     })),
     skillAim: team.skillAim,
     skillUtility: team.skillUtility,
@@ -605,9 +606,9 @@ export const matchRouter = router({
         }
 
         // Rolling-average stat update — chaque map post-Match update les
-        // stats de base (ACS, K/D, KAST, ADR, HS, Rating) via EMA. Ça permet
-        // aux joueurs de "progresser" ou "régresser" en fonction de leur
-        // forme réelle au lieu de stagner sur la valeur VLR initiale.
+        // stats de base (ACS, K/D, KAST, ADR, HS, Rating) via EMA + recompute
+        // la carte (overall, attrs) + update le formMomentum selon win/loss.
+        const userWon = userScore > oppScore;
         for (const stat of mapResult.playerStats) {
           await applyStatRollingUpdate(ctx.prisma, {
             playerId: stat.playerId,
@@ -615,6 +616,7 @@ export const matchRouter = router({
             kills: stat.kills,
             deaths: stat.deaths,
             assists: stat.assists,
+            won: stat.teamId === userTeam.id ? userWon : !userWon,
           });
         }
       } catch (err) {

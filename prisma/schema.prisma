@@ -188,6 +188,13 @@ model Player {
   // Once true, `potential` is visible in UI. Initially false for all
   // players; user must scout (add to shortlist + wait) to reveal.
   potentialRevealed Boolean @default(false)
+  // Form momentum [-10, +10] — état mental/forme distinct des stats brutes.
+  // Updated après chaque match : win + bon ACS = +2, défaite + mauvais = -2.
+  // Décroît naturellement vers 0 de 0.1 par jour SANS match (drift continu).
+  // Float pour permettre le decay quotidien granulaire (un joueur blessé
+  // 3 semaines perd ~2.1 momentum, pas juste 3).
+  // Influence le gameDay roll dans la sim (±5% sur rating selon momentum).
+  formMomentum  Float      @default(0)
   // Contract clauses — one-shot bonus paid when team reaches playoffs of
   // any stage. Stored at signing time.
   performanceBonus Int     @default(0)

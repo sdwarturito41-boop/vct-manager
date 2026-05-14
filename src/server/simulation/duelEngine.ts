@@ -40,6 +40,8 @@ export interface SimPlayerInput {
   joinedWeek?: number;
   /** V4 — 0-20 FM-style overall. Undefined treated as 10 (neutral). */
   overall?: number;
+  /** Form momentum [-10, +10]. Tilts gameDay roll ±5%. */
+  formMomentum?: number;
 }
 
 export interface SimTeamInput {
@@ -428,7 +430,7 @@ function computeRating(p: SimPlayerInput, mapName: string, agentName: string, ag
   return baseRating * mapFactor * masteryBonus * metaBonus * overallMultiplier;
 }
 
-function rollGameDay(consistencyRating: number = 50): number {
+function rollGameDay(consistencyRating: number = 50, formMomentum: number = 0): number {
   // Per-player game-day variance — moderately tight. Old ranges (career night
   // 1.25-1.55, disaster 0.62-0.78) compounded with mapFactor, teamPrepRoll and
   // overall multipliers to produce 13-0 stomps even when a team was an 80%
@@ -452,7 +454,18 @@ function rollGameDay(consistencyRating: number = 50): number {
   const variance = consistencyRating >= 50
     ? 1.0 - (consistencyRating - 50) / 83  // 50→1.0, 100→0.4
     : 1.0 + (50 - consistencyRating) / 250; // 50→1.0, 0→1.2
-  return 1.0 + (raw - 1.0) * variance;
+  let scaled = 1.0 + (raw - 1.0) * variance;
+
+  // Form momentum tilt — un joueur en forme (+10) bénéficie d'un boost
+  // multiplicatif de +5% sur le gameDay roll, un joueur en méforme (-10)
+  // de -5%. Linéaire entre les deux. Capture l'idée "j'ai gagné mes 5
+  // derniers, j'arrive avec la flèche". Indépendant de la variance
+  // (s'applique après le scaling consistency).
+  if (formMomentum !== 0) {
+    const momentumMul = 1 + (formMomentum / 10) * 0.05;
+    scaled *= momentumMul;
+  }
+  return scaled;
 }
 
 /**
@@ -602,7 +615,7 @@ function buildTeamRuntime(
     // gameIQ (duel edge), aggression (entry pick weight), utilityIQ (ability
     // emit prob), and consistencyRating (per-player variance damping).
     const micro = deriveMicroStats(p);
-    const gameDay = rollGameDay(micro.consistencyRating);
+    const gameDay = rollGameDay(micro.consistencyRating, p.formMomentum ?? 0);
     const rating = baseRating * gameDay * teamPrepRoll * mapPrepMultiplier;
 
     // Tilt resistance — high = doesn't tilt easily (Boaster, Chronicle types).

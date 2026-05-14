@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@/generated/prisma/client";
+import { recomputePlayerOverall } from "@/server/mercato/attributes";
 
 /**
  * Rolling-average stat update — applique une EMA (exponentially weighted
@@ -25,6 +26,8 @@ export interface MatchStatInput {
   kills: number;
   deaths: number;
   assists: number;
+  /** Le match a-t-il été gagné par l'équipe du joueur ? Pour formMomentum. */
+  won?: boolean;
 }
 
 export async function applyStatRollingUpdate(
@@ -33,7 +36,10 @@ export async function applyStatRollingUpdate(
 ): Promise<void> {
   const player = await prisma.player.findUnique({
     where: { id: input.playerId },
-    select: { acs: true, kd: true, kast: true, adr: true, hs: true, rating: true },
+    select: {
+      acs: true, kd: true, kast: true, adr: true, hs: true, rating: true,
+      formMomentum: true,
+    },
   });
   if (!player) return;
 
@@ -57,6 +63,20 @@ export async function applyStatRollingUpdate(
   const matchRating = matchAcs / 200 + (input.assists / Math.max(1, input.kills + input.deaths + input.assists)) * 0.2;
   const newRating = ema(player.rating, matchRating, EMA_ALPHA);
 
+  // ── Form momentum ──
+  // win + ACS bon = +2, win + ACS mid = +1
+  // défaite + ACS mid = 0 (le résultat affecte plus que la perf perso)
+  // défaite + ACS mauvais = -2
+  // Clampé à [-10, +10].
+  const acsAboveBaseline = matchAcs > player.acs;
+  let momentumDelta = 0;
+  if (input.won === true) {
+    momentumDelta = acsAboveBaseline ? 2 : 1;
+  } else if (input.won === false) {
+    momentumDelta = acsAboveBaseline ? 0 : -2;
+  }
+  const newMomentum = Math.max(-10, Math.min(10, player.formMomentum + momentumDelta));
+
   await prisma.player.update({
     where: { id: input.playerId },
     data: {
@@ -66,8 +86,14 @@ export async function applyStatRollingUpdate(
       adr: round2(clamp(newAdr, 80, 200)),
       hs: round2(clamp(newHs, 10, 45)),
       rating: round2(clamp(newRating, 0.5, 2.0)),
+      formMomentum: newMomentum,
     },
   });
+
+  // Recompute la "carte" du joueur (overall + attributs + stars) à partir
+  // des nouvelles stats. Sans ça, ACS bouge mais l'overall reste figé
+  // → l'user voit pas l'évolution de Bipo après les Masters.
+  await recomputePlayerOverall(prisma, input.playerId);
 }
 
 function ema(prev: number, sample: number, alpha: number): number {

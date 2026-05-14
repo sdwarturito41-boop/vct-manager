@@ -60,7 +60,7 @@ type SimTeamInput = {
   ecoDiscipline?: number;
   mapPrep?: unknown;
   adaptationRating?: number;
-  players: Pick<Player, "id" | "ign" | "acs" | "kd" | "adr" | "kast" | "hs" | "role" | "overall">[];
+  players: Pick<Player, "id" | "ign" | "acs" | "kd" | "adr" | "kast" | "hs" | "role" | "overall" | "formMomentum">[];
 };
 
 function buildSimTeam(team: SimTeamInput): SimTeam {
@@ -80,6 +80,7 @@ function buildSimTeam(team: SimTeamInput): SimTeam {
       hs: p.hs,
       role: p.role,
       overall: p.overall,
+      formMomentum: p.formMomentum,
     })),
     skillAim: team.skillAim,
     skillUtility: team.skillUtility,
@@ -157,7 +158,7 @@ export const seasonRouter = router({
     // call. Restricting to scalars cuts the wire payload by ~95%.
     const playerSelect = {
       id: true, ign: true, acs: true, kd: true, adr: true, kast: true,
-      hs: true, role: true, overall: true,
+      hs: true, role: true, overall: true, formMomentum: true,
     } as const;
     const teamScalars = {
       id: true, name: true, tag: true, logoUrl: true, region: true,
@@ -323,7 +324,9 @@ export const seasonRouter = router({
 
       // Rolling stat update pour TOUS les joueurs ayant joué cette série AI.
       // Update une fois par map jouée (BO3 = 2-3 maps, BO5 = 3-5 maps).
+      // `won` est calculé par map : score1 > score2 → team1 won.
       for (const map of result.maps) {
+        const team1WonMap = map.score1 > map.score2;
         for (const stat of map.playerStats) {
           await applyStatRollingUpdate(ctx.prisma, {
             playerId: stat.playerId,
@@ -331,6 +334,7 @@ export const seasonRouter = router({
             kills: stat.kills,
             deaths: stat.deaths,
             assists: stat.assists,
+            won: stat.teamId === match.team1Id ? team1WonMap : !team1WonMap,
           });
         }
       }
@@ -852,6 +856,21 @@ export const seasonRouter = router({
 
     const prevWeek = Math.ceil(season.currentDay / 7);
     const isNewWeekTick = newWeek > prevWeek;
+    // Form momentum decay quotidien — 0.1 par advance day vers 0.
+    // Les joueurs qui ont matché aujourd'hui auront leur momentum réécrit
+    // par applyStatRollingUpdate juste après — pas de race condition.
+    // Sur 10 jours sans match, perd 1 point. 3 semaines de blessure ≈ -2.1.
+    await ctx.prisma.$executeRaw`
+      UPDATE "Player"
+      SET "formMomentum" = CASE
+        WHEN "formMomentum" > 0.1 THEN "formMomentum" - 0.1
+        WHEN "formMomentum" < -0.1 THEN "formMomentum" + 0.1
+        ELSE 0
+      END
+      WHERE "formMomentum" != 0
+        AND "teamId" IN (SELECT id FROM "Team" WHERE "saveId" = ${ctx.save.id})
+    `;
+
     if (isNewWeekTick) {
       const { transitions } = await recomputeHappinessAll(
         ctx.prisma,
@@ -1377,21 +1396,6 @@ export const seasonRouter = router({
     const season = await ctx.prisma.season.findFirst({
       where: { saveId: ctx.save.id, isActive: true },
     });
-    if (!season) {
-      return {
-        seasonNumber: 0,
-        seasonYear: 2026,
-        userRegion: "EMEA" as const,
-        splits: [] as Array<{ name: string; stageId: string; podium: Array<{ rank: number; team: { id: string; name: string; tag: string; logoUrl: string | null; region: string } }> }>,
-        masters: [] as Array<{ name: string; stageId: string; city: string; podium: Array<{ rank: number; team: { id: string; name: string; tag: string; logoUrl: string | null; region: string } }> }>,
-      };
-    }
-
-    const userTeam = await ctx.prisma.team.findFirst({
-      where: { saveId: ctx.save.id, isPlayerTeam: true },
-      select: { region: true },
-    });
-    const userRegion = userTeam?.region ?? "EMEA";
 
     type TeamMini = {
       id: string;
@@ -1401,7 +1405,47 @@ export const seasonRouter = router({
       region: string;
     };
 
-    async function findStageWinner(stageId: string, region?: string) {
+    type SectionRegionalPodium = {
+      kind: "REGIONAL_PODIUM";
+      title: string;
+      regions: Record<string, TeamMini[]>; // top 3 par région
+    };
+    type SectionInternationalFinal = {
+      kind: "INTERNATIONAL_FINAL";
+      title: string;
+      city: string | null;
+      finalists: TeamMini[]; // [winner, loser]
+    };
+    type SectionQualifiers = {
+      kind: "QUALIFIERS";
+      title: string;
+      subtitle: string;
+      regions: Record<string, TeamMini[]>;
+    };
+    type Section = SectionRegionalPodium | SectionInternationalFinal | SectionQualifiers;
+
+    if (!season) {
+      return {
+        seasonNumber: 0,
+        seasonYear: 2026,
+        userRegion: "EMEA" as const,
+        sections: [] as Section[],
+      };
+    }
+
+    const userTeam = await ctx.prisma.team.findFirst({
+      where: { saveId: ctx.save.id, isPlayerTeam: true },
+      select: { region: true },
+    });
+    const userRegion = userTeam?.region ?? "EMEA";
+    const ALL_REGIONS = ["EMEA", "Americas", "Pacific", "China"] as const;
+
+    const teamMiniSelect = {
+      id: true, name: true, tag: true, logoUrl: true, region: true,
+    } as const;
+
+    /** Winner + loser d'un seul match identifié par stageId (+région optionnelle). */
+    async function findFinal(stageId: string, region?: string) {
       const m = await ctx.prisma.match.findFirst({
         where: {
           saveId: ctx.save.id,
@@ -1412,102 +1456,142 @@ export const seasonRouter = router({
           ...(region ? { team1: { region: region as "EMEA" | "Americas" | "Pacific" | "China" } } : {}),
         },
         include: {
-          team1: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
-          team2: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
+          team1: { select: teamMiniSelect },
+          team2: { select: teamMiniSelect },
         },
       });
       if (!m || !m.winnerId) return null;
       const winner = (m.winnerId === m.team1.id ? m.team1 : m.team2) as TeamMini;
       const loser = (m.winnerId === m.team1.id ? m.team2 : m.team1) as TeamMini;
-      return { winner, loser, matchId: m.id };
+      return { winner, loser };
     }
 
-    // ── Splits régionaux ──
-    const splits: Array<{
-      name: string;
-      stageId: string;
-      podium: Array<{ rank: number; team: TeamMini }>;
-    }> = [];
-
-    // Kickoff
-    const kickoffUB = await findStageWinner("KICKOFF_UB_FINAL", userRegion);
-    const kickoffMID = await findStageWinner("KICKOFF_MID_FINAL", userRegion);
-    const kickoffLB = await findStageWinner("KICKOFF_LB_FINAL", userRegion);
-    const kickoffPodium = [
-      kickoffUB?.winner ? { rank: 1, team: kickoffUB.winner } : null,
-      kickoffMID?.winner ? { rank: 2, team: kickoffMID.winner } : null,
-      kickoffLB?.winner ? { rank: 3, team: kickoffLB.winner } : null,
-    ].filter((x): x is { rank: number; team: TeamMini } => x !== null);
-    if (kickoffPodium.length > 0) {
-      splits.push({ name: "Kickoff", stageId: "KICKOFF", podium: kickoffPodium });
+    /** Top 3 d'un Kickoff régional (UB Final / MID Final / LB Final winners). */
+    async function kickoffTop3(region: string): Promise<TeamMini[]> {
+      const podium: TeamMini[] = [];
+      for (const sid of ["KICKOFF_UB_FINAL", "KICKOFF_MID_FINAL", "KICKOFF_LB_FINAL"]) {
+        const r = await findFinal(sid, region);
+        if (r?.winner) podium.push(r.winner);
+      }
+      return podium;
     }
 
-    // Stage 1
-    const s1UB = await findStageWinner("STAGE_1_PO_UB_FINAL", userRegion);
-    const s1GF = await findStageWinner("STAGE_1_PO_GF", userRegion);
-    const s1Podium: typeof kickoffPodium = [];
-    if (s1UB?.winner) s1Podium.push({ rank: 1, team: s1UB.winner });
-    if (s1GF?.winner) s1Podium.push({ rank: 2, team: s1GF.winner });
-    if (s1GF?.loser) s1Podium.push({ rank: 3, team: s1GF.loser });
-    if (s1Podium.length > 0) {
-      splits.push({ name: "Stage 1", stageId: "STAGE_1", podium: s1Podium });
+    /** Top 3 d'un Stage régional (PO UB Final winner / GF winner / GF loser). */
+    async function stageTop3(stageId: string, region: string): Promise<TeamMini[]> {
+      const ub = await findFinal(`${stageId}_PO_UB_FINAL`, region);
+      const gf = await findFinal(`${stageId}_PO_GF`, region);
+      const podium: TeamMini[] = [];
+      if (ub?.winner) podium.push(ub.winner);
+      if (gf?.winner) podium.push(gf.winner);
+      if (gf?.loser) podium.push(gf.loser);
+      return podium;
     }
 
-    // Stage 2
-    const s2UB = await findStageWinner("STAGE_2_PO_UB_FINAL", userRegion);
-    const s2GF = await findStageWinner("STAGE_2_PO_GF", userRegion);
-    const s2Podium: typeof kickoffPodium = [];
-    if (s2UB?.winner) s2Podium.push({ rank: 1, team: s2UB.winner });
-    if (s2GF?.winner) s2Podium.push({ rank: 2, team: s2GF.winner });
-    if (s2GF?.loser) s2Podium.push({ rank: 3, team: s2GF.loser });
-    if (s2Podium.length > 0) {
-      splits.push({ name: "Stage 2", stageId: "STAGE_2", podium: s2Podium });
+    /** Équipes ayant participé à un tournoi international (groupé par région). */
+    async function tournamentQualifiers(stagePrefix: string): Promise<Record<string, TeamMini[]>> {
+      const matches = await ctx.prisma.match.findMany({
+        where: {
+          saveId: ctx.save.id,
+          season: season!.number,
+          stageId: { startsWith: stagePrefix },
+        },
+        select: {
+          team1: { select: teamMiniSelect },
+          team2: { select: teamMiniSelect },
+        },
+      });
+      const byRegion: Record<string, Map<string, TeamMini>> = {
+        EMEA: new Map(), Americas: new Map(), Pacific: new Map(), China: new Map(),
+      };
+      for (const m of matches) {
+        for (const t of [m.team1, m.team2] as TeamMini[]) {
+          if (t && byRegion[t.region]) byRegion[t.region].set(t.id, t);
+        }
+      }
+      return Object.fromEntries(
+        Object.entries(byRegion).map(([reg, map]) => [reg, Array.from(map.values())]),
+      );
     }
 
-    // ── Tournois internationaux ──
-    const masters: Array<{
-      name: string;
-      stageId: string;
-      city: string;
-      podium: Array<{ rank: number; team: TeamMini }>;
-    }> = [];
+    const sections: Section[] = [];
 
-    const m1GF = await findStageWinner("MASTERS_1_GF");
-    if (m1GF) {
-      masters.push({
-        name: "Masters Santiago",
-        stageId: "MASTERS_1",
+    // 1. Kickoff regional podiums
+    const kickoffRegions: Record<string, TeamMini[]> = {};
+    for (const r of ALL_REGIONS) kickoffRegions[r] = await kickoffTop3(r);
+    if (Object.values(kickoffRegions).some((v) => v.length > 0)) {
+      sections.push({ kind: "REGIONAL_PODIUM", title: "Kickoff — Top 3 régional", regions: kickoffRegions });
+    }
+
+    // 2. Masters 1 finalists
+    const m1 = await findFinal("MASTERS_1_GRAND_FINAL");
+    if (m1) {
+      sections.push({
+        kind: "INTERNATIONAL_FINAL",
+        title: `Masters ${season.masters1City}`,
         city: season.masters1City,
-        podium: [
-          { rank: 1, team: m1GF.winner },
-          { rank: 2, team: m1GF.loser },
-        ],
+        finalists: [m1.winner, m1.loser],
       });
     }
 
-    const m2GF = await findStageWinner("MASTERS_2_GF");
-    if (m2GF) {
-      masters.push({
-        name: "Masters London",
-        stageId: "MASTERS_2",
+    // 3. Stage 1 regional podiums
+    const s1Regions: Record<string, TeamMini[]> = {};
+    for (const r of ALL_REGIONS) s1Regions[r] = await stageTop3("STAGE_1", r);
+    if (Object.values(s1Regions).some((v) => v.length > 0)) {
+      sections.push({ kind: "REGIONAL_PODIUM", title: "Stage 1 — Top 3 régional", regions: s1Regions });
+    }
+
+    // 4. EWC qualifiers (par région) — équipes ayant joué au moins 1 match EWC_*
+    const ewcQuals = await tournamentQualifiers("EWC_");
+    if (Object.values(ewcQuals).some((v) => v.length > 0)) {
+      sections.push({
+        kind: "QUALIFIERS",
+        title: "Qualifiés Esports World Cup",
+        subtitle: "Sortis du Stage 2 vers Riyadh",
+        regions: ewcQuals,
+      });
+    }
+
+    // 5. Masters 2 finalists
+    const m2 = await findFinal("MASTERS_2_GRAND_FINAL");
+    if (m2) {
+      sections.push({
+        kind: "INTERNATIONAL_FINAL",
+        title: `Masters ${season.masters2City}`,
         city: season.masters2City,
-        podium: [
-          { rank: 1, team: m2GF.winner },
-          { rank: 2, team: m2GF.loser },
-        ],
+        finalists: [m2.winner, m2.loser],
       });
     }
 
-    const cGF = await findStageWinner("CHAMPIONS_GF");
-    if (cGF) {
-      masters.push({
-        name: "Champions Shanghai",
-        stageId: "CHAMPIONS",
+    // 6. Champions qualifiers (par région) — équipes ayant joué Champions
+    const championsQuals = await tournamentQualifiers("CHAMPIONS_");
+    if (Object.values(championsQuals).some((v) => v.length > 0)) {
+      sections.push({
+        kind: "QUALIFIERS",
+        title: "Qualifiés Champions",
+        subtitle: `Direction ${season.championsCity}`,
+        regions: championsQuals,
+      });
+    }
+
+    // 7. Champions finalists
+    const champ = await findFinal("CHAMPIONS_GRAND_FINAL");
+    if (champ) {
+      sections.push({
+        kind: "INTERNATIONAL_FINAL",
+        title: `Champions ${season.championsCity}`,
         city: season.championsCity,
-        podium: [
-          { rank: 1, team: cGF.winner },
-          { rank: 2, team: cGF.loser },
-        ],
+        finalists: [champ.winner, champ.loser],
+      });
+    }
+
+    // 8. EWC finalists
+    const ewc = await findFinal("EWC_GRAND_FINAL");
+    if (ewc) {
+      sections.push({
+        kind: "INTERNATIONAL_FINAL",
+        title: "Esports World Cup",
+        city: "Riyadh",
+        finalists: [ewc.winner, ewc.loser],
       });
     }
 
@@ -1515,8 +1599,7 @@ export const seasonRouter = router({
       seasonNumber: season.number,
       seasonYear: season.year,
       userRegion,
-      splits,
-      masters,
+      sections,
     };
   }),
 });

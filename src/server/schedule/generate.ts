@@ -6,6 +6,7 @@ import { applyPatchToMeta } from "@/constants/meta";
 import { VCT_TEAMS } from "@/constants/teams";
 import { allocateSeasonBudget } from "@/server/finance/budgets";
 import { applyOffSeasonFinancials } from "@/server/finance/seasonRollover";
+import { applyAgingEffects } from "@/server/simulation/aging";
 import { stageStartDay } from "@/constants/vct-calendar";
 import { scaledSalary } from "@/constants/staff";
 import type { StaffRole } from "@/generated/prisma/client";
@@ -2178,6 +2179,18 @@ export async function rollOffSeason(
   await prisma.player.updateMany({
     where: { team: { saveId } },
     data: { age: { increment: 1 } },
+  });
+
+  // 1b) Apply aging effects — décline des stats post-28 ans, potential
+  //     growth pour les jeunes < 24 ans. Doit tourner APRÈS l'age++ pour
+  //     que les seuils (28+, 21-23, etc.) référencent le nouvel âge.
+  await applyAgingEffects(prisma, saveId);
+
+  // 1c) Reset form momentum à 0 — nouvelle saison, nouvelle dynamique.
+  //     Les anciennes streaks de fin de saison ne polluent pas le Kickoff.
+  await prisma.player.updateMany({
+    where: { team: { saveId }, formMomentum: { not: 0 } },
+    data: { formMomentum: 0 },
   });
 
   // 2) Retire old underperformers (within this save)

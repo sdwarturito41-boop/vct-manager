@@ -5,14 +5,33 @@ import { formatGameDate, formatGameDateLong } from "@/lib/game-date";
 import { D } from "@/constants/design";
 
 /**
- * Page Saison — résumé compétitif :
- *   - Bandeau date courante + saison
- *   - Top 3 podiums par split régional (Kickoff / Stage 1 / Stage 2)
- *   - Top 2 podiums par tournoi international (Masters 1/2 / Champions)
+ * Page Saison — récap chronologique de la saison VCT :
+ *   1. Kickoff (top 3 par région)
+ *   2. Masters 1 (finalistes)
+ *   3. Stage 1 (top 3 par région)
+ *   4. Qualifiés EWC (par région)
+ *   5. Masters 2 (finalistes)
+ *   6. Qualifiés Champions (par région)
+ *   7. Champions (finalistes)
+ *   8. EWC (finalistes)
  *
- * Quand un split/tournoi n'est pas encore joué, on l'omet (la page se
- * remplit progressivement à mesure que la saison avance).
+ * Les sections vides sont omises au fur et à mesure que la saison se déroule.
  */
+type TeamMini = {
+  id: string;
+  name: string;
+  tag: string;
+  logoUrl: string | null;
+  region: string;
+};
+
+type Section =
+  | { kind: "REGIONAL_PODIUM"; title: string; regions: Record<string, TeamMini[]> }
+  | { kind: "INTERNATIONAL_FINAL"; title: string; city: string | null; finalists: TeamMini[] }
+  | { kind: "QUALIFIERS"; title: string; subtitle: string; regions: Record<string, TeamMini[]> };
+
+const ALL_REGIONS = ["EMEA", "Americas", "Pacific", "China"] as const;
+
 export default function SeasonPage() {
   const seasonQ = trpc.season.getCurrent.useQuery();
   const recapQ = trpc.season.recap.useQuery();
@@ -28,9 +47,11 @@ export default function SeasonPage() {
     );
   }
 
+  const sections = (recap?.sections ?? []) as Section[];
+
   return (
     <div className="flex min-h-full flex-col">
-      {/* Hero — date + saison */}
+      {/* Hero */}
       <section
         className="relative px-10 pt-8 pb-6"
         style={{ borderBottom: `1px solid ${D.border}` }}
@@ -69,169 +90,163 @@ export default function SeasonPage() {
         </div>
       </section>
 
-      {/* Splits régionaux */}
+      {sections.length === 0 ? (
+        <section className="px-10 py-12 text-center">
+          <p className="text-[12px]" style={{ color: D.textSubtle }}>
+            La saison vient de commencer — aucun stage n'est encore terminé.
+            Reviens après le Kickoff pour voir les premiers podiums.
+          </p>
+        </section>
+      ) : (
+        sections.map((s, idx) => (
+          <SectionRenderer key={idx} section={s} />
+        ))
+      )}
+    </div>
+  );
+}
+
+function SectionRenderer({ section }: { section: Section }) {
+  if (section.kind === "REGIONAL_PODIUM") {
+    return (
+      <section
+        className="px-10 py-6"
+        style={{ borderBottom: `1px solid ${D.border}` }}
+      >
+        <h2 className="text-[16px] font-medium mb-4" style={{ color: D.textPrimary }}>
+          {section.title}
+        </h2>
+        <div className="grid grid-cols-4 gap-3">
+          {ALL_REGIONS.map((reg) => (
+            <RegionPodiumCard
+              key={reg}
+              region={reg}
+              podium={section.regions[reg] ?? []}
+              max={3}
+            />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (section.kind === "INTERNATIONAL_FINAL") {
+    return (
       <section
         className="px-10 py-6"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
         <div className="flex items-baseline gap-3 mb-4">
-          <h2
-            className="text-[16px] font-medium"
-            style={{ color: D.textPrimary }}
-          >
-            Splits régionaux
+          <h2 className="text-[16px] font-medium" style={{ color: D.textPrimary }}>
+            {section.title}
           </h2>
-          {recap?.userRegion && (
+          {section.city && (
             <span className="text-[11px]" style={{ color: D.textSubtle }}>
-              · {recap.userRegion}
+              · Finale internationale
             </span>
           )}
         </div>
-
-        {!recap || recap.splits.length === 0 ? (
-          <EmptyState text="Aucun split terminé pour l'instant." />
-        ) : (
-          <div className="grid grid-cols-3 gap-4">
-            {recap.splits.map((s) => (
-              <SplitPodiumCard key={s.stageId} name={s.name} podium={s.podium} />
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-2 gap-3 max-w-2xl">
+          {section.finalists.map((t, i) => (
+            <FinalistCard key={t.id} rank={i + 1} team={t} />
+          ))}
+        </div>
       </section>
+    );
+  }
 
-      {/* Tournois internationaux */}
+  if (section.kind === "QUALIFIERS") {
+    return (
       <section
         className="px-10 py-6"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
         <div className="flex items-baseline gap-3 mb-4">
-          <h2
-            className="text-[16px] font-medium"
-            style={{ color: D.textPrimary }}
-          >
-            Tournois internationaux
+          <h2 className="text-[16px] font-medium" style={{ color: D.textPrimary }}>
+            {section.title}
           </h2>
           <span className="text-[11px]" style={{ color: D.textSubtle }}>
-            · Toutes régions
+            · {section.subtitle}
           </span>
         </div>
-
-        {!recap || recap.masters.length === 0 ? (
-          <EmptyState text="Aucun tournoi international terminé pour l'instant." />
-        ) : (
-          <div className="grid grid-cols-3 gap-4">
-            {recap.masters.map((m) => (
-              <InternationalPodiumCard
-                key={m.stageId}
-                name={m.name}
-                city={m.city}
-                podium={m.podium}
-              />
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-4 gap-3">
+          {ALL_REGIONS.map((reg) => (
+            <RegionPodiumCard
+              key={reg}
+              region={reg}
+              podium={section.regions[reg] ?? []}
+              max={5}
+              showRank={false}
+            />
+          ))}
+        </div>
       </section>
-    </div>
-  );
+    );
+  }
+
+  return null;
 }
 
-// ─────────────────────── Components ───────────────────────
-
-type Team = {
-  id: string;
-  name: string;
-  tag: string;
-  logoUrl: string | null;
-  region: string;
-};
-
-type Podium = Array<{ rank: number; team: Team }>;
-
-function SplitPodiumCard({ name, podium }: { name: string; podium: Podium }) {
-  return (
-    <div
-      className="flex flex-col p-5"
-      style={{
-        background: D.card,
-        border: `1px solid ${D.borderFaint}`,
-        borderRadius: D.radiusCard,
-      }}
-    >
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
-          {name}
-        </h3>
-        <span className="text-[10px]" style={{ color: D.textSubtle }}>
-          Top 3 qualifiés Masters
-        </span>
-      </div>
-      <div className="flex flex-col gap-2">
-        {podium.map((p) => (
-          <PodiumRow key={p.team.id} rank={p.rank} team={p.team} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function InternationalPodiumCard({
-  name,
-  city,
+function RegionPodiumCard({
+  region,
   podium,
+  max,
+  showRank = true,
 }: {
-  name: string;
-  city: string;
-  podium: Podium;
+  region: string;
+  podium: TeamMini[];
+  max: number;
+  showRank?: boolean;
 }) {
   return (
     <div
-      className="flex flex-col p-5"
+      className="flex flex-col p-4"
       style={{
         background: D.card,
         border: `1px solid ${D.borderFaint}`,
         borderRadius: D.radiusCard,
       }}
     >
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3
-            className="text-[14px] font-medium"
-            style={{ color: D.textPrimary }}
-          >
-            {name}
-          </h3>
-          <div className="text-[10px]" style={{ color: D.textSubtle }}>
-            {city}
-          </div>
-        </div>
-        <span className="text-[10px]" style={{ color: D.textSubtle }}>
-          Finalistes
+      <div className="flex items-center justify-between mb-3">
+        <span
+          className="text-[10px] font-medium uppercase tracking-wider"
+          style={{ color: D.textSubtle }}
+        >
+          {region}
+        </span>
+        <span className="text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
+          {podium.length}/{max}
         </span>
       </div>
-      <div className="flex flex-col gap-2">
-        {podium.map((p) => (
-          <PodiumRow key={p.team.id} rank={p.rank} team={p.team} />
-        ))}
-      </div>
+      {podium.length === 0 ? (
+        <p className="text-[10px]" style={{ color: D.textSubtle }}>
+          —
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {podium.slice(0, max).map((t, i) => (
+            <TeamRow key={t.id} team={t} rank={showRank ? i + 1 : null} compact />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function PodiumRow({ rank, team }: { rank: number; team: Team }) {
-  const medalColor =
-    rank === 1 ? D.gold : rank === 2 ? "#c0c0c0" : rank === 3 ? "#cd7f32" : D.textSubtle;
-  const medalLabel = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `#${rank}`;
+function FinalistCard({ rank, team }: { rank: number; team: TeamMini }) {
+  const medalColor = rank === 1 ? D.gold : "#c0c0c0";
+  const medalLabel = rank === 1 ? "🥇" : "🥈";
   return (
     <div
-      className="flex items-center gap-3 px-3 py-2"
+      className="flex items-center gap-3 p-4"
       style={{
-        background: "rgba(255,255,255,0.02)",
-        borderRadius: D.radiusStat,
-        border: `1px solid ${rank === 1 ? `${medalColor}30` : D.borderFaint}`,
+        background: D.card,
+        border: `1px solid ${rank === 1 ? `${medalColor}40` : D.borderFaint}`,
+        borderRadius: D.radiusCard,
       }}
     >
       <span
-        className="text-[16px] font-medium tabular-nums w-7 text-center"
+        className="text-[24px] tabular-nums w-9 text-center"
         style={{ color: medalColor }}
       >
         {medalLabel}
@@ -240,49 +255,89 @@ function PodiumRow({ rank, team }: { rank: number; team: Team }) {
         <img
           src={team.logoUrl}
           alt={team.name}
-          className="h-7 w-7 object-contain"
+          className="h-10 w-10 object-contain"
         />
       ) : (
         <div
-          className="flex h-7 w-7 items-center justify-center rounded-full"
+          className="flex h-10 w-10 items-center justify-center rounded-full"
           style={{
-            background: D.card,
+            background: D.surface,
             border: `1px solid ${D.borderFaint}`,
             color: D.textMuted,
-            fontSize: 10,
+            fontSize: 11,
             fontWeight: 500,
           }}
         >
-          {team.tag.slice(0, 2)}
+          {team.tag.slice(0, 3)}
         </div>
       )}
       <div className="flex-1 min-w-0">
         <div
-          className="truncate text-[13px] font-medium"
+          className="truncate text-[15px] font-medium"
           style={{ color: D.textPrimary }}
         >
           {team.name}
         </div>
-        <div className="text-[10px]" style={{ color: D.textSubtle }}>
-          {team.tag} · {team.region}
+        <div className="text-[11px]" style={{ color: D.textSubtle }}>
+          {team.region}
         </div>
       </div>
     </div>
   );
 }
 
-function EmptyState({ text }: { text: string }) {
+function TeamRow({
+  team,
+  rank,
+  compact,
+}: {
+  team: TeamMini;
+  rank: number | null;
+  compact?: boolean;
+}) {
   return (
     <div
-      className="px-4 py-8 text-center text-[11px]"
+      className="flex items-center gap-2"
       style={{
-        color: D.textSubtle,
-        background: D.card,
-        border: `1px dashed ${D.borderFaint}`,
-        borderRadius: D.radiusCard,
+        padding: compact ? 4 : 8,
+        background: "rgba(255,255,255,0.02)",
+        borderRadius: D.radiusBadge,
       }}
     >
-      {text}
+      {rank !== null && (
+        <span
+          className="text-[10px] font-medium tabular-nums w-4 text-center"
+          style={{
+            color: rank === 1 ? D.gold : rank === 2 ? "#c0c0c0" : "#cd7f32",
+          }}
+        >
+          {rank}
+        </span>
+      )}
+      {team.logoUrl ? (
+        <img
+          src={team.logoUrl}
+          alt={team.name}
+          className="h-5 w-5 object-contain"
+        />
+      ) : (
+        <div
+          className="flex h-5 w-5 items-center justify-center rounded-full"
+          style={{
+            background: D.surface,
+            color: D.textMuted,
+            fontSize: 8,
+          }}
+        >
+          {team.tag.slice(0, 2)}
+        </div>
+      )}
+      <span
+        className="truncate text-[11px]"
+        style={{ color: D.textPrimary }}
+      >
+        {team.tag}
+      </span>
     </div>
   );
 }

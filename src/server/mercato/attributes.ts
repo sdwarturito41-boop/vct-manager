@@ -491,6 +491,89 @@ export async function recomputeAllOveralls(
 }
 
 /**
+ * Lightweight per-player overall recompute. Appelée après chaque map jouée
+ * par un joueur (depuis applyStatRollingUpdate) pour que sa CARTE (overall,
+ * attributes, role stars) bouge en sync avec ses stats brutes.
+ *
+ * Non-destructif :
+ *   - Préserve `playstyleRole` si le manager l'a fixé
+ *   - 1 query + 1 update au lieu des ~290 du recompute global
+ *
+ * Le cache de percentiles n'est PAS rafraîchi — il est calculé une fois et
+ * reste valable pour ranking relatif. Update lourde du cache se fait via
+ * `invalidatePercentileCache()` lors de gros mouvements (mercato saison).
+ */
+export async function recomputePlayerOverall(
+  prisma: PrismaClient,
+  playerId: string,
+): Promise<{ overall: number } | null> {
+  const p = await prisma.player.findUnique({
+    where: { id: playerId },
+    select: {
+      id: true, role: true, rating: true,
+      acs: true, kd: true, adr: true, kast: true, hs: true,
+      kpr: true, apr: true, fkpr: true, fdpr: true,
+      clPct: true, clTotal: true,
+      kills: true, deaths: true, vlrAssists: true,
+      fk: true, fd: true, vlrRounds: true,
+      agentStats: true, isIgl: true,
+      playstyleRole: true,
+      potential: true,
+    },
+  });
+  if (!p) return null;
+
+  const cache = await getPercentileCache(prisma);
+  const raw: PlayerRaw = {
+    id: p.id,
+    role: p.role,
+    rating: p.rating,
+    acs: p.acs,
+    kd: p.kd,
+    adr: p.adr,
+    kast: p.kast,
+    hs: p.hs,
+    kpr: p.kpr,
+    apr: p.apr,
+    fkpr: p.fkpr,
+    fdpr: p.fdpr,
+    clPct: p.clPct,
+    clTotal: p.clTotal,
+    kills: p.kills,
+    deaths: p.deaths,
+    vlrAssists: p.vlrAssists,
+    fk: p.fk,
+    fd: p.fd,
+    vlrRounds: p.vlrRounds,
+    agentStats: p.agentStats,
+    isIgl: p.isIgl,
+  };
+  const synthesized = synthesizeMissingStats(raw);
+  // Préserve le playstyleRole choisi par l'user (s'il existe).
+  const role = p.playstyleRole ?? inferPlaystyleRole(synthesized);
+  const attrs = computeAttributes(synthesized, cache);
+  const rawOverall = computeOverall(attrs, role);
+
+  // Potential cap — un joueur ne peut PAS dépasser son plafond. Bipo overall
+  // 13 avec potential 16 peut monter à 16 sur ses meilleures saisons, mais
+  // un Reyna stomper de 9 avec potential 11 plafonne à 11.
+  const overall = Math.min(rawOverall, p.potential);
+
+  await prisma.player.update({
+    where: { id: playerId },
+    data: {
+      overall,
+      attributes: attrs as unknown as object,
+      // playstyleRole MUST be set if not already (sinon les nouveaux attrs
+      // ne s'affichent pas). Mais ne JAMAIS écraser le choix manager.
+      ...(p.playstyleRole == null ? { playstyleRole: role } : {}),
+    },
+  });
+
+  return { overall };
+}
+
+/**
  * Weekly snapshot of each active player's stats — feeds the historical
  * variance computation (V4.1). Called once per weekly tick.
  */

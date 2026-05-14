@@ -24,6 +24,8 @@ export interface SimPlayer {
   joinedWeek?: number; // for synergy calc
   /** V4 — FM-style 0-20 overall. Undefined before the first recompute tick. */
   overall?: number;
+  /** Form momentum [-10, +10] — tilt sur gameDay roll dans le sim. */
+  formMomentum?: number;
 }
 
 export interface SimTeam {
