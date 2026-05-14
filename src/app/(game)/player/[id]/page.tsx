@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc-client";
 import { D, roleColor, attrColorFor, overallToStars } from "@/constants/design";
+import { ShortlistButton } from "@/components/ShortlistButton";
 import { formatCurrency, formatStat } from "@/lib/format";
 import { countryToFlag } from "@/lib/country-flag";
 import { ROLE_WEIGHTS } from "@/constants/role-weights";
@@ -380,6 +381,53 @@ export default function PlayerPage() {
             roleScores={attrs?.roleScores}
             currentRole={attrs?.playstyleRole as PlaystyleRoleValue | undefined}
           />
+
+          {/* Potential / scouting (only for non-own players — own roster
+              data is already fully visible) */}
+          {!isOwnPlayer && (
+            <div
+              className="rounded p-4"
+              style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[9px]" style={{ color: D.textSubtle }}>
+                  Scout report
+                </span>
+                <ShortlistButton playerId={playerId} size="sm" />
+              </div>
+              {player.potentialRevealed ? (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      className="text-[24px] font-medium tabular-nums"
+                      style={{ color: attrColorFor(player.potential) }}
+                    >
+                      {player.potential}
+                    </span>
+                    <span className="text-[10px]" style={{ color: D.textSubtle }}>
+                      potential ceiling
+                    </span>
+                  </div>
+                  {typeof player.overall === "number" && (
+                    <div className="mt-1 text-[10px]" style={{ color: D.textSubtle }}>
+                      {player.potential > player.overall
+                        ? `+${player.potential - player.overall} room to grow`
+                        : "Already at ceiling"}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="text-[20px]" style={{ color: D.textSubtle }}>
+                    ?
+                  </div>
+                  <div className="mt-1 text-[10px]" style={{ color: D.textSubtle }}>
+                    Add to shortlist to scout. Potential reveals after 4 weeks.
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Mood / happiness */}
           {isOwnPlayer && (

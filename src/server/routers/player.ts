@@ -316,6 +316,51 @@ export const playerRouter = router({
       });
     }),
 
+  /**
+   * Re-tier a player on the roster (Star / Starter / Rotation / Reserve /
+   * Prospect). Status drives salary expectations + happiness reaction to
+   * playing time. Also auto-syncs `isReserve` so the 10-cap math stays
+   * consistent (RESERVE + PROSPECT → reserve roster).
+   */
+  setSquadStatus: saveProcedure
+    .input(
+      z.object({
+        playerId: z.string(),
+        status: z.enum(["STAR", "STARTER", "ROTATION", "RESERVE", "PROSPECT"]),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+      if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+
+      const player = await ctx.prisma.player.findUnique({ where: { id: input.playerId } });
+      if (!player) throw new TRPCError({ code: "NOT_FOUND", message: "Player not found." });
+      if (player.teamId !== team.id) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not your player." });
+      }
+
+      const goingToReserve = input.status === "RESERVE" || input.status === "PROSPECT";
+      // Happiness reaction — bumping a player down hurts. Star → benched is the
+      // worst hit; Prospect → promoted is a small lift.
+      let happinessDelta = 0;
+      const currentRank: Record<string, number> = {
+        STAR: 5, STARTER: 4, ROTATION: 3, RESERVE: 2, PROSPECT: 1,
+      };
+      const oldRank = currentRank[player.squadStatus] ?? 4;
+      const newRank = currentRank[input.status];
+      if (newRank < oldRank) happinessDelta = -((oldRank - newRank) * 6);
+      else if (newRank > oldRank) happinessDelta = (newRank - oldRank) * 3;
+
+      return ctx.prisma.player.update({
+        where: { id: player.id },
+        data: {
+          squadStatus: input.status,
+          isReserve: goingToReserve,
+          happiness: Math.max(0, Math.min(100, player.happiness + happinessDelta)),
+        },
+      });
+    }),
+
   // ── Detail fetch for the Player Detail Modal ──
   detail: saveProcedure
     .input(z.object({ playerId: z.string() }))

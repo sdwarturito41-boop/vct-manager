@@ -299,6 +299,12 @@ model TransferOffer {
   sellOnPercentage   Float   @default(0)
   performanceBonuses Json    @default("{}")
   loyaltyBonus       Int     @default(0)
+  // One-shot playoff bonus written into the contract — applied to the
+  // player on accept. Re-paid each season the team makes playoffs.
+  performanceBonus   Int     @default(0)
+  // No-release clause carried into the player record on accept. When set,
+  // any future BUYOUT offer is hard-rejected unless the player WANTS_TRANSFER.
+  noReleaseClause    Boolean @default(false)
   // Counter-offer chain (rounds 1..3). parentOfferId links to previous round.
   negotiationRound   Int     @default(1)
   parentOfferId      String?

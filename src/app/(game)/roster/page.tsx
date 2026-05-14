@@ -16,7 +16,19 @@ interface RosterPlayer extends PlayerInfo {
   happinessTags?: unknown;
   isTransferListed?: boolean;
   overall?: number;
+  squadStatus?: "STAR" | "STARTER" | "ROTATION" | "RESERVE" | "PROSPECT";
 }
+
+const SQUAD_STATUS_META: Record<
+  "STAR" | "STARTER" | "ROTATION" | "RESERVE" | "PROSPECT",
+  { label: string; color: string; bg: string }
+> = {
+  STAR: { label: "Star", color: "#c69b3a", bg: "rgba(198,155,58,0.12)" },
+  STARTER: { label: "Starter", color: "#5d8aff", bg: "rgba(93,138,255,0.12)" },
+  ROTATION: { label: "Rotation", color: "#a0a4b8", bg: "rgba(160,164,184,0.10)" },
+  RESERVE: { label: "Reserve", color: "#7a7e92", bg: "rgba(122,126,146,0.10)" },
+  PROSPECT: { label: "Prospect", color: "#4caf7d", bg: "rgba(76,175,125,0.12)" },
+};
 
 function happinessColor(score: number): string {
   if (score >= 70) return D.green;
@@ -453,13 +465,19 @@ function RosterRow({
         {player.role}
       </span>
 
-      {/* Leadership */}
-      <span
-        className="text-[11px] font-medium "
-        style={{ color: D.textMuted }}
-      >
-        {player.leadershipRole ?? "—"}
-      </span>
+      {/* Leadership + Squad Status */}
+      <div className="flex flex-col gap-0.5" onClick={(e) => e.stopPropagation()}>
+        <span
+          className="text-[11px] font-medium"
+          style={{ color: D.textMuted }}
+        >
+          {player.leadershipRole ?? "—"}
+        </span>
+        <SquadStatusSelect
+          playerId={player.id}
+          current={player.squadStatus ?? "STARTER"}
+        />
+      </div>
 
       {/* Age */}
       <span
@@ -713,5 +731,45 @@ function TeamAttributeOverview() {
         })()}
       </div>
     </section>
+  );
+}
+
+function SquadStatusSelect({
+  playerId,
+  current,
+}: {
+  playerId: string;
+  current: "STAR" | "STARTER" | "ROTATION" | "RESERVE" | "PROSPECT";
+}) {
+  const utils = trpc.useUtils();
+  const mut = trpc.player.setSquadStatus.useMutation({
+    onSuccess: () => {
+      utils.player.rosterAll.invalidate();
+    },
+  });
+  const meta = SQUAD_STATUS_META[current];
+  return (
+    <select
+      value={current}
+      disabled={mut.isPending}
+      onChange={(e) =>
+        mut.mutate({
+          playerId,
+          status: e.target.value as "STAR" | "STARTER" | "ROTATION" | "RESERVE" | "PROSPECT",
+        })
+      }
+      className="rounded px-1.5 py-0.5 text-[10px] font-medium border-0 outline-none cursor-pointer"
+      style={{
+        background: meta.bg,
+        color: meta.color,
+        border: `1px solid ${meta.color}40`,
+      }}
+    >
+      <option value="STAR">★ Star</option>
+      <option value="STARTER">Starter</option>
+      <option value="ROTATION">Rotation</option>
+      <option value="RESERVE">Reserve</option>
+      <option value="PROSPECT">Prospect</option>
+    </select>
   );
 }

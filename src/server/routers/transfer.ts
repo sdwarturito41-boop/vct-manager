@@ -409,6 +409,8 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
           isTransferListed: false,
           happiness: Math.min(100, 75 + 15),
           happinessTags: ["RECENT_SIGNING"],
+          performanceBonus: offer.performanceBonus,
+          noReleaseClause: offer.noReleaseClause,
         },
       }),
     );
@@ -449,6 +451,8 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
           isTransferListed: false,
           happiness: Math.min(100, 75 + 15),
           happinessTags: ["RECENT_SIGNING"],
+          performanceBonus: offer.performanceBonus,
+          noReleaseClause: offer.noReleaseClause,
         },
       }),
     );
@@ -643,6 +647,8 @@ export const transferRouter = router({
         signingBonus: z.number().int().min(0).optional(),
         sellOnPercentage: z.number().min(0).max(50).optional(),
         loyaltyBonus: z.number().int().min(0).optional(),
+        performanceBonus: z.number().int().min(0).optional(),
+        noReleaseClause: z.boolean().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -796,6 +802,8 @@ export const transferRouter = router({
           signingBonus,
           sellOnPercentage,
           loyaltyBonus,
+          performanceBonus: input.performanceBonus ?? 0,
+          noReleaseClause: input.noReleaseClause ?? false,
           status: "PENDING",
           week: season.currentWeek,
           season: season.number,

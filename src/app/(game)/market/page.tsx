@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc-client";
 import { formatCurrency, formatStat } from "@/lib/format";
 import { countryToFlag } from "@/lib/country-flag";
 import { D, roleColor } from "@/constants/design";
+import { ShortlistButton } from "@/components/ShortlistButton";
 
 type RoleFilter = "IGL" | "Duelist" | "Initiator" | "Sentinel" | "Controller" | "Flex" | "";
 type RegionFilter = "EMEA" | "Americas" | "Pacific" | "China" | "";
@@ -481,8 +482,8 @@ function BuyoutMarketTab({
 function MarketRowHeader({ kind }: { kind: "FA" | "BUYOUT" }) {
   const cols =
     kind === "FA"
-      ? "40px 1fr 80px 80px 80px 120px"
-      : "40px 1fr 80px 80px 100px 120px 120px";
+      ? "40px 1fr 80px 80px 80px 160px"
+      : "40px 1fr 80px 80px 100px 120px 160px";
   return (
     <div
       className="grid items-center gap-3 px-10 py-3 text-[10px] font-medium "
@@ -516,8 +517,8 @@ function MarketPlayerRow({
 }) {
   const cols =
     kind === "FA"
-      ? "40px 1fr 80px 80px 80px 120px"
-      : "40px 1fr 80px 80px 100px 120px 120px";
+      ? "40px 1fr 80px 80px 80px 160px"
+      : "40px 1fr 80px 80px 100px 120px 160px";
 
   return (
     <div
@@ -663,7 +664,8 @@ function MarketPlayerRow({
       </div>
 
       {/* Action */}
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-1.5">
+        <ShortlistButton playerId={player.id} size="sm" />
         <button
           onClick={onOffer}
           className="rounded px-3 py-1.5 text-[10px] font-medium transition-colors"
@@ -1000,6 +1002,8 @@ function OfferModal({
   const [signingBonus, setSigningBonus] = useState<number>(0);
   const [sellOnPercentage, setSellOnPercentage] = useState<number>(0);
   const [loyaltyBonus, setLoyaltyBonus] = useState<number>(0);
+  const [performanceBonus, setPerformanceBonus] = useState<number>(0);
+  const [noReleaseClause, setNoReleaseClause] = useState<boolean>(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const makeOffer = trpc.transfer.makeOffer.useMutation({
@@ -1020,6 +1024,8 @@ function OfferModal({
       signingBonus: signingBonus || undefined,
       sellOnPercentage: sellOnPercentage || undefined,
       loyaltyBonus: loyaltyBonus || undefined,
+      performanceBonus: performanceBonus || undefined,
+      noReleaseClause: noReleaseClause || undefined,
     });
   };
 
@@ -1220,7 +1226,37 @@ function OfferModal({
               onChange={setLoyaltyBonus}
               hint="end of contract"
             />
+            <FieldInput
+              label="Playoff Bonus"
+              value={performanceBonus}
+              onChange={setPerformanceBonus}
+              hint="paid if team reaches Masters/Champions"
+            />
           </div>
+
+          {/* No-release toggle */}
+          <label
+            className="flex items-center justify-between rounded px-3 py-2.5 cursor-pointer"
+            style={{
+              background: noReleaseClause ? "rgba(198,155,58,0.08)" : D.card,
+              border: `1px solid ${noReleaseClause ? D.gold : D.borderFaint}`,
+            }}
+          >
+            <div className="flex flex-col">
+              <span className="text-[11px] font-medium" style={{ color: D.textPrimary }}>
+                No-release clause
+              </span>
+              <span className="text-[10px]" style={{ color: D.textSubtle }}>
+                Hard veto on future buyouts (Star-tier protection)
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={noReleaseClause}
+              onChange={(e) => setNoReleaseClause(e.target.checked)}
+              style={{ accentColor: D.gold }}
+            />
+          </label>
 
           {/* Upfront */}
           <div

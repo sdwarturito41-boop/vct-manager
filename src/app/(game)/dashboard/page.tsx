@@ -4,10 +4,11 @@ import { VCT_STAGES } from "@/constants/vct-format";
 import { TRPCError } from "@trpc/server";
 import Link from "next/link";
 import { D } from "@/constants/design";
+import { DashboardTicker } from "@/components/DashboardTicker";
 
 // Cinematic dashboard. Two columns at 100vh:
 //   - LEFT: full-height Messages (personal inbox: MATCH / PLAYER / COACH / SPONSOR / BOARD)
-//   - RIGHT: hero next match → squad + standings row → recent matches → news (MARKET / NEWS / MEDIA)
+//   - RIGHT: hero next match → squad + standings → [recent matches | live ticker]
 // All scoped to VALO.GG palette (D.* tokens) — dark surfaces, indigo primary,
 // teal / coral for W/L and rating deltas, amber reserved for stars.
 
@@ -255,7 +256,6 @@ export default async function DashboardPage() {
     week: number;
   }>;
   const personalMessages = messagesArr.filter((m) => !NEWS_CATEGORIES.has(m.category));
-  const newsItems = messagesArr.filter((m) => NEWS_CATEGORIES.has(m.category));
 
   const myAvg = myStarters.length > 0
     ? myStarters.reduce((s, p) => s + (p.overall ?? 10), 0) / myStarters.length
@@ -386,11 +386,11 @@ export default async function DashboardPage() {
           <StandingsCard rows={standingsRows} userTeamId={team.id} />
         </div>
 
-        {/* RECENT MATCHES */}
-        <RecentMatchesCard matches={recentMatches} userTeamId={team.id} />
-
-        {/* NEWS */}
-        <NewsCard items={newsItems} />
+        {/* RECENT MATCHES + LIVE TICKER (finance / scouting / recommended) */}
+        <div className="grid gap-5" style={{ gridTemplateColumns: "1.4fr 1fr" }}>
+          <RecentMatchesCard matches={recentMatches} userTeamId={team.id} />
+          <DashboardTicker />
+        </div>
       </main>
     </div>
   );
@@ -823,84 +823,6 @@ function RecentMatchesCard({
           })
         )}
       </div>
-    </section>
-  );
-}
-
-// ─── News card ───────────────────────────────────────────────────────
-
-function NewsCard({
-  items,
-}: {
-  items: Array<{
-    id: string;
-    subject: string;
-    body: string;
-    fromName: string;
-    category: string;
-    isRead: boolean;
-    week: number;
-  }>;
-}) {
-  return (
-    <section
-      className="flex flex-col rounded-lg overflow-hidden"
-      style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
-    >
-      <div
-        className="flex items-center justify-between px-4 py-3"
-        style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-      >
-        <SectionLabel withAccent>News</SectionLabel>
-        <span className="text-[10px]" style={{ color: D.textSubtle }}>
-          League · transfers · media
-        </span>
-      </div>
-      {items.length === 0 ? (
-        <div className="py-10 text-center text-[12px]" style={{ color: D.textSubtle }}>
-          Nothing on the wire.
-        </div>
-      ) : (
-        items.slice(0, 8).map((m, i) => {
-          const color = categoryColor(m.category);
-          return (
-            <Link
-              key={m.id}
-              href="/inbox"
-              className="flex items-start gap-3 px-4 py-3"
-              style={{
-                borderTop: i === 0 ? "none" : `1px solid ${D.borderFaint}`,
-              }}
-            >
-              <span
-                className="mt-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide"
-                style={{
-                  background: `${color}1A`,
-                  color,
-                  border: `1px solid ${color}40`,
-                  letterSpacing: 0.4,
-                }}
-              >
-                {m.category}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div
-                  className="truncate text-[12px]"
-                  style={{ color: D.textPrimary, fontWeight: 500 }}
-                >
-                  {m.subject}
-                </div>
-                <div className="truncate text-[11px]" style={{ color: D.textMuted }}>
-                  {m.body}
-                </div>
-              </div>
-              <span className="shrink-0 text-[10px] tabular-nums" style={{ color: D.textSubtle }}>
-                W{m.week}
-              </span>
-            </Link>
-          );
-        })
-      )}
     </section>
   );
 }
