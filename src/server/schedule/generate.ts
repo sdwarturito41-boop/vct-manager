@@ -9,6 +9,38 @@ import { applyOffSeasonFinancials } from "@/server/finance/seasonRollover";
 import { stageStartDay } from "@/constants/vct-calendar";
 import { scaledSalary } from "@/constants/staff";
 import type { StaffRole } from "@/generated/prisma/client";
+import { dayOfWeek } from "@/lib/game-date";
+
+const DEFAULT_CALENDAR_YEAR = 2026;
+
+/** Day index of the Monday on or before `day` (real calendar Mon=1). */
+function mondayOf(day: number, year: number = DEFAULT_CALENDAR_YEAR): number {
+  const dow = dayOfWeek(day, year); // 1=Mon..7=Sun
+  return day - (dow - 1);
+}
+
+/**
+ * Per-stage broadcast weekday override. ISO weekdays (1=Mon..7=Sun). Falls
+ * back to MATCH_DAYS[region] when no rule matches. Used by scanners so
+ * Kickoff Finals (BO5) land Thu-Sun instead of the regular Tue-Fri.
+ */
+function weekdaysForStage(stageId: string, region: Region): number[] {
+  // Kickoff finals — BO5 spread across Thu-Sun in real VCT broadcasts.
+  if (
+    stageId.endsWith("_UB_FINAL") ||
+    stageId.endsWith("_MID_FINAL") ||
+    stageId.endsWith("_LB_FINAL")
+  ) {
+    return [4, 5, 6, 7]; // Thu / Fri / Sat / Sun
+  }
+  // Stage 1/2 group stage — Wed-Fri for EMEA, Fri-Sun for the rest (the
+  // existing regional pattern is preserved for non-EMEA so broadcast
+  // windows don't clash).
+  if (stageId.startsWith("STAGE_") && !stageId.includes("_PLAYOFF") && !stageId.includes("_UB") && !stageId.includes("_LB") && !stageId.includes("_FINAL")) {
+    return region === "EMEA" ? [3, 4, 5] : MATCH_DAYS[region];
+  }
+  return MATCH_DAYS[region];
+}
 
 // ── Staff seed helpers (used at save creation) ──
 const STAFF_FIRST = ["Marc","Tom","Ben","Liam","Noah","Lucas","Ethan","Sam","Felix","Jonas","Pablo","Diego","Hiro","Kenji","Wei","Chen"];
@@ -222,24 +254,50 @@ function assignDaysNextWeek(
 }
 
 // For initialization (fixed week)
+/**
+ * Schedules a batch of matches inside a 7-day calendar window. The `anchor`
+ * is normalized to its Monday (real Gregorian calendar) and we scan the
+ * Mon→Sun span looking for days whose ISO weekday is in the target list.
+ * Default target = `MATCH_DAYS[region]` but per-stage overrides apply
+ * (Kickoff Finals → Thu-Sun, Stage 1/2 group → Wed-Fri).
+ */
 function assignDaysWeek(
   matches: { team1Id: string; team2Id: string; stageId: string; format: MatchFormat }[],
-  region: Region, week: number, seasonNumber: number,
+  region: Region,
+  anchorDay: number,
+  seasonNumber: number,
+  year: number = DEFAULT_CALENDAR_YEAR,
+  stageId?: string,
 ) {
-  const days = MATCH_DAYS[region];
-  return matches.map((m, idx) => {
-    const dow = days[Math.floor(idx / MATCHES_PER_DAY) % days.length];
-    return { ...m, day: (week - 1) * 7 + dow, week, season: seasonNumber };
-  });
-}
+  // Snap `anchorDay` to its real calendar Monday so the Mon→Sun scan covers
+  // the same calendar week the caller meant. Callers pass the stage's
+  // calendar start day (e.g. Day 20 for Kickoff in 2026) — that's a Tuesday,
+  // whose Monday is Day 19 → scan covers Days 19-25 → Tue-Fri matches land
+  // on Days 20-23 = real Tue Jan 20 / Wed 21 / Thu 22 / Fri 23.
+  const monday = mondayOf(anchorDay, year);
 
-/**
- * Returns the absolute day number where game-week `W` begins. Used by
- * VCT_CALENDAR-aware schedulers — when a stage anchors at Day 20 (week 3),
- * we want subsequent rounds to start at week 3, 4, 5… relative to that.
- */
-function weekFromAbsoluteDay(absoluteDay: number): number {
-  return Math.max(1, Math.ceil(absoluteDay / 7));
+  const targetWeekdays = stageId
+    ? weekdaysForStage(stageId, region)
+    : MATCH_DAYS[region];
+
+  // Real-weekday slots inside the Mon→Sun window of this calendar week.
+  const slots: number[] = [];
+  for (let offset = 0; offset < 7; offset++) {
+    const d = monday + offset;
+    if (targetWeekdays.includes(dayOfWeek(d, year))) {
+      slots.push(d);
+    }
+  }
+  if (slots.length === 0) {
+    // Fallback — shouldn't happen unless weekdays config is empty.
+    slots.push(monday);
+  }
+
+  return matches.map((m, idx) => {
+    const slot = Math.floor(idx / MATCHES_PER_DAY) % slots.length;
+    const day = slots[slot];
+    return { ...m, day, week: Math.ceil(day / 7), season: seasonNumber };
+  });
 }
 
 interface WL { winner: string; loser: string }
@@ -286,6 +344,7 @@ async function createMatchesOnNextSlots(
   prisma: PrismaClient, saveId: string, pairs: [string, string][],
   stageId: string, region: Region, afterDay: number, season: number,
   format: MatchFormat = "BO3",
+  year: number = DEFAULT_CALENDAR_YEAR,
 ) {
   const valid = pairs.filter(([a, b]) => a && b);
   if (valid.length === 0) return;
@@ -300,13 +359,13 @@ async function createMatchesOnNextSlots(
     dayUsage.set(m.day, (dayUsage.get(m.day) ?? 0) + 1);
   }
 
-  // Find next broadcast days that have room (< MATCHES_PER_DAY)
-  const broadcastDays = MATCH_DAYS[region];
+  // Real-calendar weekday match — Kickoff Finals get [Thu,Fri,Sat,Sun],
+  // Stage 1/2 group get [Wed,Thu,Fri] EMEA, etc.
+  const broadcastDays = weekdaysForStage(stageId, region);
   const scheduledDays: number[] = [];
   let day = afterDay + 1;
   while (scheduledDays.length < valid.length) {
-    const dow = ((day - 1) % 7) + 1;
-    if (broadcastDays.includes(dow)) {
+    if (broadcastDays.includes(dayOfWeek(day, year))) {
       const used = dayUsage.get(day) ?? 0;
       const available = MATCHES_PER_DAY - used;
       for (let slot = 0; slot < available && scheduledDays.length < valid.length; slot++) {
@@ -376,8 +435,7 @@ export async function initializeSeasonForTeam(
     // VCT calendar anchor — Kickoff opens Jan 20 (= Day 20, game-week 3)
     // for EMEA, 1 week earlier for the other regions.
     const calendarStart = stageStartDay("KICKOFF", region) ?? 1;
-    const kickoffWeek = weekFromAbsoluteDay(calendarStart);
-    const scheduled = assignDaysWeek(data, region, kickoffWeek, 1);
+    const scheduled = assignDaysWeek(data, region, calendarStart, 1, DEFAULT_CALENDAR_YEAR, "KICKOFF_UB_R1");
     if (scheduled.length > 0) await prisma.match.createMany({ data: scheduled });
     totalMatches += pairs.length;
   }
@@ -645,6 +703,7 @@ async function createMatchesOnInternationalSlots(
   prisma: PrismaClient, saveId: string, pairs: [string, string][],
   stageId: string, afterDay: number, season: number,
   format: MatchFormat = "BO3",
+  year: number = DEFAULT_CALENDAR_YEAR,
 ) {
   const valid = pairs.filter(([a, b]) => a && b);
   if (valid.length === 0) return;
@@ -662,8 +721,7 @@ async function createMatchesOnInternationalSlots(
   const scheduledDays: number[] = [];
   let day = afterDay + 1;
   while (scheduledDays.length < valid.length) {
-    const dow = ((day - 1) % 7) + 1;
-    if (INTERNATIONAL_BROADCAST_DAYS.includes(dow)) {
+    if (INTERNATIONAL_BROADCAST_DAYS.includes(dayOfWeek(day, year))) {
       const used = dayUsage.get(day) ?? 0;
       const available = MATCHES_PER_DAY - used;
       for (let slot = 0; slot < available && scheduledDays.length < valid.length; slot++) {
@@ -2242,8 +2300,7 @@ export async function rollOffSeason(
       format: "BO3" as MatchFormat,
     }));
     const calendarStart = stageStartDay("KICKOFF", region) ?? 1;
-    const kickoffWeek = weekFromAbsoluteDay(calendarStart);
-    const scheduled = assignDaysWeek(data, region, kickoffWeek, newSeasonNumber);
+    const scheduled = assignDaysWeek(data, region, calendarStart, newSeasonNumber, DEFAULT_CALENDAR_YEAR, "KICKOFF_UB_R1");
     if (scheduled.length > 0) {
       await prisma.match.createMany({ data: scheduled });
       totalScheduled += scheduled.length;
@@ -2496,8 +2553,7 @@ export async function initializeSaveWorld(
       format: "BO3" as MatchFormat,
     }));
     const calendarStart = stageStartDay("KICKOFF", region) ?? 1;
-    const kickoffWeek = weekFromAbsoluteDay(calendarStart);
-    const scheduled = assignDaysWeek(data, region, kickoffWeek, 1);
+    const scheduled = assignDaysWeek(data, region, calendarStart, 1, DEFAULT_CALENDAR_YEAR, "KICKOFF_UB_R1");
     if (scheduled.length > 0) {
       await prisma.match.createMany({ data: scheduled });
       totalMatches += scheduled.length;

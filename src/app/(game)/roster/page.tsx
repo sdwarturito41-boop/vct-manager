@@ -75,7 +75,7 @@ export default function RosterPage() {
     const recover = player.salary * 2;
     if (
       window.confirm(
-        `Release ${player.ign}? You'll recover $${recover.toLocaleString()}`
+        `Libérer ${player.ign} ? Tu récupères $${recover.toLocaleString()}`
       )
     ) {
       sellMutation.mutate({ playerId: player.id });
@@ -157,11 +157,11 @@ export default function RosterPage() {
         className="grid grid-cols-4"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
-        <MetricCell label="Total Players" value={String(players.length)} />
-        <MetricCell label="Active" value={String(activePlayers.length)} accent={D.red} />
-        <MetricCell label="Bench" value={String(benchPlayers.length)} />
+        <MetricCell label="Total joueurs" value={String(players.length)} />
+        <MetricCell label="Titulaires" value={String(activePlayers.length)} accent={D.red} />
+        <MetricCell label="Banc" value={String(benchPlayers.length)} />
         <MetricCell
-          label="Weekly Salary"
+          label="Masse salariale"
           value={formatCurrency(totalSalary)}
           accent={D.gold}
           last
@@ -174,7 +174,7 @@ export default function RosterPage() {
       {/* Active table */}
       {activePlayers.length > 0 && (
         <section style={{ borderBottom: `1px solid ${D.border}` }}>
-          <SectionHeader label="Active Roster" count={activePlayers.length} />
+          <SectionHeader label="Effectif titulaire" count={activePlayers.length} />
           <RosterTableHeader />
           {activePlayers.map((p) => (
             <RosterRow
@@ -198,7 +198,7 @@ export default function RosterPage() {
       {/* Bench table */}
       {benchPlayers.length > 0 && (
         <section style={{ borderBottom: `1px solid ${D.border}` }}>
-          <SectionHeader label="Bench" count={benchPlayers.length} />
+          <SectionHeader label="Banc" count={benchPlayers.length} />
           <RosterTableHeader />
           {benchPlayers.map((p) => (
             <RosterRow
@@ -308,16 +308,16 @@ function RosterTableHeader() {
       }}
     >
       <span />
-      <span>Player</span>
-      <span>Role</span>
+      <span>Joueur</span>
+      <span>Rôle</span>
       <span>Leadership</span>
-      <span className="text-right">Age</span>
+      <span className="text-right">Âge</span>
       <span className="text-right">ACS</span>
       <span className="text-right">K/D</span>
       <span className="text-right">ADR</span>
       <span className="text-right">KAST</span>
-      <span className="text-right">Salary</span>
-      <span className="text-right">Contract</span>
+      <span className="text-right">Salaire</span>
+      <span className="text-right">Contrat</span>
       <span className="text-right">Actions</span>
     </div>
   );
@@ -400,7 +400,7 @@ function RosterRow({
           </span>
           {/* Happiness dot */}
           <span
-            title={`Mood ${happiness}/100`}
+            title={`Moral ${happiness}/100`}
             className="h-2 w-2 rounded-full"
             style={{ background: hColor }}
           />
@@ -546,7 +546,7 @@ function RosterRow({
             color: D.textMuted,
           }}
         >
-          {active ? "Bench" : "Activate"}
+          {active ? "Banc" : "Titulariser"}
         </button>
         <button
           onClick={onRelease}
@@ -558,7 +558,7 @@ function RosterRow({
             border: `1px solid rgba(255,70,85,0.2)`,
           }}
         >
-          Release
+          Libérer
         </button>
       </div>
     </div>
@@ -707,7 +707,7 @@ function TeamAttributeOverview() {
           className="text-[10px] font-medium "
           style={{ color: D.textSubtle }}
         >
-          Top performer
+          Meilleur joueur
         </span>
         {(() => {
           const top = [...data.byPlayer].sort((a, b) => b.overall - a.overall)[0];

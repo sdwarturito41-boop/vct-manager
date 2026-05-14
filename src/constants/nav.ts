@@ -12,35 +12,35 @@ export type MainTab = {
 
 export const MAIN_TABS: readonly MainTab[] = [
   {
-    label: "Portal",
+    label: "Accueil",
     href: "/dashboard",
     paths: ["/dashboard"],
-    subs: [{ label: "Overview", href: "/dashboard" }],
+    subs: [{ label: "Vue d'ensemble", href: "/dashboard" }],
   },
   {
-    label: "Squad",
+    label: "Équipe",
     href: "/roster",
     paths: ["/roster", "/training", "/tactics", "/player"],
     subs: [
-      { label: "Roster", href: "/roster" },
-      { label: "Tactics", href: "/tactics" },
-      { label: "Training", href: "/training" },
+      { label: "Effectif", href: "/roster" },
+      { label: "Tactique", href: "/tactics" },
+      { label: "Entraînement", href: "/training" },
     ],
   },
   {
-    label: "Recruitment",
+    label: "Recrutement",
     href: "/market",
     paths: ["/market"],
-    subs: [{ label: "Market", href: "/market" }],
+    subs: [{ label: "Marché", href: "/market" }],
   },
   {
-    label: "Match day",
+    label: "Compétition",
     href: "/league",
     paths: ["/league", "/scrims", "/season"],
     subs: [
-      { label: "League", href: "/league" },
-      { label: "Schedule", href: "/scrims" },
-      { label: "Season", href: "/season" },
+      { label: "Classement", href: "/league" },
+      { label: "Scrims", href: "/scrims" },
+      { label: "Saison", href: "/season" },
     ],
   },
   {
@@ -48,18 +48,18 @@ export const MAIN_TABS: readonly MainTab[] = [
     href: "/finance",
     paths: ["/staff", "/sponsors", "/finance"],
     subs: [
-      { label: "Finance", href: "/finance" },
+      { label: "Finances", href: "/finance" },
       { label: "Staff", href: "/staff" },
       { label: "Sponsors", href: "/sponsors" },
     ],
   },
   {
-    label: "Career",
+    label: "Carrière",
     href: "/inbox",
     paths: ["/inbox", "/patches"],
     subs: [
-      { label: "Inbox", href: "/inbox" },
-      { label: "Patches", href: "/patches" },
+      { label: "Messages", href: "/inbox" },
+      { label: "Patchs", href: "/patches" },
     ],
   },
 ] as const;

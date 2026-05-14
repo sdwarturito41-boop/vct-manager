@@ -48,30 +48,30 @@ export function DashboardTicker() {
       {/* Finance pulse */}
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <SectionTitle>Finance</SectionTitle>
+          <SectionTitle>Finances</SectionTitle>
           <Link
             href="/finance"
             className="text-[10px] underline-offset-2 hover:underline"
             style={{ color: D.textSubtle }}
           >
-            details
+            détails
           </Link>
         </div>
         <div className="flex flex-col gap-1.5">
           <Row
-            label="Weekly net"
+            label="Bilan hebdo"
             value={`${data.weeklyNet >= 0 ? "+" : ""}${formatCurrency(data.weeklyNet)}`}
             color={data.weeklyNet >= 0 ? D.green : D.red}
           />
           <Row
-            label="Transfer pool"
+            label="Transferts"
             value={formatCurrency(data.buckets.transfer)}
             color={D.gold}
           />
           {data.debt.amount > 0 && (
             <>
               <Row
-                label="Investor debt"
+                label="Dette investisseur"
                 value={formatCurrency(data.debt.amount)}
                 color={D.red}
               />
@@ -108,13 +108,13 @@ export function DashboardTicker() {
         <div className="mb-2 flex items-center justify-between">
           <SectionTitle>Scouting</SectionTitle>
           <span className="text-[10px]" style={{ color: D.textSubtle }}>
-            {data.shortlist.length} on watchlist
+            {data.shortlist.length} sous surveillance
           </span>
         </div>
         {data.shortlist.length === 0 ? (
           <Empty>
-            Add players to your shortlist from the Market — potential reveals
-            after {data.revealWeeks} weeks of scouting.
+            Ajoute des joueurs à ta shortlist depuis le Marché — le potentiel
+            se révèle après {data.revealWeeks} semaines de scouting.
           </Empty>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -142,10 +142,10 @@ export function DashboardTicker() {
                     style={{ color: isRevealed ? D.green : D.textSubtle }}
                   >
                     {isRevealed
-                      ? `pot ${s.player.potential}`
+                      ? `pot. ${s.player.potential}`
                       : weeksLeft === 0
-                        ? "revealing…"
-                        : `${weeksLeft}w`}
+                        ? "révélation…"
+                        : `${weeksLeft} sem`}
                   </span>
                 </div>
               );
@@ -159,17 +159,17 @@ export function DashboardTicker() {
       {/* Recommended targets */}
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <SectionTitle>Recommended</SectionTitle>
+          <SectionTitle>Recommandés</SectionTitle>
           <Link
             href="/market"
             className="text-[10px] underline-offset-2 hover:underline"
             style={{ color: D.textSubtle }}
           >
-            market
+            marché
           </Link>
         </div>
         {data.recommended.length === 0 ? (
-          <Empty>No actionable recommendations right now.</Empty>
+          <Empty>Aucune recommandation actionnable pour l'instant.</Empty>
         ) : (
           <div className="flex flex-col gap-1.5">
             {data.recommended.map((p) => (

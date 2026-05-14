@@ -164,10 +164,10 @@ export const scoutingRouter = router({
     type Cand = typeof candidates[number] & { score: number; reason: string };
     const scored: Cand[] = candidates.map((c) => {
       let score = (c.overall ?? 10) * 5;
-      let reason = "Upgrade candidate";
+      let reason = "Upgrade potentiel";
       if (missingRoles.includes(c.role as typeof ROLES[number])) {
         score += 50;
-        reason = `Fills ${c.role} gap`;
+        reason = `Comble le poste ${c.role}`;
       }
       if ((c.overall ?? 10) > teamAvg + 1) {
         score += 20;
@@ -179,7 +179,7 @@ export const scoutingRouter = router({
       } else {
         score -= 30; // expensive — push down but keep visible
       }
-      if (c.teamId == null) reason = reason === "Upgrade candidate" ? "Free agent" : `${reason} (FA)`;
+      if (c.teamId == null) reason = reason === "Upgrade potentiel" ? "Agent libre" : `${reason} (FA)`;
       return { ...c, score, reason };
     });
     scored.sort((a, b) => b.score - a.score);

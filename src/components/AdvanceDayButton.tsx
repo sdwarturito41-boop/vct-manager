@@ -156,7 +156,7 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
             color: "#ffffff",
           }}
         >
-          ▶ Play match
+          ▶ Jouer le match
           {buttonOpponent && (
             <span style={{ opacity: 0.7, fontWeight: 400 }}>· {buttonOpponent}</span>
           )}
@@ -183,7 +183,7 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
             color: "#ffffff",
           }}
         >
-          Continue
+          Continuer
           <span aria-hidden style={{ fontSize: 14, lineHeight: 1 }}>›</span>
         </button>
       )}
@@ -272,7 +272,7 @@ function SimulationModal({
               />
             )}
             <span className="text-[13px] font-medium" style={{ color: D.textPrimary }}>
-              {loading ? "Simulating day…" : day != null ? `Day ${day} complete` : "Simulation"}
+              {loading ? "Simulation en cours…" : day != null ? `Journée terminée` : "Simulation"}
             </span>
           </div>
           <button
@@ -298,7 +298,7 @@ function SimulationModal({
                 }}
               />
               <span className="text-[12px]" style={{ color: D.textMuted }}>
-                Running the match engine…
+                Le moteur de simulation tourne…
               </span>
             </div>
           )}
@@ -328,14 +328,14 @@ function SimulationModal({
             >
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10px]" style={{ color: D.coral }}>
-                  Awaiting your veto
+                  Veto en attente
                 </span>
                 <span className="text-[13px] font-medium" style={{ color: D.textPrimary }}>
                   {pendingFromAdvance.opponent}
                 </span>
               </div>
               <span className="text-[12px]" style={{ color: D.coral }}>
-                Play match →
+                Jouer le match →
               </span>
             </Link>
           )}
@@ -350,9 +350,9 @@ function SimulationModal({
                   borderBottom: `1px solid ${D.borderFaint}`,
                 }}
               >
-                <span className="text-right">Home</span>
+                <span className="text-right">Domicile</span>
                 <span className="text-center">Score</span>
-                <span>Away</span>
+                <span>Extérieur</span>
                 <span />
               </div>
               {results.map((r) => {
@@ -438,7 +438,7 @@ function SimulationModal({
 
           {!loading && !error && results && results.length === 0 && !pendingFromAdvance && (
             <div className="py-6 text-center text-[12px]" style={{ color: D.textSubtle }}>
-              No matches today.
+              Aucun match aujourd'hui.
             </div>
           )}
         </div>
@@ -451,7 +451,7 @@ function SimulationModal({
           >
             <span className="text-[11px]" style={{ color: D.textSubtle }}>
               {day != null && `${formatGameDate(day, currentSeason?.year)}`}
-              {results && results.length > 0 && ` · ${results.length} matches`}
+              {results && results.length > 0 && ` · ${results.length} match${results.length > 1 ? "s" : ""}`}
             </span>
             <button
               onClick={onClose}
@@ -461,7 +461,7 @@ function SimulationModal({
                 color: "#ffffff",
               }}
             >
-              Done
+              Fermer
             </button>
           </div>
         )}

@@ -268,16 +268,16 @@ export const financeRouter = router({
     });
     const scored = candidates.map((c) => {
       let score = (c.overall ?? 10) * 5;
-      let reason = "Upgrade candidate";
+      let reason = "Upgrade potentiel";
       if (missingRoles.includes(c.role as typeof ROLES[number])) {
         score += 50;
-        reason = `Fills ${c.role} gap`;
+        reason = `Comble le poste ${c.role}`;
       }
       if ((c.overall ?? 10) > teamAvg + 1) score += 20;
       const upfront = c.teamId == null ? c.salary * 4 : (c.buyoutClause ?? c.salary * 30);
       if (upfront <= transferEnvelope) score += 15;
       else score -= 30;
-      if (c.teamId == null && reason === "Upgrade candidate") reason = "Free agent";
+      if (c.teamId == null && reason === "Upgrade potentiel") reason = "Agent libre";
       return { id: c.id, ign: c.ign, role: c.role, overall: c.overall, score, reason };
     });
     scored.sort((a, b) => b.score - a.score);

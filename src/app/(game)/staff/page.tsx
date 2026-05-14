@@ -82,7 +82,7 @@ export default function StaffPage() {
   if (!data) {
     return (
       <div className="p-10 text-sm" style={{ color: D.textMuted }}>
-        Loading staff…
+        Chargement du staff…
       </div>
     );
   }
@@ -100,7 +100,7 @@ export default function StaffPage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div className="text-[11px] font-medium" style={{ color: D.textSubtle }}>
-              Support Team
+              Équipe d'encadrement
             </div>
             <h1
               className="mt-1 text-[34px] font-medium leading-none"
@@ -112,10 +112,10 @@ export default function StaffPage() {
               className="mt-2 flex items-center gap-3 text-[11px]"
               style={{ color: D.textMuted }}
             >
-              <span>{totalCount} on payroll</span>
+              <span>{totalCount} sous contrat</span>
               <span>·</span>
               <span style={{ color: D.gold }}>
-                {formatCurrency(totalWeeklyWage)}/wk
+                {formatCurrency(totalWeeklyWage)}/sem
               </span>
             </div>
           </div>
@@ -154,8 +154,8 @@ export default function StaffPage() {
                 {slot.current}/{slot.max}
               </span>
               <span className="text-[10px]" style={{ color: D.textSubtle }}>
-                {required ? `Min ${slot.min} required` : "Optional"}
-                {full && " · slot full"}
+                {required ? `Min. ${slot.min} requis` : "Optionnel"}
+                {full && " · poste plein"}
               </span>
             </div>
           );
@@ -197,7 +197,7 @@ export default function StaffPage() {
                     border: `1px solid ${slot.canHire ? D.primary : D.borderFaint}`,
                   }}
                 >
-                  {slot.canHire ? (isExpanded ? "Hide market" : "View market") : "Slot full"}
+                  {slot.canHire ? (isExpanded ? "Masquer le marché" : "Voir le marché") : "Poste plein"}
                 </button>
               </div>
 
@@ -213,8 +213,8 @@ export default function StaffPage() {
                   }}
                 >
                   {slot.min > 0
-                    ? "No one in this slot — required minimum not met."
-                    : "Optional slot — not currently filled."}
+                    ? "Poste vide — minimum requis non atteint."
+                    : "Poste optionnel — actuellement vacant."}
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
@@ -307,16 +307,16 @@ function StaffCard({
             {staff.name}
           </div>
           <div className="text-[11px]" style={{ color: D.textSubtle }}>
-            {staff.nationality} · Age {staff.age}
+            {staff.nationality} · {staff.age} ans
           </div>
           <div className="text-[11px] tabular-nums mt-0.5" style={{ color: D.gold }}>
-            {formatCurrency(staff.salary)}/wk
+            {formatCurrency(staff.salary)}/sem
           </div>
         </div>
         <button
           disabled={!canFire || firePending}
           onClick={onFire}
-          title={!canFire ? "Cannot fire — at role minimum" : "Fire"}
+          title={!canFire ? "Impossible — minimum requis pour ce rôle" : "Licencier"}
           className="rounded px-2 py-1 text-[10px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-30"
           style={{
             background: canFire ? "rgba(255,80,80,0.10)" : "transparent",
@@ -324,7 +324,7 @@ function StaffCard({
             border: `1px solid ${canFire ? "rgba(255,80,80,0.25)" : D.borderFaint}`,
           }}
         >
-          Fire
+          Licencier
         </button>
       </div>
       <div className="grid grid-cols-3 gap-2">
@@ -353,11 +353,11 @@ function MarketSection({
         className="text-[10px] font-medium uppercase tracking-wider"
         style={{ color: D.textSubtle }}
       >
-        Available {STAFF_ROLE_LABELS[role]}s
+        Candidats disponibles · {STAFF_ROLE_LABELS[role]}
       </div>
       {offers.length === 0 ? (
         <p className="text-[10px]" style={{ color: D.textSubtle }}>
-          Loading market…
+          Chargement du marché…
         </p>
       ) : (
         <div className="grid grid-cols-2 gap-2">
@@ -403,7 +403,7 @@ function MarketCard({
           {offer.name}
         </div>
         <div className="text-[10px]" style={{ color: D.textSubtle }}>
-          {offer.region} · Age {offer.age}
+          {offer.region} · {offer.age} ans
         </div>
         <div className="flex items-center gap-2 mt-1 text-[10px]" style={{ color: D.textSubtle }}>
           <span title={labels[0]} style={{ color: skillColor(offer.skill1) }}>
@@ -418,7 +418,7 @@ function MarketCard({
             {offer.skill3}
           </span>
           <span style={{ color: D.borderFaint }}>·</span>
-          <span style={{ color: D.textMuted }}>avg {avg}</span>
+          <span style={{ color: D.textMuted }}>moy. {avg}</span>
         </div>
       </div>
       <div className="flex flex-col items-end gap-1">
@@ -426,7 +426,7 @@ function MarketCard({
           className="text-[12px] tabular-nums font-medium"
           style={{ color: D.gold }}
         >
-          {formatCurrency(offer.salary)}/wk
+          {formatCurrency(offer.salary)}/sem
         </span>
         <button
           disabled={pending}
@@ -437,7 +437,7 @@ function MarketCard({
             color: "white",
           }}
         >
-          {pending ? "…" : "Hire"}
+          {pending ? "…" : "Recruter"}
         </button>
       </div>
     </div>

@@ -166,7 +166,7 @@ export default async function DashboardPage() {
     if (e instanceof TRPCError && e.code === "NOT_FOUND") {
       return (
         <div className="flex items-center justify-center py-32">
-          <p style={{ color: D.textSubtle }}>No team found.</p>
+          <p style={{ color: D.textSubtle }}>Aucune équipe trouvée.</p>
         </div>
       );
     }
@@ -280,7 +280,7 @@ export default async function DashboardPage() {
           className="flex items-center justify-between px-4 pt-4 pb-3"
           style={{ borderBottom: `1px solid ${D.borderFaint}` }}
         >
-          <SectionLabel>Messages</SectionLabel>
+          <SectionLabel>Messages</SectionLabel>{/* déjà FR */}
           {personalMessages.filter((m) => !m.isRead).length > 0 && (
             <span
               className="rounded-full px-2 py-0.5 text-[10px] tabular-nums"
@@ -290,13 +290,13 @@ export default async function DashboardPage() {
                 fontWeight: 500,
               }}
             >
-              {personalMessages.filter((m) => !m.isRead).length} new
+              {personalMessages.filter((m) => !m.isRead).length} nouveau(x)
             </span>
           )}
         </div>
         {personalMessages.length === 0 ? (
           <div className="px-4 py-12 text-center text-[12px]" style={{ color: D.textSubtle }}>
-            No messages yet.
+            Aucun message pour l'instant.
           </div>
         ) : (
           personalMessages.slice(0, 40).map((m) => (
@@ -372,7 +372,7 @@ export default async function DashboardPage() {
             className="rounded-lg p-8 text-center text-[12px]"
             style={{ background: D.card, border: `1px solid ${D.borderFaint}`, color: D.textSubtle }}
           >
-            No upcoming match scheduled.
+            Aucun match prévu.
           </div>
         )}
 
@@ -424,7 +424,7 @@ function NextMatchHero({
     >
       {/* Top strip: section + format/day/stage */}
       <div className="flex items-center justify-between">
-        <SectionLabel withAccent>Next match</SectionLabel>
+        <SectionLabel withAccent>Prochain match</SectionLabel>
         <span className="text-[11px]" style={{ color: D.textMuted }}>
           {nextMatch.format} · {formatGameDate(nextMatch.day, year)}
           {stage ? ` · ${stage}` : ""}
@@ -451,7 +451,7 @@ function NextMatchHero({
               fontWeight: 500,
             }}
           >
-            {winProb}% win
+            {winProb}% de victoire
           </div>
           <FormPills form={userForm} />
         </div>
@@ -536,7 +536,7 @@ function SquadCard({ starters }: { starters: Player[] }) {
         className="flex items-center justify-between px-4 py-3"
         style={{ borderBottom: `1px solid ${D.borderFaint}` }}
       >
-        <SectionLabel withAccent>Your squad</SectionLabel>
+        <SectionLabel withAccent>Effectif</SectionLabel>
         <Link href="/roster" className="text-[11px]" style={{ color: D.textMuted }}>
           Full roster →
         </Link>
@@ -640,7 +640,7 @@ function StandingsCard({
         className="flex items-center justify-between px-4 py-3"
         style={{ borderBottom: `1px solid ${D.borderFaint}` }}
       >
-        <SectionLabel withAccent>Standings</SectionLabel>
+        <SectionLabel withAccent>Classement</SectionLabel>
         <Link href="/league" className="text-[11px]" style={{ color: D.textMuted }}>
           Full table →
         </Link>
@@ -736,12 +736,12 @@ function RecentMatchesCard({
         className="flex items-center justify-between px-4 py-3"
         style={{ borderBottom: `1px solid ${D.borderFaint}` }}
       >
-        <SectionLabel withAccent>Recent matches</SectionLabel>
+        <SectionLabel withAccent>Derniers matchs</SectionLabel>
       </div>
       <div>
         {matches.length === 0 ? (
           <div className="py-10 text-center text-[12px]" style={{ color: D.textSubtle }}>
-            No matches played yet.
+            Aucun match joué pour l'instant.
           </div>
         ) : (
           matches.map((m, i) => {

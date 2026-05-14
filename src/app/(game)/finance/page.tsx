@@ -36,7 +36,7 @@ export default function FinancePage() {
   if (!data) {
     return (
       <div className="p-10 text-sm" style={{ color: D.textMuted }}>
-        Loading finance data…
+        Chargement des finances…
       </div>
     );
   }
@@ -65,29 +65,29 @@ export default function FinancePage() {
         <div className="flex items-start justify-between gap-6">
           <div>
             <div className="text-[11px] font-medium" style={{ color: D.textSubtle }}>
-              Org Finances
+              Trésorerie du club
             </div>
             <h1
               className="mt-1 text-[34px] font-medium leading-none"
               style={{ color: D.textPrimary }}
             >
-              Finance
+              Finances
             </h1>
             <div
               className="mt-2 flex items-center gap-3 text-[11px] font-medium"
               style={{ color: D.textMuted }}
             >
-              <span>Total capital {formatCurrency(total)}</span>
+              <span>Capital total {formatCurrency(total)}</span>
               <span>·</span>
               <span style={{ color: data.weekly.net >= 0 ? D.green : D.red }}>
                 {data.weekly.net >= 0 ? "+" : ""}
-                {formatCurrency(data.weekly.net)}/wk
+                {formatCurrency(data.weekly.net)}/sem
               </span>
               {data.debt.amount > 0 && (
                 <>
                   <span>·</span>
                   <span style={{ color: D.red }}>
-                    Debt {formatCurrency(data.debt.amount)}
+                    Dette {formatCurrency(data.debt.amount)}
                   </span>
                 </>
               )}
@@ -102,27 +102,27 @@ export default function FinancePage() {
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
         <MetricCell
-          label="Transfer Budget"
+          label="Budget transferts"
           value={formatCurrency(data.buckets.transfer)}
-          sub="Signings + buyouts"
+          sub="Signatures + rachats"
           accent={D.gold}
         />
         <MetricCell
-          label="Wage Budget"
+          label="Budget salaires"
           value={formatCurrency(data.buckets.wage)}
-          sub="Season pool"
+          sub="Enveloppe saison"
           accent={D.blue}
         />
         <MetricCell
-          label="Operational"
+          label="Opérationnel"
           value={formatCurrency(data.buckets.operational)}
-          sub="General pool + fallback"
+          sub="Trésorerie + fonds de réserve"
           accent={D.green}
         />
         <MetricCell
-          label="Weekly Net"
+          label="Bilan hebdo"
           value={`${data.weekly.net >= 0 ? "+" : ""}${formatCurrency(data.weekly.net)}`}
-          sub={`In ${formatCurrency(data.weekly.totalIncome)} / Out ${formatCurrency(data.weekly.totalExpense)}`}
+          sub={`Entrées ${formatCurrency(data.weekly.totalIncome)} / Sorties ${formatCurrency(data.weekly.totalExpense)}`}
           accent={data.weekly.net >= 0 ? D.green : D.red}
           last
         />
@@ -132,12 +132,12 @@ export default function FinancePage() {
       <section className="px-10 py-6" style={{ borderBottom: `1px solid ${D.border}` }}>
         <div className="flex items-baseline justify-between mb-2">
           <span className="text-[11px] font-medium" style={{ color: D.textSubtle }}>
-            Investor Patience
+            Patience investisseur
           </span>
           <span className="text-[11px] tabular-nums" style={{ color: D.textMuted }}>
             {formatCurrency(data.debt.amount)} / {formatCurrency(data.debt.patience)}
             {data.debt.isBankrupt && (
-              <span style={{ color: D.red, marginLeft: 8 }}>· BANKRUPT</span>
+              <span style={{ color: D.red, marginLeft: 8 }}>· FAILLITE</span>
             )}
           </span>
         </div>
@@ -159,11 +159,11 @@ export default function FinancePage() {
               borderColor: D.textSubtle,
               opacity: 0.4,
             }}
-            title="Warning threshold"
+            title="Seuil d'alerte"
           />
         </div>
         <div className="mt-2 text-[10px]" style={{ color: D.textSubtle }}>
-          Warning at {formatCurrency(data.debt.warningAt)} · Bankruptcy at {formatCurrency(data.debt.bankruptcyAt)}
+          Alerte à {formatCurrency(data.debt.warningAt)} · Faillite à {formatCurrency(data.debt.bankruptcyAt)}
         </div>
       </section>
 
@@ -172,15 +172,15 @@ export default function FinancePage() {
         {/* Allocation */}
         <div className="px-10 py-6" style={{ backgroundColor: D.bg }}>
           <h2 className="text-[13px] font-medium mb-4" style={{ color: D.textPrimary }}>
-            Board Allocation
+            Répartition du board
           </h2>
           <p className="text-[11px] mb-5" style={{ color: D.textMuted }}>
-            Reshape your three pools without changing total capital. The board
-            allows mid-season rebalancing.
+            Répartis tes trois enveloppes sans changer le capital total. Le board
+            autorise un rééquilibrage en cours de saison.
           </p>
 
           <SliderRow
-            label="Transfer"
+            label="Transferts"
             pct={transferPct}
             amount={targetTransfer}
             color={D.gold}
@@ -190,7 +190,7 @@ export default function FinancePage() {
             }}
           />
           <SliderRow
-            label="Wage"
+            label="Salaires"
             pct={wagePct}
             amount={targetWage}
             color={D.blue}
@@ -200,7 +200,7 @@ export default function FinancePage() {
             }}
           />
           <div className="flex items-center justify-between text-[11px] mt-4 pt-3" style={{ borderTop: `1px solid ${D.borderFaint}`, color: D.textMuted }}>
-            <span>Operational (auto)</span>
+            <span>Opérationnel (auto)</span>
             <span className="tabular-nums" style={{ color: D.textPrimary }}>
               {opPct}% · {formatCurrency(targetOperational)}
             </span>
@@ -221,7 +221,7 @@ export default function FinancePage() {
               color: "white",
             }}
           >
-            {rebalanceMut.isPending ? "Reallocating…" : "Apply Allocation"}
+            {rebalanceMut.isPending ? "Application en cours…" : "Appliquer la répartition"}
           </button>
           {rebalanceMut.error && (
             <p className="mt-2 text-[10px]" style={{ color: D.red }}>
@@ -233,27 +233,27 @@ export default function FinancePage() {
         {/* Weekly P&L */}
         <div className="px-10 py-6" style={{ backgroundColor: D.bg }}>
           <h2 className="text-[13px] font-medium mb-4" style={{ color: D.textPrimary }}>
-            Weekly P&L
+            Bilan hebdomadaire
           </h2>
           <div className="space-y-2 text-[11px]">
-            <PLRow label="Riot stipend" amount={data.weekly.riotFee} kind="income" />
+            <PLRow label="Subvention Riot" amount={data.weekly.riotFee} kind="income" />
             <PLRow label="Sponsors" amount={data.weekly.sponsorIncome} kind="income" />
             <PLRow label="Merchandising" amount={data.weekly.merch} kind="income" />
             <div className="pt-2 mt-2" style={{ borderTop: `1px solid ${D.borderFaint}` }}>
-              <PLRow label="Total income" amount={data.weekly.totalIncome} kind="income" bold />
+              <PLRow label="Total entrées" amount={data.weekly.totalIncome} kind="income" bold />
             </div>
             <div className="pt-3" />
-            <PLRow label="Player wages" amount={-data.weekly.playerWages} kind="expense" />
-            <PLRow label="Coach wage" amount={-data.weekly.coachWage} kind="expense" />
-            <PLRow label="Facility upkeep" amount={-data.weekly.facility} kind="expense" />
+            <PLRow label="Salaires joueurs" amount={-data.weekly.playerWages} kind="expense" />
+            <PLRow label="Salaire coach" amount={-data.weekly.coachWage} kind="expense" />
+            <PLRow label="Entretien facility" amount={-data.weekly.facility} kind="expense" />
             {data.weekly.bootcamp > 0 && (
               <PLRow label="Bootcamp" amount={-data.weekly.bootcamp} kind="expense" />
             )}
             <div className="pt-2 mt-2" style={{ borderTop: `1px solid ${D.borderFaint}` }}>
-              <PLRow label="Total expense" amount={-data.weekly.totalExpense} kind="expense" bold />
+              <PLRow label="Total sorties" amount={-data.weekly.totalExpense} kind="expense" bold />
             </div>
             <div className="pt-3 mt-2 flex items-center justify-between" style={{ borderTop: `1px solid ${D.border}` }}>
-              <span className="font-medium" style={{ color: D.textPrimary }}>Net</span>
+              <span className="font-medium" style={{ color: D.textPrimary }}>Bilan</span>
               <span className="tabular-nums font-medium" style={{ color: data.weekly.net >= 0 ? D.green : D.red }}>
                 {data.weekly.net >= 0 ? "+" : ""}{formatCurrency(data.weekly.net)}
               </span>
@@ -267,15 +267,15 @@ export default function FinancePage() {
         {/* Facility */}
         <div className="px-10 py-6" style={{ backgroundColor: D.bg }}>
           <h2 className="text-[13px] font-medium mb-4" style={{ color: D.textPrimary }}>
-            Facility Tier
+            Niveau de facility
           </h2>
           <p className="text-[11px] mb-4" style={{ color: D.textMuted }}>
-            Higher tiers cost more weekly upkeep but support team training and morale.
+            Plus le niveau est élevé, plus le coût hebdo est important — mais l'entraînement et le moral progressent.
           </p>
           <div className="grid grid-cols-5 gap-2">
             {[1, 2, 3, 4, 5].map((tier) => {
               const isCurrent = tier === data.operations.facilityTier;
-              const labels = ["Apt", "House", "Facility", "Complex", "HQ"];
+              const labels = ["Appart", "Maison", "Facility", "Complexe", "HQ"];
               const costs = ["$2k", "$5k", "$12k", "$25k", "$45k"];
               return (
                 <button
@@ -289,9 +289,9 @@ export default function FinancePage() {
                     border: `1px solid ${isCurrent ? D.primary : D.borderFaint}`,
                   }}
                 >
-                  <div>T{tier}</div>
+                  <div>N{tier}</div>
                   <div className="opacity-70 mt-1">{labels[tier - 1]}</div>
-                  <div className="opacity-50 mt-1 text-[9px]">{costs[tier - 1]}/wk</div>
+                  <div className="opacity-50 mt-1 text-[9px]">{costs[tier - 1]}/sem</div>
                 </button>
               );
             })}
@@ -309,12 +309,12 @@ export default function FinancePage() {
             Bootcamp
           </h2>
           <p className="text-[11px] mb-4" style={{ color: D.textMuted }}>
-            Intensive prep mode. Costs $5k/week extra. Boost team prep before majors.
+            Prép intensive. Coûte $5k/semaine en plus. Booste la prep avant les majors.
           </p>
           {data.operations.bootcampWeeksLeft > 0 ? (
             <div className="flex items-center justify-between p-3 rounded" style={{ backgroundColor: "rgba(0,200,150,0.05)", border: `1px solid ${D.green}` }}>
               <span className="text-[12px]" style={{ color: D.textPrimary }}>
-                Active · {data.operations.bootcampWeeksLeft} week(s) remaining
+                Actif · {data.operations.bootcampWeeksLeft} semaine(s) restantes
               </span>
               <button
                 onClick={() => bootcampMut.mutate({ weeks: 0 })}
@@ -322,7 +322,7 @@ export default function FinancePage() {
                 className="text-[11px] underline disabled:opacity-50"
                 style={{ color: D.red }}
               >
-                Cancel
+                Annuler
               </button>
             </div>
           ) : (
@@ -339,7 +339,7 @@ export default function FinancePage() {
                     border: `1px solid ${D.borderFaint}`,
                   }}
                 >
-                  {w}w
+                  {w} sem
                   <div className="opacity-50 mt-1 text-[9px]">
                     {formatCurrency(w * 5000)}
                   </div>

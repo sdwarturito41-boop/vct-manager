@@ -136,9 +136,9 @@ export default function MarketPage() {
   };
 
   const tabs: { key: TabKey; label: string }[] = [
-    { key: "FA", label: "Free agents" },
-    { key: "BUYOUT", label: "Buy-out Market" },
-    { key: "OFFERS", label: "My Offers" },
+    { key: "FA", label: "Agents libres" },
+    { key: "BUYOUT", label: "Marché des transferts" },
+    { key: "OFFERS", label: "Mes offres" },
   ];
 
   return (
@@ -213,27 +213,27 @@ export default function MarketPage() {
           style={{ borderBottom: `1px solid ${D.border}` }}
         >
           <FilterSelect
-            label="Role"
+            label="Rôle"
             value={role}
             options={ROLES}
             onChange={(v) => setRole(v as RoleFilter)}
             emptyLabel="All Roles"
           />
           <FilterSelect
-            label="Region"
+            label="Région"
             value={region}
             options={REGIONS}
             onChange={(v) => setRegion(v as RegionFilter)}
             emptyLabel="All Regions"
           />
           <FilterInput
-            label="Min Salary"
+            label="Salaire min"
             value={minSalary}
             onChange={setMinSalary}
             placeholder="0"
           />
           <FilterInput
-            label="Max Salary"
+            label="Salaire max"
             value={maxSalary}
             onChange={setMaxSalary}
             placeholder="—"
@@ -499,7 +499,7 @@ function MarketRowHeader({ kind }: { kind: "FA" | "BUYOUT" }) {
       <span>Region</span>
       {kind === "BUYOUT" && <span>Team</span>}
       <span className="text-right">
-        {kind === "FA" ? "Salary/wk" : "Buyout"}
+        {kind === "FA" ? "Salaire/sem" : "Clause"}
       </span>
       <span className="text-right">Action</span>
     </div>
@@ -576,7 +576,7 @@ function MarketPlayerRow({
                 color: D.red,
               }}
             >
-              Listed
+              Listé
             </span>
           )}
         </div>
@@ -675,7 +675,7 @@ function MarketPlayerRow({
             border: `1px solid rgba(255,70,85,0.25)`,
           }}
         >
-          {kind === "FA" ? "Sign" : "Make offer"}
+          {kind === "FA" ? "Signer" : "Faire une offre"}
         </button>
       </div>
     </div>
@@ -715,7 +715,7 @@ function OffersTab({
               className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
-              Offers Received
+              Offres reçues
             </span>
             <span
               className="text-[10px] font-medium tabular-nums"
@@ -748,7 +748,7 @@ function OffersTab({
               className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
-              Offers Made
+              Offres envoyées
             </span>
             <span
               className="text-[10px] font-medium tabular-nums"
@@ -1056,7 +1056,7 @@ function OfferModal({
               className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
-              {isBuyout ? "Buyout Offer" : "Sign Free agent"}
+              {isBuyout ? "Offre de transfert" : "Signer un agent libre"}
             </div>
             <h2
               className="mt-1 text-[22px] font-medium "
@@ -1086,12 +1086,12 @@ function OfferModal({
           style={{ borderBottom: `1px solid ${D.borderFaint}` }}
         >
           <ModalMetric
-            label="Current Salary"
+            label="Salaire actuel"
             value={formatCurrency(player.salary)}
           />
           {isBuyout ? (
             <ModalMetric
-              label="Buyout Clause"
+              label="Clause libératoire"
               value={formatCurrency(player.buyoutClause)}
               accent={D.gold}
             />
@@ -1208,29 +1208,29 @@ function OfferModal({
           {/* Extra leverage — signing bonus, sell-on, loyalty */}
           <div className="grid grid-cols-3 gap-3">
             <FieldInput
-              label="Signing Bonus"
+              label="Prime de signature"
               value={signingBonus}
               onChange={setSigningBonus}
-              hint="paid upfront"
+              hint="versée à la signature"
             />
             <FieldInput
-              label="Sell-on %"
+              label="Pourcentage de revente"
               value={sellOnPercentage}
               onChange={setSellOnPercentage}
               max={50}
-              hint="% of future resale"
+              hint="% sur revente future"
             />
             <FieldInput
-              label="Loyalty Bonus"
+              label="Prime de fidélité"
               value={loyaltyBonus}
               onChange={setLoyaltyBonus}
-              hint="end of contract"
+              hint="versée en fin de contrat"
             />
             <FieldInput
-              label="Playoff Bonus"
+              label="Prime playoffs"
               value={performanceBonus}
               onChange={setPerformanceBonus}
-              hint="paid if team reaches Masters/Champions"
+              hint="versée si l'équipe atteint Masters/Champions"
             />
           </div>
 
@@ -1270,7 +1270,7 @@ function OfferModal({
               className="text-[10px] font-medium "
               style={{ color: D.textSubtle }}
             >
-              Upfront Cost {isBuyout ? "(transfer fee)" : "(4w signing)"}
+              Coût initial {isBuyout ? "(indemnité)" : "(4 sem avance salaire)"}
             </span>
             <span
               className="text-[14px] font-medium tabular-nums"
@@ -1302,7 +1302,7 @@ function OfferModal({
                 color: D.textMuted,
               }}
             >
-              Cancel
+              Annuler
             </button>
             <button
               onClick={handleSubmit}
@@ -1316,7 +1316,7 @@ function OfferModal({
                 border: `1px solid rgba(255,70,85,0.3)`,
               }}
             >
-              {makeOffer.isPending ? "Sending..." : "Submit Offer"}
+              {makeOffer.isPending ? "Envoi…" : "Envoyer l'offre"}
             </button>
           </div>
         </div>

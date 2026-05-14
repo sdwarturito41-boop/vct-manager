@@ -11,17 +11,17 @@ import type { StaffRole } from "@/generated/prisma/client";
  * STAFF_SKILL_LABELS.COACH[0] describes skill1 for a coach, etc.
  */
 export const STAFF_SKILL_LABELS: Record<StaffRole, [string, string, string]> = {
-  COACH: ["Utility Boost", "Training Eff.", "Scouting Skill"],
-  ANALYST: ["Scout Speed", "Prep Quality", "VOD Review"],
-  MANAGER: ["Negotiation", "Network", "Contract Savvy"],
-  FITNESS: ["Recovery", "Injury Prev.", "Peak Cond."],
+  COACH: ["Utility", "Entraînement", "Préparation"],
+  ANALYST: ["Vitesse scout", "Qualité prép.", "Analyse VOD"],
+  MANAGER: ["Négociation", "Réseau", "Contrats"],
+  FITNESS: ["Récupération", "Prévention", "Forme"],
 };
 
 export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
   COACH: "Head Coach",
-  ANALYST: "Analyst",
-  MANAGER: "Team Manager",
-  FITNESS: "Fitness Coach",
+  ANALYST: "Analyste",
+  MANAGER: "Manager",
+  FITNESS: "Préparateur physique",
 };
 
 /**
