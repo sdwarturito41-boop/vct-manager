@@ -76,25 +76,6 @@ function bestAgent(p: Player): string | null {
   return best[0];
 }
 
-function bestMap(p: Player): { name: string; factor: number } | null {
-  const factors = (p.mapFactors ?? {}) as Record<string, number>;
-  const entries = Object.entries(factors).filter(([, v]) => typeof v === "number");
-  if (entries.length === 0) return null;
-  let best = entries[0];
-  for (const e of entries) if (e[1] > best[1]) best = e;
-  return { name: best[0], factor: best[1] };
-}
-
-// Approximate per-map stats by scaling the player's baseline by their map
-// factor. Good enough for a glanceable dashboard line — exact per-map history
-// would need an extra table.
-function statsOnMap(p: Player, factor: number): { acs: number; kd: number } {
-  return {
-    acs: Math.round(p.acs * factor),
-    kd: Math.round(p.kd * factor * 100) / 100,
-  };
-}
-
 function winProbability(myAvg: number, oppAvg: number): number {
   // Logistic on overall delta. Divisor 3.0 gives a calibrated scale that
   // matches the actual sim's variance: a 2-point overall edge ~ 65%, 4 pts
@@ -213,6 +194,16 @@ export default async function DashboardPage() {
   const matchupPairs = opponentTeam
     ? pairByRole(myStarters, (opponentTeam.players as Player[]) ?? [])
     : Array.from({ length: 5 }, () => ({ my: null, them: null }));
+
+  // Stage-scoped stats (K/D + ACS from current-stage matches only). Replaces
+  // the EMA-rolling career stat that drifted between dashboard ↔ roster views.
+  const allLineupIds = [
+    ...myStarters.map((p) => p.id),
+    ...((opponentTeam?.players as Player[] | undefined) ?? []).map((p) => p.id),
+  ];
+  const stageStats = allLineupIds.length > 0
+    ? await api.player.stageStats({ playerIds: allLineupIds }).catch(() => ({}))
+    : {};
 
   const currentStage =
     season?.currentStage && season.currentStage in VCT_STAGES
@@ -378,7 +369,7 @@ export default async function DashboardPage() {
 
         {/* SQUAD + STANDINGS row */}
         <div className="grid gap-5" style={{ gridTemplateColumns: "1.4fr 1fr" }}>
-          <SquadCard starters={myStarters} />
+          <SquadCard starters={myStarters} stageStats={stageStats} />
           <StandingsCard rows={standingsRows} userTeamId={team.id} />
         </div>
 
@@ -526,7 +517,13 @@ function NextMatchHero({
 
 // ─── Squad card ──────────────────────────────────────────────────────
 
-function SquadCard({ starters }: { starters: Player[] }) {
+function SquadCard({
+  starters,
+  stageStats,
+}: {
+  starters: Player[];
+  stageStats: Record<string, { kd: number; acs: number; mapsPlayed: number }>;
+}) {
   return (
     <section
       className="flex flex-col rounded-lg overflow-hidden"
@@ -549,8 +546,8 @@ function SquadCard({ starters }: { starters: Player[] }) {
         ) : (
           starters.map((p, i) => {
             const main = bestAgent(p);
-            const map = bestMap(p);
-            const stats = map ? statsOnMap(p, map.factor) : null;
+            const stage = stageStats[p.id];
+            const hasStage = stage && stage.mapsPlayed > 0;
             const color = agentColor(main);
             return (
               <Link
@@ -591,17 +588,19 @@ function SquadCard({ starters }: { starters: Player[] }) {
                         ★ {main ?? "—"}
                       </span>
                       <span style={{ color: D.textSubtle }}>·</span>
-                      <span>{map?.name ?? "—"}</span>
+                      <span>
+                        {hasStage ? `${stage.mapsPlayed} map${stage.mapsPlayed > 1 ? "s" : ""} ce stage` : "Pas joué ce stage"}
+                      </span>
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 text-[11px] tabular-nums" style={{ color: D.textMuted }}>
                   <span>
-                    <span style={{ color: D.textPrimary, fontWeight: 500 }}>{stats?.acs ?? "—"}</span>
+                    <span style={{ color: D.textPrimary, fontWeight: 500 }}>{hasStage ? stage.acs : "—"}</span>
                     <span style={{ color: D.textSubtle }}> ACS</span>
                   </span>
                   <span>
-                    <span style={{ color: D.textPrimary, fontWeight: 500 }}>{stats ? stats.kd.toFixed(2) : "—"}</span>
+                    <span style={{ color: D.textPrimary, fontWeight: 500 }}>{hasStage ? stage.kd.toFixed(2) : "—"}</span>
                     <span style={{ color: D.textSubtle }}> K/D</span>
                   </span>
                 </div>

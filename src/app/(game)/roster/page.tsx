@@ -46,6 +46,14 @@ export default function RosterPage() {
   );
   const { data: allPlayers, isLoading: playersLoading } =
     trpc.player.rosterAll.useQuery(undefined, { retry: false });
+  // Stage-scoped K/D (matches the H2H dashboard view). Cast `allPlayers` to a
+  // narrow shape to avoid the trpc-router-inferred type pushing TS past its
+  // generic recursion limit on the .map() — same workaround as line 53.
+  const playerIds: string[] = ((allPlayers ?? []) as Array<{ id: string }>).map((p) => p.id);
+  const { data: stageStats } = trpc.player.stageStats.useQuery(
+    { playerIds },
+    { enabled: playerIds.length > 0, retry: false },
+  );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rosterRelations = trpc.player.rosterRelationSummary.useQuery(undefined, {
     retry: false,
@@ -182,6 +190,7 @@ export default function RosterPage() {
               player={p}
               isMvp={p.id === topAcsId}
               relationSummary={relationSummary[p.id]}
+              stageStat={stageStats?.[p.id]}
               onOpenDetail={() => router.push(`/player/${p.id}`)}
               onBench={() =>
                 toggleMutation.mutate({ playerId: p.id, isActive: false })
@@ -206,6 +215,7 @@ export default function RosterPage() {
               player={p}
               isMvp={false}
               relationSummary={relationSummary[p.id]}
+              stageStat={stageStats?.[p.id]}
               onOpenDetail={() => router.push(`/player/${p.id}`)}
               onBench={() =>
                 toggleMutation.mutate({ playerId: p.id, isActive: true })
@@ -328,6 +338,7 @@ function RosterRow({
   isMvp,
   active,
   relationSummary,
+  stageStat,
   onOpenDetail,
   onBench,
   onRelease,
@@ -338,6 +349,7 @@ function RosterRow({
   isMvp: boolean;
   active: boolean;
   relationSummary?: { maxDuoStrength: number; hasClash: boolean };
+  stageStat?: { kd: number; acs: number; mapsPlayed: number };
   onOpenDetail: () => void;
   onBench: () => void;
   onRelease: () => void;
@@ -487,18 +499,20 @@ function RosterRow({
         {player.age}
       </span>
 
-      {/* Stats */}
+      {/* Stats — stage-scoped (matches H2H dashboard view) */}
       <span
         className="text-right text-[13px] font-medium tabular-nums"
         style={{ color: D.gold }}
+        title={stageStat && stageStat.mapsPlayed > 0 ? `Stage en cours · ${stageStat.mapsPlayed} map${stageStat.mapsPlayed > 1 ? "s" : ""}` : "Pas encore joué ce stage"}
       >
-        {formatStat(player.acs, 0)}
+        {stageStat && stageStat.mapsPlayed > 0 ? formatStat(stageStat.acs, 0) : "—"}
       </span>
       <span
         className="text-right text-[12px] tabular-nums"
         style={{ color: D.textPrimary }}
+        title={stageStat && stageStat.mapsPlayed > 0 ? `Stage en cours · ${stageStat.mapsPlayed} map${stageStat.mapsPlayed > 1 ? "s" : ""}` : "Pas encore joué ce stage"}
       >
-        {formatStat(player.kd, 2)}
+        {stageStat && stageStat.mapsPlayed > 0 ? formatStat(stageStat.kd, 2) : "—"}
       </span>
       <span
         className="text-right text-[12px] tabular-nums"

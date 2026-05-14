@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMatch, simulateMap as simulateMapEngine } from "@/server/simulation/engine";
 import { applyMasteryUpdate, applyPassiveDecay } from "@/server/simulation/mastery";
-import { applyStatRollingUpdate } from "@/server/simulation/statRolling";
+import { applyStatRollingUpdatesBatch, type MatchStatInput } from "@/server/simulation/statRolling";
 import { loadActivePairMaps } from "@/server/mercato/relationships";
 import type { SimTeam, AgentPick } from "@/server/simulation/engine";
 import { VALORANT_AGENTS } from "@/constants/agents";
@@ -608,17 +608,17 @@ export const matchRouter = router({
         // Rolling-average stat update — chaque map post-Match update les
         // stats de base (ACS, K/D, KAST, ADR, HS, Rating) via EMA + recompute
         // la carte (overall, attrs) + update le formMomentum selon win/loss.
+        // Batched : 1 read + 1 transaction au lieu de 4 queries × 10 joueurs.
         const userWon = userScore > oppScore;
-        for (const stat of mapResult.playerStats) {
-          await applyStatRollingUpdate(ctx.prisma, {
-            playerId: stat.playerId,
-            acs: stat.acs,
-            kills: stat.kills,
-            deaths: stat.deaths,
-            assists: stat.assists,
-            won: stat.teamId === userTeam.id ? userWon : !userWon,
-          });
-        }
+        const statUpdates: MatchStatInput[] = mapResult.playerStats.map((stat) => ({
+          playerId: stat.playerId,
+          acs: stat.acs,
+          kills: stat.kills,
+          deaths: stat.deaths,
+          assists: stat.assists,
+          won: stat.teamId === userTeam.id ? userWon : !userWon,
+        }));
+        await applyStatRollingUpdatesBatch(ctx.prisma, statUpdates);
       } catch (err) {
         console.error("[simulateMap] mastery error:", err);
         // Don't fail the whole request if mastery fails

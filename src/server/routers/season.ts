@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMatch } from "@/server/simulation/engine";
-import { applyStatRollingUpdate } from "@/server/simulation/statRolling";
+import { applyStatRollingUpdatesBatch, type MatchStatInput } from "@/server/simulation/statRolling";
 import type { SimTeam } from "@/server/simulation/engine";
 import type { Player, Team, Region } from "@/generated/prisma/client";
 import {
@@ -256,6 +256,7 @@ export const seasonRouter = router({
       isStage12Group: boolean;
     };
     const aiResults: AiResult[] = [];
+    const pendingStatUpdates: MatchStatInput[] = [];
 
     for (const match of todaysMatches) {
       if (match.team1.players.length === 0 || match.team2.players.length === 0) continue;
@@ -330,13 +331,12 @@ export const seasonRouter = router({
       });
       completedRounds.add(match.stageId);
 
-      // Rolling stat update pour TOUS les joueurs ayant joué cette série AI.
-      // Update une fois par map jouée (BO3 = 2-3 maps, BO5 = 3-5 maps).
-      // `won` est calculé par map : score1 > score2 → team1 won.
+      // Collect stat-rolling updates — applied in a single batch after the loop
+      // so we don't pay ~4 sequential round-trips per (player × map).
       for (const map of result.maps) {
         const team1WonMap = map.score1 > map.score2;
         for (const stat of map.playerStats) {
-          await applyStatRollingUpdate(ctx.prisma, {
+          pendingStatUpdates.push({
             playerId: stat.playerId,
             acs: stat.acs,
             kills: stat.kills,
@@ -347,6 +347,8 @@ export const seasonRouter = router({
         }
       }
     }
+
+    await applyStatRollingUpdatesBatch(ctx.prisma, pendingStatUpdates);
 
     // Phase 2 — collapse all of today's match writes into ONE transaction.
     // Previously this was N parallel transactions (3 statements each), so ~3

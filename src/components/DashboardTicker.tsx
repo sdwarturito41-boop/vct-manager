@@ -6,13 +6,16 @@ import { formatCurrency } from "@/lib/format";
 import { D } from "@/constants/design";
 
 /**
- * Live ticker shown next to RecentMatches on the dashboard. Three stacked
- * panels — Finance / Scouting / Recommended — all sourced from one tRPC
- * call (`finance.ticker`) to keep the dashboard's TTFB low.
+ * Live ticker shown next to RecentMatches on the dashboard. Finance + Scouting
+ * panels come from `finance.ticker` (single fast RTT). The "Recommandés"
+ * panel is a separate lazy query — it scans the global Player table and was
+ * timing out Vercel functions when bundled into ticker.
  */
 export function DashboardTicker() {
   const tickerQ = trpc.finance.ticker.useQuery();
+  const recommendedQ = trpc.scouting.recommended.useQuery();
   const data = tickerQ.data;
+  const recommended = recommendedQ.data ?? [];
 
   if (!data) {
     return (
@@ -168,11 +171,13 @@ export function DashboardTicker() {
             marché
           </Link>
         </div>
-        {data.recommended.length === 0 ? (
+        {recommendedQ.isLoading ? (
+          <Skeleton lines={2} />
+        ) : recommended.length === 0 ? (
           <Empty>Aucune recommandation actionnable pour l'instant.</Empty>
         ) : (
           <div className="flex flex-col gap-1.5">
-            {data.recommended.map((p) => (
+            {recommended.map((p) => (
               <div
                 key={p.id}
                 className="flex items-center justify-between gap-2 text-[11px]"

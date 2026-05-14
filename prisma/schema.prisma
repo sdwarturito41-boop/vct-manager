@@ -265,6 +265,10 @@ model Player {
 
   @@index([teamId])
   @@index([pandascoreId])
+  // Transfer market browse: WHERE isActive AND !isRetired AND (teamId IS NULL OR isTransferListed) ORDER BY overall DESC.
+  // Separate composites for the two OR branches so Postgres can index-scan both.
+  @@index([isActive, isRetired, teamId, overall(sort: Desc)])
+  @@index([isActive, isRetired, isTransferListed, overall(sort: Desc)])
 }
 
 model Coach {

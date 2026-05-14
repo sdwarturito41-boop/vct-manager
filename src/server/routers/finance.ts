@@ -6,7 +6,6 @@ import { computeWeeklyRevenue } from "@/server/finance/revenue";
 import { computeWeeklyOperationalCost } from "@/server/finance/operations";
 
 const SCOUTING_REVEAL_WEEKS = 4;
-const ROLES = ["Duelist", "Initiator", "Sentinel", "Controller", "Flex", "IGL"] as const;
 
 /**
  * Finance router — read-only finance overview + board-allocation rebalance.
@@ -177,10 +176,10 @@ export const financeRouter = router({
     }),
 
   /**
-   * Combined dashboard-ticker payload — replaces the 4 separate trpc queries
-   * the client was firing (finance.overview + scouting.list + recommended +
-   * season.getCurrent). Single RTT, only the fields the ticker actually
-   * renders.
+   * Compact dashboard-ticker payload. `recommended` is no longer included —
+   * the candidate scan was a seq-scan on the global Player table and caused
+   * Vercel 504s on cold Neon starts. Client fires scouting.recommended
+   * separately + lazily.
    */
   ticker: saveProcedure.query(async ({ ctx }) => {
     const [season, team] = await Promise.all([
@@ -197,7 +196,7 @@ export const financeRouter = router({
           facilityTier: true, bootcampWeeksLeft: true,
           players: {
             where: { isActive: true, isRetired: false, isReserve: false },
-            select: { role: true, overall: true, salary: true },
+            select: { salary: true },
           },
           coach: { select: { salary: true } },
           staff: { select: { salary: true } },
@@ -211,7 +210,6 @@ export const financeRouter = router({
     if (!team) return null;
     const absWeek = season ? season.number * 52 + season.currentWeek : 0;
 
-    // Weekly net (compact, same math as overview but skipping breakdown noise).
     const totalSalary = team.players.reduce((s, p) => s + p.salary, 0);
     const coachSalary = team.coach?.salary ?? 0;
     const staffSalary = team.staff.reduce((s, st) => s + st.salary, 0);
@@ -224,7 +222,6 @@ export const financeRouter = router({
     const weeklyNet =
       sponsorIncome + weeklyRev.total - totalSalary - coachSalary - staffSalary - ops.total;
 
-    // Shortlist with player fields the ticker shows.
     const shortlist = await ctx.prisma.shortlist.findMany({
       where: { teamId: team.id },
       take: 4,
@@ -244,44 +241,6 @@ export const financeRouter = router({
       },
     });
 
-    // Recommended — gap-aware (same logic as scouting.recommended but inlined
-    // so we don't fire a second tRPC RTT just to get this slice).
-    const rolesPresent = new Set(team.players.map((p) => p.role));
-    const missingRoles = ROLES.filter((r) => !rolesPresent.has(r));
-    const teamAvg = team.players.length > 0
-      ? team.players.reduce((s, p) => s + (p.overall ?? 10), 0) / team.players.length
-      : 10;
-    const transferEnvelope = team.transferBudget + team.budget;
-    const candidates = await ctx.prisma.player.findMany({
-      where: {
-        isRetired: false,
-        isActive: true,
-        OR: [{ teamId: null }, { isTransferListed: true }],
-        NOT: { teamId: team.id },
-      },
-      select: {
-        id: true, ign: true, role: true, overall: true,
-        salary: true, teamId: true, buyoutClause: true,
-      },
-      orderBy: { overall: "desc" },
-      take: 30,
-    });
-    const scored = candidates.map((c) => {
-      let score = (c.overall ?? 10) * 5;
-      let reason = "Upgrade potentiel";
-      if (missingRoles.includes(c.role as typeof ROLES[number])) {
-        score += 50;
-        reason = `Comble le poste ${c.role}`;
-      }
-      if ((c.overall ?? 10) > teamAvg + 1) score += 20;
-      const upfront = c.teamId == null ? c.salary * 4 : (c.buyoutClause ?? c.salary * 30);
-      if (upfront <= transferEnvelope) score += 15;
-      else score -= 30;
-      if (c.teamId == null && reason === "Upgrade potentiel") reason = "Agent libre";
-      return { id: c.id, ign: c.ign, role: c.role, overall: c.overall, score, reason };
-    });
-    scored.sort((a, b) => b.score - a.score);
-
     return {
       absWeek,
       revealWeeks: SCOUTING_REVEAL_WEEKS,
@@ -297,7 +256,6 @@ export const financeRouter = router({
       },
       weeklyNet,
       shortlist,
-      recommended: scored.slice(0, 4),
     };
   }),
 });

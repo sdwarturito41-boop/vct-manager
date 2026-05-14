@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ── Types ──
@@ -609,6 +609,241 @@ function KillFeed({
   );
 }
 
+// ── Round timeline (broadcast 2-row view) ──
+
+function sideAtRound(
+  round1Based: number,
+  perspective: "my" | "opp",
+  myFirstHalfSide: "attack" | "defense",
+): "attack" | "defense" {
+  const mySide1H = myFirstHalfSide;
+  const oppSide1H = mySide1H === "attack" ? "defense" : "attack";
+  const base = perspective === "my" ? mySide1H : oppSide1H;
+  if (round1Based <= 12) return base;
+  if (round1Based <= 24) return base === "attack" ? "defense" : "attack";
+  // OT: alternate each round from the 2nd-half side.
+  return (round1Based - 25) % 2 === 0
+    ? (base === "attack" ? "defense" : "attack")
+    : base;
+}
+
+function XIcon({ color }: { color: string }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12">
+      <path d="M2 2 L10 10 M10 2 L2 10" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function FlameIcon({ color }: { color: string }) {
+  return (
+    <svg width="12" height="14" viewBox="0 0 14 16">
+      <path
+        d="M7 1 C 7 4, 4 5, 4 8 C 4 6, 2 6, 2 8 C 2 12, 5 15, 7 15 C 9 15, 12 12, 12 8 C 12 6, 10 6, 10 8 C 10 5, 7 4, 7 1 Z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+function DefuseIcon({ color }: { color: string }) {
+  // Pliers/defuser
+  return (
+    <svg width="12" height="12" viewBox="0 0 14 14">
+      <path
+        d="M3 2 L6 5 L5 6 L2 3 Z M11 2 L8 5 L9 6 L12 3 Z M6 6 L8 6 L11 12 L9 12 L7 8 L5 12 L3 12 Z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+function HourglassIcon({ color }: { color: string }) {
+  return (
+    <svg width="11" height="12" viewBox="0 0 12 14">
+      <path
+        d="M2 1 L10 1 L10 4 L6 7 L10 10 L10 13 L2 13 L2 10 L6 7 L2 4 Z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+function RoundCell({
+  round,
+  perspective,
+  isCurrent,
+  isPlayed,
+  myFirstHalfSide,
+  roundIndex,
+}: {
+  round?: RoundData;
+  perspective: "my" | "opp";
+  isCurrent: boolean;
+  isPlayed: boolean;
+  myFirstHalfSide: "attack" | "defense";
+  roundIndex: number;
+}) {
+  const won = round?.winner === perspective;
+  const side = sideAtRound(roundIndex + 1, perspective, myFirstHalfSide);
+  const color = side === "defense" ? COLORS.accentGreen : COLORS.accentRed;
+
+  let inner: ReactNode = null;
+  if (isPlayed && won && round) {
+    const planted = round.plantTime != null;
+    const defused = round.spikeDefused === true;
+    if (side === "attack") {
+      // Attacker won. If spike planted and not defused → flame (detonation); else X (elims).
+      inner = planted && !defused ? <FlameIcon color={color} /> : <XIcon color={color} />;
+    } else {
+      // Defender won. plant + defused → defuser; plant + !defused → X (post-plant kills);
+      // no plant but defender survived → could be elims or time expiry. Use hourglass when
+      // no kills happened (rare in our sim) — fall back to X.
+      if (planted && defused) inner = <DefuseIcon color={color} />;
+      else if (!planted && (round.killFeed?.length ?? 0) === 0) inner = <HourglassIcon color={color} />;
+      else inner = <XIcon color={color} />;
+    }
+  }
+
+  const bg = isPlayed && won
+    ? `${color}22`
+    : "rgba(255,255,255,0.02)";
+  const border = isCurrent
+    ? `1.5px solid ${COLORS.accentGold}`
+    : isPlayed && won
+      ? `1px solid ${color}66`
+      : `1px solid rgba(255,255,255,0.08)`;
+
+  return (
+    <div
+      className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[2px]"
+      style={{
+        background: bg,
+        border,
+        boxShadow: isCurrent ? `0 0 0 2px ${COLORS.accentGold}33` : "none",
+      }}
+    >
+      {inner}
+    </div>
+  );
+}
+
+function TimelineTeamRow({
+  teamLogo,
+  teamColor,
+  rounds,
+  totalPips,
+  currentRound,
+  perspective,
+  myFirstHalfSide,
+}: {
+  teamLogo?: string;
+  teamColor: string;
+  rounds: RoundData[];
+  totalPips: number;
+  currentRound: number;
+  perspective: "my" | "opp";
+  myFirstHalfSide: "attack" | "defense";
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        className="flex h-[26px] w-[28px] shrink-0 items-center justify-center rounded-[2px]"
+        style={{
+          background: "rgba(10,10,15,0.55)",
+          borderLeft: `2px solid ${teamColor}`,
+        }}
+      >
+        {teamLogo ? (
+          <img src={teamLogo} alt="" className="h-[18px] w-[18px] shrink-0 object-contain" />
+        ) : null}
+      </div>
+      <div className="flex items-center gap-[3px]">
+        {Array.from({ length: totalPips }).map((_, i) => {
+          const r = rounds[i];
+          const isPlayed = i < currentRound;
+          const isCurrent = i === currentRound - 1;
+          return (
+            <RoundCell
+              key={i}
+              round={r}
+              perspective={perspective}
+              isCurrent={isCurrent}
+              isPlayed={isPlayed}
+              myFirstHalfSide={myFirstHalfSide}
+              roundIndex={i}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RoundTimeline({
+  rounds,
+  totalPips,
+  currentRound,
+  myTeam,
+  oppTeam,
+  myFirstHalfSide,
+}: {
+  rounds: RoundData[];
+  totalPips: number;
+  currentRound: number;
+  myTeam: TeamData;
+  oppTeam: TeamData;
+  myFirstHalfSide: "attack" | "defense";
+}) {
+  return (
+    <div
+      className="flex shrink-0 flex-col items-center gap-[3px] rounded-md px-2 py-2"
+      style={{
+        background: "rgba(10,10,15,0.55)",
+        border: "1px solid rgba(255,255,255,0.05)",
+      }}
+    >
+      {/* Round number labels — aligned over cells (offset by team logo cell width + gap) */}
+      <div className="flex items-end" style={{ paddingLeft: 28 + 8 }}>
+        <div className="flex items-center gap-[3px]">
+          {Array.from({ length: totalPips }).map((_, i) => (
+            <div
+              key={i}
+              className="w-[26px] text-center text-[9px] font-medium tabular-nums"
+              style={{
+                color:
+                  i === currentRound - 1
+                    ? COLORS.accentGold
+                    : "rgba(236,232,225,0.32)",
+              }}
+            >
+              {(i + 1).toString().padStart(2, "0")}
+            </div>
+          ))}
+        </div>
+      </div>
+      <TimelineTeamRow
+        teamLogo={myTeam.logo}
+        teamColor={COLORS.accentGreen}
+        rounds={rounds}
+        totalPips={totalPips}
+        currentRound={currentRound}
+        perspective="my"
+        myFirstHalfSide={myFirstHalfSide}
+      />
+      <TimelineTeamRow
+        teamLogo={oppTeam.logo}
+        teamColor={COLORS.accentRed}
+        rounds={rounds}
+        totalPips={totalPips}
+        currentRound={currentRound}
+        perspective="opp"
+        myFirstHalfSide={myFirstHalfSide}
+      />
+    </div>
+  );
+}
+
 // ── Main component ──
 
 export default function RoundByRoundScreen({
@@ -924,41 +1159,15 @@ export default function RoundByRoundScreen({
 
           {/* CENTER: PIP row + Big round result + event highlight */}
           <div className="flex flex-col items-center gap-5">
-            {/* PIP row — at top of center column */}
-            <div className="flex shrink-0 items-center justify-center gap-2 pt-1">
-              <div className="flex flex-wrap justify-center gap-[4px]" style={{ maxWidth: 440 }}>
-                {Array.from({ length: totalPips }).map((_, i) => {
-                  const roundIdx = i;
-                  let bg: string;
-                  let outline: string | undefined;
-                  if (roundIdx < currentRound) {
-                    const r = rounds[roundIdx];
-                    bg = r?.winner === "my" ? COLORS.accentGreen : COLORS.accentRed;
-                  } else if (roundIdx === currentRound) {
-                    bg = COLORS.textPrimary;
-                    outline = "1px solid rgba(255,255,255,0.4)";
-                  } else {
-                    bg = "rgba(255,255,255,0.12)";
-                  }
-                  return (
-                    <motion.div
-                      key={i}
-                      initial={roundIdx === currentRound - 1 ? { scale: 0 } : false}
-                      animate={{ scale: 1 }}
-                      transition={{ duration: 0.2 }}
-                      className="h-[10px] w-[10px] rounded-[2px]"
-                      style={{ background: bg, outline, boxShadow: "0 1px 3px rgba(0,0,0,0.5)" }}
-                    />
-                  );
-                })}
-              </div>
-              <span
-                className="ml-3 text-[11px] tabular-nums"
-                style={{ color: "rgba(236,232,225,0.4)", textShadow: "0 1px 3px rgba(0,0,0,0.8)" }}
-              >
-                R{Math.max(1, currentRound)}
-              </span>
-            </div>
+            {/* Round timeline — broadcast 2-row view with icons */}
+            <RoundTimeline
+              rounds={rounds}
+              totalPips={totalPips}
+              currentRound={currentRound}
+              myTeam={myTeam}
+              oppTeam={oppTeam}
+              myFirstHalfSide={myFirstHalfSide}
+            />
 
             {/* Flex spacer to center round result vertically */}
             <div className="flex flex-1 flex-col items-center justify-center gap-5">

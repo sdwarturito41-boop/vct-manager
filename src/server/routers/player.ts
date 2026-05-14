@@ -10,6 +10,7 @@ import {
   synthesizeMissingStats,
 } from "@/server/mercato/attributes";
 import type { PlayerRaw } from "@/server/mercato/attributeTypes";
+import { getCurrentStageStats, type StageStats } from "@/server/simulation/stageStats";
 
 export const playerRouter = router({
   roster: protectedProcedure.query(async ({ ctx }) => {
@@ -41,6 +42,28 @@ export const playerRouter = router({
       orderBy: [{ isActive: "desc" }, { acs: "desc" }],
     });
   }),
+
+  /**
+   * Per-player stats aggregated over matches played in the CURRENT stage.
+   * Used by the roster + dashboard H2H to show "K/D du stage" instead of
+   * the EMA-rolling career K/D (which drifts and didn't match across views).
+   */
+  stageStats: saveProcedure
+    .input(z.object({ playerIds: z.array(z.string()).min(1).max(60) }))
+    .query(async ({ ctx, input }): Promise<Record<string, StageStats>> => {
+      const season = await ctx.prisma.season.findFirst({
+        where: { isActive: true, saveId: ctx.save.id },
+        select: { number: true, currentStage: true },
+      });
+      if (!season) return {};
+      return getCurrentStageStats(
+        ctx.prisma,
+        ctx.save.id,
+        season.number,
+        season.currentStage,
+        input.playerIds,
+      );
+    }),
 
   market: protectedProcedure
     .input(

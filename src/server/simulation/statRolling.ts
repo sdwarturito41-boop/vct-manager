@@ -1,5 +1,13 @@
 import type { PrismaClient } from "@/generated/prisma/client";
-import { recomputePlayerOverall } from "@/server/mercato/attributes";
+import {
+  recomputePlayerOverall,
+  getPercentileCache,
+  synthesizeMissingStats,
+  computeAttributes,
+  computeOverall,
+  inferPlaystyleRole,
+} from "@/server/mercato/attributes";
+import type { PlayerRaw } from "@/server/mercato/attributeTypes";
 
 /**
  * Rolling-average stat update — applique une EMA (exponentially weighted
@@ -113,4 +121,160 @@ function clamp(x: number, lo: number, hi: number): number {
 }
 function round2(x: number): number {
   return Math.round(x * 100) / 100;
+}
+
+/**
+ * Batched version of applyStatRollingUpdate. Collapses what used to be
+ * 4 sequential queries per (player, map) (2 in applyStatRollingUpdate +
+ * 2 in recomputePlayerOverall) into:
+ *   - 1 findMany for all affected players
+ *   - 1 percentile-cache read (memoized, usually free)
+ *   - 1 $transaction with N updates
+ *
+ * On Vercel + Neon this turns 16-match days from ~75s sequential round-trips
+ * into ~2 round-trips total. Same EMA/momentum/overall math as the per-player
+ * function — only the I/O is collapsed.
+ */
+export async function applyStatRollingUpdatesBatch(
+  prisma: PrismaClient,
+  updates: MatchStatInput[],
+): Promise<void> {
+  if (updates.length === 0) return;
+
+  // Group updates by player so we can replay them in order in-memory.
+  const byPlayer = new Map<string, MatchStatInput[]>();
+  for (const u of updates) {
+    const arr = byPlayer.get(u.playerId) ?? [];
+    arr.push(u);
+    byPlayer.set(u.playerId, arr);
+  }
+  const playerIds = [...byPlayer.keys()];
+
+  const [players, cache] = await Promise.all([
+    prisma.player.findMany({
+      where: { id: { in: playerIds } },
+      select: {
+        id: true, role: true, rating: true,
+        acs: true, kd: true, adr: true, kast: true, hs: true,
+        kpr: true, apr: true, fkpr: true, fdpr: true,
+        clPct: true, clTotal: true,
+        kills: true, deaths: true, vlrAssists: true,
+        fk: true, fd: true, vlrRounds: true,
+        agentStats: true, isIgl: true,
+        playstyleRole: true,
+        potential: true,
+        formMomentum: true,
+      },
+    }),
+    getPercentileCache(prisma),
+  ]);
+
+  const writes: import("@/generated/prisma/client").Prisma.PrismaPromise<unknown>[] = [];
+
+  for (const player of players) {
+    const playerUpdates = byPlayer.get(player.id);
+    if (!playerUpdates) continue;
+
+    // Replay each map's EMA/momentum update in memory.
+    let curAcs = player.acs;
+    let curKd = player.kd;
+    let curKast = player.kast;
+    let curAdr = player.adr;
+    let curHs = player.hs;
+    let curRating = player.rating;
+    let curMomentum = player.formMomentum;
+
+    for (const u of playerUpdates) {
+      const matchAcs = u.acs;
+      const matchKd = u.kills / Math.max(1, u.deaths);
+
+      const newAcs = ema(curAcs, matchAcs, EMA_ALPHA);
+      const newKd = ema(curKd, matchKd, EMA_ALPHA);
+
+      const acsDelta = (matchAcs - curAcs) / 200;
+      const microDrift = clamp(acsDelta, -0.5, 0.5);
+
+      const newKast = ema(curKast, curKast + microDrift * 3, EMA_ALPHA);
+      const newAdr = ema(curAdr, curAdr + microDrift * 6, EMA_ALPHA);
+      const newHs = ema(curHs, curHs + microDrift * 2, EMA_ALPHA);
+      const matchRating =
+        matchAcs / 200 +
+        (u.assists / Math.max(1, u.kills + u.deaths + u.assists)) * 0.2;
+      const newRating = ema(curRating, matchRating, EMA_ALPHA);
+
+      const acsAboveBaseline = matchAcs > curAcs;
+      let momentumDelta = 0;
+      if (u.won === true) {
+        momentumDelta = acsAboveBaseline ? 2 : 1;
+      } else if (u.won === false) {
+        momentumDelta = acsAboveBaseline ? 0 : -2;
+      }
+      const raw = curMomentum + momentumDelta;
+      let newMomentum = Math.max(-10, Math.min(10, raw));
+      if (Math.abs(newMomentum) > 8) {
+        newMomentum = Math.sign(newMomentum) * 8;
+      }
+
+      curAcs = round2(newAcs);
+      curKd = round2(newKd);
+      curKast = round2(clamp(newKast, 50, 90));
+      curAdr = round2(clamp(newAdr, 80, 200));
+      curHs = round2(clamp(newHs, 10, 45));
+      curRating = round2(clamp(newRating, 0.5, 2.0));
+      curMomentum = newMomentum;
+    }
+
+    // Recompute overall + attributes in-memory using the post-update stats.
+    const rawStats: PlayerRaw = {
+      id: player.id,
+      role: player.role,
+      rating: curRating,
+      acs: curAcs,
+      kd: curKd,
+      adr: curAdr,
+      kast: curKast,
+      hs: curHs,
+      kpr: player.kpr,
+      apr: player.apr,
+      fkpr: player.fkpr,
+      fdpr: player.fdpr,
+      clPct: player.clPct,
+      clTotal: player.clTotal,
+      kills: player.kills,
+      deaths: player.deaths,
+      vlrAssists: player.vlrAssists,
+      fk: player.fk,
+      fd: player.fd,
+      vlrRounds: player.vlrRounds,
+      agentStats: player.agentStats,
+      isIgl: player.isIgl,
+    };
+    const synthesized = synthesizeMissingStats(rawStats);
+    const role = player.playstyleRole ?? inferPlaystyleRole(synthesized);
+    const attrs = computeAttributes(synthesized, cache);
+    const rawOverall = computeOverall(attrs, role);
+    const overall = Math.min(rawOverall, player.potential);
+
+    writes.push(
+      prisma.player.update({
+        where: { id: player.id },
+        data: {
+          acs: curAcs,
+          kd: curKd,
+          kast: curKast,
+          adr: curAdr,
+          hs: curHs,
+          rating: curRating,
+          formMomentum: curMomentum,
+          overall,
+          attributes: attrs as unknown as object,
+          ...(player.playstyleRole == null ? { playstyleRole: role } : {}),
+        },
+      }),
+    );
+  }
+
+  if (writes.length > 0) {
+    await prisma.$transaction(writes);
+  }
 }
