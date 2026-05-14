@@ -5,6 +5,7 @@ import { TRPCError } from "@trpc/server";
 import Link from "next/link";
 import { D } from "@/constants/design";
 import { DashboardTicker } from "@/components/DashboardTicker";
+import { formatGameDate } from "@/lib/game-date";
 
 // Cinematic dashboard. Two columns at 100vh:
 //   - LEFT: full-height Messages (personal inbox: MATCH / PLAYER / COACH / SPONSOR / BOARD)
@@ -364,6 +365,7 @@ export default async function DashboardPage() {
             winProb={winProb}
             userForm={userForm}
             stage={currentStage?.name ?? null}
+            year={season?.year ?? 2026}
           />
         ) : (
           <div
@@ -401,6 +403,7 @@ function NextMatchHero({
   winProb,
   userForm,
   stage,
+  year,
 }: {
   team: { id: string; name: string; tag: string; logoUrl: string | null; wins: number; losses: number };
   nextMatch: Match;
@@ -410,6 +413,7 @@ function NextMatchHero({
   winProb: number;
   userForm: Array<"W" | "L">;
   stage: string | null;
+  year: number;
 }) {
   const isHome = nextMatch.team1Id === team.id;
   const opp = isHome ? nextMatch.team2 : nextMatch.team1;
@@ -422,7 +426,7 @@ function NextMatchHero({
       <div className="flex items-center justify-between">
         <SectionLabel withAccent>Next match</SectionLabel>
         <span className="text-[11px]" style={{ color: D.textMuted }}>
-          {nextMatch.format} · D{nextMatch.day}
+          {nextMatch.format} · {formatGameDate(nextMatch.day, year)}
           {stage ? ` · ${stage}` : ""}
         </span>
       </div>

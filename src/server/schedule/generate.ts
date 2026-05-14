@@ -3,6 +3,8 @@ import type { MatchFormat, Region } from "@/generated/prisma/client";
 import { VALORANT_AGENTS } from "@/constants/agents";
 import { MAP_POOLS, STAGE_MAP_POOL } from "@/constants/maps";
 import { applyPatchToMeta } from "@/constants/meta";
+import { VCT_TEAMS } from "@/constants/teams";
+import { allocateSeasonBudget } from "@/server/finance/budgets";
 
 /**
  * VCT 2026 Kickoff — Triple Elimination (31 matches per region)
@@ -2202,20 +2204,46 @@ export async function initializeSaveWorld(
 
   // 3. Clone AI teams from VctTeamTemplate (bulk insert for speed).
   //    createMany doesn't return IDs — so we bulk-create then re-query to map name→id.
+  //    Budget split: if VCT_TEAMS has an explicit transfer/wage split for a
+  //    given team (real-world partner-tier calibration), apply it verbatim;
+  //    otherwise fall back to the default 30/55/15 via allocateSeasonBudget.
   const templates = await prisma.vctTeamTemplate.findMany();
   const aiTemplates = templates.filter((t) => t.name !== input.teamName);
+  const constByName = new Map(VCT_TEAMS.map((t) => [t.name, t]));
   if (aiTemplates.length > 0) {
     await prisma.team.createMany({
-      data: aiTemplates.map((t) => ({
-        saveId,
-        isPlayerTeam: false,
-        name: t.name,
-        tag: t.tag,
-        region: t.region,
-        logoUrl: t.logoUrl,
-        budget: t.budget,
-        prestige: t.prestige,
-      })),
+      data: aiTemplates.map((t) => {
+        const c = constByName.get(t.name);
+        if (c?.transferBudget != null && c?.wageBudgetSeason != null) {
+          return {
+            saveId,
+            isPlayerTeam: false,
+            name: t.name,
+            tag: t.tag,
+            region: t.region,
+            logoUrl: t.logoUrl,
+            budget: c.budget,
+            prestige: c.prestige,
+            transferBudget: c.transferBudget,
+            wageBudgetSeason: c.wageBudgetSeason,
+            seasonStartBudget: c.budget + c.transferBudget + c.wageBudgetSeason,
+          };
+        }
+        const split = allocateSeasonBudget({ totalCapital: t.budget });
+        return {
+          saveId,
+          isPlayerTeam: false,
+          name: t.name,
+          tag: t.tag,
+          region: t.region,
+          logoUrl: t.logoUrl,
+          budget: split.budget,
+          prestige: t.prestige,
+          transferBudget: split.transferBudget,
+          wageBudgetSeason: split.wageBudgetSeason,
+          seasonStartBudget: split.seasonStartBudget,
+        };
+      }),
     });
   }
   const allSaveTeams = await prisma.team.findMany({

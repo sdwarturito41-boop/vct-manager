@@ -96,10 +96,10 @@ export function TopNav() {
         {season && (
           <div className="flex flex-col items-end leading-tight">
             <span className="text-[12px] tabular-nums" style={{ color: "#ffffff" }}>
-              {formatGameDate(season.currentDay)}
+              {formatGameDate(season.currentDay, season.year)}
             </span>
             <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.5)" }}>
-              Week {season.currentWeek}
+              {season.year} · Week {season.currentWeek}
             </span>
           </div>
         )}

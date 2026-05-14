@@ -1,27 +1,42 @@
 import type { Region } from "@/generated/prisma/client";
 
+/**
+ * VCT team definition. `budget` is the operational/general pool — what the
+ * Team.budget column holds. Optional `transferBudget` + `wageBudgetSeason`
+ * carve out FM-style season allocations. When all three are set, the row is
+ * cloned verbatim; otherwise the create flow falls back to the default
+ * 30/55/15 split via allocateSeasonBudget.
+ *
+ * Total capital per team = budget + transferBudget + wageBudgetSeason. The
+ * 2026 EMEA league fixed splits live below and reflect the real-world
+ * partner-tier hierarchy (Fnatic / Liquid > Vitality / KC > mid-table >
+ * Pacific Esports).
+ */
 export interface VctTeamDef {
   name: string;
   tag: string;
   region: Region;
-  budget: number;
+  budget: number;            // operational
   prestige: number;
+  transferBudget?: number;
+  wageBudgetSeason?: number;
 }
 
 export const VCT_TEAMS: VctTeamDef[] = [
-  // ─── EMEA ───
-  { name: "Fnatic", tag: "FNC", region: "EMEA", budget: 2500000, prestige: 95 },
-  { name: "Team Heretics", tag: "TH", region: "EMEA", budget: 1800000, prestige: 82 },
-  { name: "Team Vitality", tag: "VIT", region: "EMEA", budget: 2000000, prestige: 85 },
-  { name: "Gentle Mates", tag: "GM", region: "EMEA", budget: 1200000, prestige: 70 },
-  { name: "Karmine Corp", tag: "KC", region: "EMEA", budget: 1500000, prestige: 75 },
-  { name: "Natus Vincere", tag: "NAVI", region: "EMEA", budget: 2200000, prestige: 88 },
-  { name: "BBL Esports", tag: "BBL", region: "EMEA", budget: 1000000, prestige: 65 },
-  { name: "FUT Esports", tag: "FUT", region: "EMEA", budget: 900000, prestige: 60 },
-  { name: "Eternal Fire", tag: "EF", region: "EMEA", budget: 1600000, prestige: 78 },
-  { name: "Team Liquid", tag: "TL", region: "EMEA", budget: 2300000, prestige: 90 },
-  { name: "GIANTX", tag: "GX", region: "EMEA", budget: 850000, prestige: 58 },
-  { name: "Pcific Esports", tag: "PCFIC", region: "EMEA", budget: 700000, prestige: 45 },
+  // ─── EMEA — 2026 partner-tier budgets (real-world calibration) ───
+  // Totals (transfer + wage + operational): Fnatic 4.2M → Pacific 0.9M.
+  { name: "Fnatic",          tag: "FNC",   region: "EMEA", prestige: 95, budget:  700000, transferBudget: 1500000, wageBudgetSeason: 2000000 },
+  { name: "Team Liquid",     tag: "TL",    region: "EMEA", prestige: 90, budget:  700000, transferBudget: 1200000, wageBudgetSeason: 1900000 },
+  { name: "Team Vitality",   tag: "VIT",   region: "EMEA", prestige: 85, budget:  600000, transferBudget:  900000, wageBudgetSeason: 1700000 },
+  { name: "Karmine Corp",    tag: "KC",    region: "EMEA", prestige: 75, budget:  600000, transferBudget:  700000, wageBudgetSeason: 1500000 },
+  { name: "Natus Vincere",   tag: "NAVI",  region: "EMEA", prestige: 88, budget:  550000, transferBudget:  650000, wageBudgetSeason: 1400000 },
+  { name: "Team Heretics",   tag: "TH",    region: "EMEA", prestige: 82, budget:  500000, transferBudget:  500000, wageBudgetSeason: 1200000 },
+  { name: "Gentle Mates",    tag: "GM",    region: "EMEA", prestige: 70, budget:  500000, transferBudget:  400000, wageBudgetSeason: 1100000 },
+  { name: "GIANTX",          tag: "GX",    region: "EMEA", prestige: 58, budget:  450000, transferBudget:  350000, wageBudgetSeason: 1000000 },
+  { name: "Eternal Fire",    tag: "EF",    region: "EMEA", prestige: 78, budget:  420000, transferBudget:  280000, wageBudgetSeason:  900000 },
+  { name: "BBL Esports",     tag: "BBL",   region: "EMEA", prestige: 65, budget:  370000, transferBudget:  230000, wageBudgetSeason:  800000 },
+  { name: "FUT Esports",     tag: "FUT",   region: "EMEA", prestige: 60, budget:  340000, transferBudget:  180000, wageBudgetSeason:  680000 },
+  { name: "Pacific Esports", tag: "PCFIC", region: "EMEA", prestige: 45, budget:  260000, transferBudget:  120000, wageBudgetSeason:  520000 },
 
   // ─── Americas ───
   { name: "Sentinels", tag: "SEN", region: "Americas", budget: 3000000, prestige: 95 },

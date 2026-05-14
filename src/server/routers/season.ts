@@ -961,7 +961,7 @@ export const seasonRouter = router({
       sponsorIncome: number;
       newBudget: number;
     }> = [];
-    if (dayOfWeek(newDay) === 1) {
+    if (dayOfWeek(newDay, season.year) === 1) {
       const allTeams = await ctx.prisma.team.findMany({
         where: { saveId: ctx.save.id },
         include: {

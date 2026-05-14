@@ -75,10 +75,10 @@ export default async function SeasonPage() {
         {season && (
           <div className="text-right">
             <div className="text-2xl font-black text-[var(--val-white)]">
-              {dayNameFull(season.currentDay)}
+              {dayNameFull(season.currentDay, season.year)}
             </div>
             <div className="text-xs font-semibold uppercase tracking-[0.15em] text-[var(--val-white)]/40">
-              {formatGameDate(season.currentDay)} &middot; Day {season.currentDay}
+              {formatGameDate(season.currentDay, season.year)} &middot; Day {season.currentDay}
             </div>
           </div>
         )}

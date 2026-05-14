@@ -237,6 +237,7 @@ function SimulationModal({
   pendingFromAdvance: { matchId: string; opponent: string } | null;
   onClose: () => void;
 }) {
+  const { data: currentSeason } = trpc.season.getCurrent.useQuery(undefined, { retry: false });
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -449,7 +450,7 @@ function SimulationModal({
             style={{ borderTop: `1px solid ${D.borderFaint}` }}
           >
             <span className="text-[11px]" style={{ color: D.textSubtle }}>
-              {day != null && `${formatGameDate(day)}`}
+              {day != null && `${formatGameDate(day, currentSeason?.year)}`}
               {results && results.length > 0 && ` · ${results.length} matches`}
             </span>
             <button
