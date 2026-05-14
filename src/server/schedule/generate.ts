@@ -34,6 +34,13 @@ function weekdaysForStage(stageId: string, region: Region): number[] {
   ) {
     return [4, 5, 6, 7]; // Thu / Fri / Sat / Sun
   }
+  // EWC Qualifier — joue en parallèle des derniers VCT playoffs + début
+  // Masters London. Mon-Tue pour éviter de chevaucher avec VCT (Wed-Fri).
+  // Les playoffs EWC Qualifier (Sat-Sun pour la BO5) peuvent overflow vers
+  // le week-end mais le group/early stage reste sur début de semaine.
+  if (stageId.startsWith("EWC_QUALIFIER")) {
+    return [1, 2]; // Mon / Tue
+  }
   // Stage 1/2 group stage — Wed-Fri for EMEA, Fri-Sun for the rest (the
   // existing regional pattern is preserved for non-EMEA so broadcast
   // windows don't clash).

@@ -16,6 +16,14 @@ import {
   generateMetaPatch,
   rollOffSeason,
 } from "@/server/schedule/generate";
+import {
+  initializeEwcQualifierS1,
+  progressEwcQualifierS1,
+  initializeEwcQualifierS2,
+  progressEwcQualifierS2,
+  initializeEwcMainFromQualifiers,
+  progressEwcMain,
+} from "@/server/schedule/ewc-qualifier";
 import { dayOfWeek } from "@/lib/game-date";
 import { MASTERS_FORMAT } from "@/constants/masters-format";
 import { applyPatchToMeta } from "@/constants/meta";
@@ -422,8 +430,14 @@ export const seasonRouter = router({
     for (const roundId of completedRounds) {
       const isInternational = roundId.startsWith("MASTERS_") || roundId.startsWith("EWC_") || roundId.startsWith("CHAMPIONS_");
       const isSwiss = roundId.includes("_SWISS_R");
+      // EWC main uses 4-groups + SE playoffs, pas le format Masters Swiss/DE.
+      const isEwcMain =
+        roundId.startsWith("EWC_GROUP_") ||
+        roundId === "EWC_QF" ||
+        roundId === "EWC_SF" ||
+        roundId === "EWC_GRAND_FINAL";
       const isMastersBracket = (roundId.startsWith("MASTERS_") || roundId.startsWith("EWC_") || roundId.startsWith("CHAMPIONS_"))
-        && !isSwiss;
+        && !isSwiss && !isEwcMain;
 
       if (isSwiss) {
         // Swiss progression: check if all matches in this round are done
@@ -434,8 +448,17 @@ export const seasonRouter = router({
         if (allPlayed) {
           await progressSwiss(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
         }
+      } else if (isEwcMain) {
+        // EWC Main = 4 groupes round-robin → top 2 → SE playoffs
+        const ewcMatches = await ctx.prisma.match.findMany({
+          where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
+        });
+        const allPlayed = ewcMatches.length > 0 && ewcMatches.every((m) => m.isPlayed);
+        if (allPlayed) {
+          await progressEwcMain(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
+        }
       } else if (isMastersBracket) {
-        // International bracket progression (Masters/EWC/Champions)
+        // International bracket progression (Masters/Champions)
         const bracketMatches = await ctx.prisma.match.findMany({
           where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
         });
@@ -465,9 +488,12 @@ export const seasonRouter = router({
             if (roundId.startsWith("KICKOFF")) {
               await progressBracket(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
             }
-            // Regional stage group phase completion → create playoffs
+            // Regional stage group phase completion → create playoffs + EWC qualifier
             if (roundId === "STAGE_1_ALPHA" || roundId === "STAGE_1_OMEGA") {
               await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_1", region as Region, season.number, newDay);
+              // EWC Qualifier Stage 1 — bottom 2 de chaque groupe partent
+              // sur le mini-bracket en parallèle des playoffs VCT.
+              await initializeEwcQualifierS1(ctx.prisma, ctx.save.id, region as Region, season.number, newDay);
             }
             if (roundId === "STAGE_2_ALPHA" || roundId === "STAGE_2_OMEGA") {
               await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_2", region as Region, season.number, newDay);
@@ -475,6 +501,18 @@ export const seasonRouter = router({
             // Regional playoffs round progression
             if (roundId.includes("_PO_")) {
               await progressRegionalPlayoffs(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
+            }
+            // EWC Qualifier Stage 1 progression
+            if (roundId.startsWith("EWC_QUAL_S1_")) {
+              await progressEwcQualifierS1(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
+              // S1 LB Final done → kick off S2 Qualifier
+              if (roundId === "EWC_QUAL_S1_LB_FINAL") {
+                await initializeEwcQualifierS2(ctx.prisma, ctx.save.id, region as Region, season.number, newDay);
+              }
+            }
+            // EWC Qualifier Stage 2 progression
+            if (roundId.startsWith("EWC_QUAL_S2_")) {
+              await progressEwcQualifierS2(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
             }
           }
         }
@@ -677,7 +715,17 @@ export const seasonRouter = router({
           where: { id: season.id },
           data: { currentStage: "EWC" },
         });
-        await initializeInternationalEvent(ctx.prisma, ctx.save.id, season.number, "EWC", 2, "STAGE_2");
+        // EWC main = 3 qualifiers par région issus du Stage 2 Qualifier
+        // (2 UB R2 winners + 1 LB Final winner). Si le Stage 2 Qualifier
+        // n'est pas complet, fallback au pull top 3 du Stage 1.
+        const ewcMainRes = await initializeEwcMainFromQualifiers(
+          ctx.prisma, ctx.save.id, season.number,
+        );
+        if (ewcMainRes.matchesScheduled === 0) {
+          await initializeInternationalEvent(
+            ctx.prisma, ctx.save.id, season.number, "EWC", 3, "STAGE_1",
+          );
+        }
         await generateMetaPatch(ctx.prisma, season.number, "EWC");
       }
     }
@@ -688,6 +736,19 @@ export const seasonRouter = router({
         where: { saveId: ctx.save.id, stageId: "EWC_GRAND_FINAL", season: season.number, isPlayed: true },
       });
       if (grandFinal) {
+        // Defending champion : reset tous les flags + set le winner.
+        // Bypassera le qualifier l'année prochaine.
+        if (grandFinal.winnerId) {
+          await ctx.prisma.team.updateMany({
+            where: { saveId: ctx.save.id, isEwcDefendingChampion: true },
+            data: { isEwcDefendingChampion: false },
+          });
+          await ctx.prisma.team.update({
+            where: { id: grandFinal.winnerId },
+            data: { isEwcDefendingChampion: true },
+          });
+        }
+
         await ctx.prisma.season.update({
           where: { id: season.id },
           data: { currentStage: "CHAMPIONS" },

@@ -103,6 +103,10 @@ model Team {
   // Absolute quarter index already paid out (season*4 + quarter, where
   // quarter is 1-4 per season). Prevents double-paying within a quarter.
   lastBundleQuarter   Int @default(0)
+  // EWC defending champion — winner of last season's EWC. Auto-qualified
+  // for next year's EWC main event (bypass qualifier). Reset to false at
+  // EWC GF completion + re-set on the new winner.
+  isEwcDefendingChampion Boolean @default(false)
   players        Player[]
   skillAim         Int       @default(0)
   skillUtility     Int       @default(0)

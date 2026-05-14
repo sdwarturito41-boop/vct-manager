@@ -75,6 +75,22 @@ export const VCT_CALENDAR: StageWindow[] = [
     regionOffsetDays: { Americas: -7, Pacific: -7, China: -7 },
   },
 
+  // ── EWC Qualifier — Stage 1 (11-13 mai) + Stage 2 (22-31 mai) ──
+  // Joué en parallèle des derniers playoffs Stage 1 + début Masters London.
+  // Stage 1 qualifier : équipes 9-12 EMEA Stage 1 → mini bracket double élim
+  //   → 1 qualifié pour le Stage 2 qualifier.
+  // Stage 2 qualifier : 7 équipes (rank 2-8) + 1 du Stage 1 qualifier =
+  //   8 équipes en double élim → top 3 vers Riyadh.
+  // Stage 1 #1 directement qualifié EWC via VCT slot.
+  // Day 131 = Mon May 11. Durée totale 21 jours (mini + 2-week gap + main).
+  // Weekdays Mon-Tue pour éviter chevauchement avec VCT (Wed-Fri).
+  {
+    stageId: "EWC_QUALIFIER",
+    emeaStartDay: 131,
+    durationDays: 21,
+    regionOffsetDays: { Americas: -7, Pacific: -7, China: -7 },
+  },
+
   // ── Masters London — 6 Jun → 21 Jun ──
   // S22-23 = days 157 → 172.
   {
@@ -83,11 +99,21 @@ export const VCT_CALENDAR: StageWindow[] = [
     durationDays: 16,
   },
 
+  // ── EWC Main Event — Juillet 2026, Riyadh ──
+  // S27 = Day 187 = Mon Jul 6. 6 jours : groups (J1-3) + playoffs (J4-6).
+  // 16 équipes (3 par région + extras + defending champion bypass).
+  // International, donc pas de regionOffsetDays.
+  {
+    stageId: "EWC",
+    emeaStartDay: 187,
+    durationDays: 6,
+  },
+
   // ── Stage 2 — ~Jul → Aug ──
   // S27-35 = days 190 → 245.
   {
     stageId: "STAGE_2",
-    emeaStartDay: 190,
+    emeaStartDay: 200,
     durationDays: 56,
     regionOffsetDays: { Americas: -7, Pacific: -7, China: -7 },
   },

@@ -500,8 +500,11 @@ export default function PlayerPage() {
               className="rounded p-4"
               style={{ background: D.card, border: `1px solid ${D.borderFaint}` }}
             >
-              <div className="text-[9px] mb-3" style={{ color: D.textSubtle }}>
-                Forme récente
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-[9px]" style={{ color: D.textSubtle }}>
+                  Forme récente
+                </span>
+                <MomentumBadge momentum={player.formMomentum ?? 0} />
               </div>
               <div className="grid grid-cols-2 gap-2 text-[11px]" style={{ color: D.textPrimary }}>
                 <MiniStat label="ACS" value={formatStat(player.acs, 0)} accent={D.gold} />
@@ -1283,5 +1286,31 @@ function RadarPlaceholder() {
     >
       <span className="text-[18px]">?</span>
     </div>
+  );
+}
+
+// ─── Form momentum badge (carte joueur) ───
+function MomentumBadge({ momentum }: { momentum: number }) {
+  const state =
+    momentum >= 3 ? "hot" : momentum <= -3 ? "cold" : "neutral";
+  const icon = state === "hot" ? "↑" : state === "cold" ? "↓" : "→";
+  const color =
+    state === "hot" ? D.green : state === "cold" ? D.red : D.textSubtle;
+  const label =
+    state === "hot" ? "En forme" : state === "cold" ? "Méforme" : "Neutre";
+  return (
+    <span
+      className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium"
+      style={{
+        background: `${color}15`,
+        color,
+        border: `1px solid ${color}30`,
+        borderRadius: D.radiusBadge,
+      }}
+      title={`Form momentum ${momentum.toFixed(1)}`}
+    >
+      <span className="text-[11px] leading-none">{icon}</span>
+      <span>{label}</span>
+    </span>
   );
 }

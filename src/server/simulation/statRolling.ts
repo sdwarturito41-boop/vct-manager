@@ -67,7 +67,10 @@ export async function applyStatRollingUpdate(
   // win + ACS bon = +2, win + ACS mid = +1
   // défaite + ACS mid = 0 (le résultat affecte plus que la perf perso)
   // défaite + ACS mauvais = -2
-  // Clampé à [-10, +10].
+  // Soft cap à ±8 sur le path per-match — un run intensif (Swiss stage 5
+  // matchs en 1 semaine) ne peut pas dépasser 8 même sur des perfs MVP.
+  // Le hard ceiling reste ±10 (utile pour des accumulations rares hors
+  // de cette boucle).
   const acsAboveBaseline = matchAcs > player.acs;
   let momentumDelta = 0;
   if (input.won === true) {
@@ -75,7 +78,13 @@ export async function applyStatRollingUpdate(
   } else if (input.won === false) {
     momentumDelta = acsAboveBaseline ? 0 : -2;
   }
-  const newMomentum = Math.max(-10, Math.min(10, player.formMomentum + momentumDelta));
+  const raw = player.formMomentum + momentumDelta;
+  // Soft cap : si on dépasse ±8 via les gains de matchs, on snap à 8.
+  // Préserve le signe pour pas tuer un momentum positif avec un seul mauvais match.
+  let newMomentum = Math.max(-10, Math.min(10, raw));
+  if (Math.abs(newMomentum) > 8) {
+    newMomentum = Math.sign(newMomentum) * 8;
+  }
 
   await prisma.player.update({
     where: { id: input.playerId },

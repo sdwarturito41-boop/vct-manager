@@ -301,40 +301,150 @@ function WeaponCell({ weapon, fromPickup }: { weapon?: string; fromPickup?: bool
   );
 }
 
-function CredsCell({ credits }: { credits?: number }) {
-  if (credits === undefined) return <div className="text-center text-[11px]" style={{ color: COLORS.textMuted }}>—</div>;
-  const color = credits >= 5800 ? COLORS.accentGreen : credits >= 2000 ? COLORS.accentAmber : COLORS.accentRed;
-  const formatted = credits >= 1000 ? `${(credits / 1000).toFixed(1)}k` : `${credits}`;
-  return (
-    <div className="text-center text-[11px] tabular-nums" style={{ color, fontWeight: 500 }}>
-      ${formatted}
-    </div>
-  );
-}
-
 function AbilitiesCell({ abilities }: { abilities?: { q: boolean; e: boolean; c: boolean; x: boolean; ultCharge?: number } }) {
   const a = abilities ?? { q: false, e: false, c: false, x: false, ultCharge: 0 };
   const dot = (on: boolean, color: string) => (
     <div
-      className="h-[7px] w-[7px] rounded-[1px]"
-      style={{ background: on ? color : "rgba(255,255,255,0.1)" }}
+      className="h-[8px] w-[8px] rounded-[1px]"
+      style={{ background: on ? color : "rgba(255,255,255,0.08)" }}
     />
   );
-  // Ult: if fully charged show solid gold, else show faded gold proportional to charge
+  // Ult charge as up-chevrons (broadcast style): 2 chevrons total, fill based on charge
   const ultCharge = a.ultCharge ?? (a.x ? 1 : 0);
-  const ultColor = ultCharge >= 1
-    ? COLORS.accentGold
-    : `rgba(198,155,58,${0.15 + ultCharge * 0.6})`;
+  const chevColor = (filled: boolean) =>
+    filled ? COLORS.accentGold : "rgba(198,155,58,0.18)";
+  // 2 chevrons: bottom fills first (>=0.5), top fills second (>=1)
   return (
-    <div className="flex items-center justify-center gap-[2px]">
+    <div className="flex items-center justify-center gap-[3px]">
       {dot(a.q, COLORS.textPrimary)}
       {dot(a.e, COLORS.textPrimary)}
       {dot(a.c, COLORS.textPrimary)}
-      <div
-        className="h-[7px] w-[7px] rounded-[1px]"
-        style={{ background: ultColor }}
-      />
+      <div className="flex flex-col items-center gap-[1px]">
+        <svg width="8" height="4" viewBox="0 0 8 4">
+          <path d="M0 4 L4 0 L8 4" stroke={chevColor(ultCharge >= 1)} strokeWidth={1.5} fill="none" />
+        </svg>
+        <svg width="8" height="4" viewBox="0 0 8 4">
+          <path d="M0 4 L4 0 L8 4" stroke={chevColor(ultCharge >= 0.5)} strokeWidth={1.5} fill="none" />
+        </svg>
+      </div>
     </div>
+  );
+}
+
+// ── Broadcast-style cells ──
+
+const WEAPON_PRICE: Record<string, number> = {
+  Classic: 0, Shorty: 300, Frenzy: 450, Ghost: 500, Sheriff: 800,
+  Stinger: 1100, Spectre: 1600,
+  Bucky: 850, Judge: 1850,
+  Bulldog: 2050, Guardian: 2250, Phantom: 2900, Vandal: 2900,
+  Marshal: 1100, Outlaw: 2400, Operator: 4700,
+  Ares: 1600, Odin: 3200,
+};
+const SHIELD_PRICE: Record<"heavy" | "light" | "none", number> = {
+  heavy: 1000, light: 400, none: 0,
+};
+
+function loadoutCost(
+  weapon: string | undefined,
+  armor: "heavy" | "light" | "none" | undefined,
+  fromPickup?: boolean,
+): number {
+  const weaponCost = fromPickup ? 0 : (WEAPON_PRICE[weapon ?? ""] ?? 0);
+  return weaponCost + SHIELD_PRICE[armor ?? "none"];
+}
+
+function LoadoutCostCell({ cost }: { cost: number }) {
+  if (cost <= 0) {
+    return <div className="text-center text-[11px] tabular-nums" style={{ color: COLORS.textMuted, opacity: 0.35 }}>—</div>;
+  }
+  return (
+    <div className="text-center text-[12px] tabular-nums" style={{ color: COLORS.accentRed, fontWeight: 500 }}>
+      -{cost.toLocaleString("en-US")}
+    </div>
+  );
+}
+
+function BroadcastCredsCell({ credits, mirror }: { credits?: number; mirror?: boolean }) {
+  if (credits === undefined) {
+    return <div className="text-center text-[11px]" style={{ color: COLORS.textMuted, opacity: 0.35 }}>—</div>;
+  }
+  const color = credits >= 5800 ? COLORS.accentGreen : credits >= 2000 ? COLORS.accentAmber : COLORS.textPrimary;
+  const formatted = credits.toLocaleString("en-US");
+  return (
+    <div
+      className="flex items-center justify-center gap-1 text-[12px] tabular-nums"
+      style={{ color, fontWeight: 500 }}
+    >
+      {!mirror && (
+        <svg width="9" height="9" viewBox="0 0 10 10" style={{ flexShrink: 0 }}>
+          <circle cx="5" cy="5" r="4" fill="none" stroke={color} strokeWidth="1" />
+          <path d="M4 3.2 L4 6.8 M3.4 4 L4.6 4 M3.4 6 L4.6 6 M5.2 3.2 L6 5 L6 6.8 M6 3.2 L6 4.4" stroke={color} strokeWidth="0.8" fill="none" />
+        </svg>
+      )}
+      {formatted}
+      {mirror && (
+        <svg width="9" height="9" viewBox="0 0 10 10" style={{ flexShrink: 0 }}>
+          <circle cx="5" cy="5" r="4" fill="none" stroke={color} strokeWidth="1" />
+          <path d="M4 3.2 L4 6.8 M3.4 4 L4.6 4 M3.4 6 L4.6 6 M5.2 3.2 L6 5 L6 6.8 M6 3.2 L6 4.4" stroke={color} strokeWidth="0.8" fill="none" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
+function WeaponShieldCell({
+  weapon,
+  armor,
+  fromPickup,
+  mirror = false,
+}: {
+  weapon?: string;
+  armor?: "heavy" | "light" | "none";
+  fromPickup?: boolean;
+  mirror?: boolean;
+}) {
+  const shield = <ShieldCell armor={armor} />;
+  const weaponEl = <WeaponCell weapon={weapon} fromPickup={fromPickup} />;
+  return (
+    <div className="flex items-center justify-center gap-1.5">
+      {mirror ? <>{weaponEl}{shield}</> : <>{shield}{weaponEl}</>}
+    </div>
+  );
+}
+
+function UltReadyCell({ ultCharge, agentColor }: { ultCharge?: number; agentColor: string }) {
+  const charged = (ultCharge ?? 0) >= 1;
+  return (
+    <div className="flex items-center justify-center">
+      <svg width="14" height="14" viewBox="0 0 24 24" style={{ opacity: charged ? 1 : 0.16 }}>
+        <path
+          d="M12 1.5 L14.7 9 L22.5 9.4 L16.3 14.2 L18.6 22 L12 17.4 L5.4 22 L7.7 14.2 L1.5 9.4 L9.3 9 Z"
+          fill={charged ? agentColor : "rgba(255,255,255,0.4)"}
+          stroke={charged ? agentColor : "none"}
+          strokeWidth={1}
+        />
+      </svg>
+    </div>
+  );
+}
+
+function KDACell({ k, d, a, flashKey }: { k: number; d: number; a: number; flashKey: string | number }) {
+  return (
+    <motion.div
+      key={flashKey}
+      initial={{ opacity: 0.5 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.15 }}
+      className="text-center text-[13px] tabular-nums"
+      style={{ color: COLORS.textPrimary, fontWeight: 500 }}
+    >
+      <span>{k}</span>
+      <span style={{ color: COLORS.textMuted, opacity: 0.5 }}> / </span>
+      <span style={{ color: COLORS.textMuted }}>{d}</span>
+      <span style={{ color: COLORS.textMuted, opacity: 0.5 }}> / </span>
+      <span style={{ color: COLORS.textMuted }}>{a}</span>
+    </motion.div>
   );
 }
 
@@ -1160,158 +1270,77 @@ function ScoreboardTable({
   currentRound: number;
   mirror?: boolean;
 }) {
-  // Columns: agent | gap | IGN | K D A | ACS ADR KAST HS FK | Shield Weapon Creds Abils
-  const leftCols = "28px minmax(0,1fr) 34px 34px 34px 48px 44px 46px 40px 34px 26px 62px 56px 56px";
-  // Mirror = same columns reversed
-  const rightCols = "56px 56px 62px 26px 34px 40px 46px 44px 48px 34px 34px 34px minmax(0,1fr) 28px";
-
+  // Broadcast layout — columns go outside-in toward the center of the screen.
+  // Left team:  [Loadout] [Creds] [Abil] [Shld+Wep] [Ult] [Portrait] [Name] [KDA]
+  // Right team: [KDA] [Name] [Portrait] [Ult] [Wep+Shld] [Abil] [Creds] [Loadout]
+  const leftCols = "58px 70px 60px 92px 22px 32px minmax(0,1fr) 84px";
+  const rightCols = "84px minmax(0,1fr) 32px 22px 92px 60px 70px 58px";
   const gridCols = mirror ? rightCols : leftCols;
-
-  const muted = { color: COLORS.textMuted } as const;
-  const cellCls = "text-center text-[11px]";
-  const headerCells = [
-    <div key="player" className={`text-[11px] ${mirror ? "text-right" : "text-left"}`} style={muted}>Player</div>,
-    <div key="k" className={cellCls} style={muted}>K</div>,
-    <div key="d" className={cellCls} style={muted}>D</div>,
-    <div key="a" className={cellCls} style={muted}>A</div>,
-    <div key="acs" className={cellCls} style={muted}>ACS</div>,
-    <div key="adr" className={cellCls} style={muted}>ADR</div>,
-    <div key="kast" className={cellCls} style={muted}>KAST</div>,
-    <div key="hs" className={cellCls} style={muted}>HS%</div>,
-    <div key="fk" className={cellCls} style={muted}>FK</div>,
-    <div key="shield" className={cellCls} style={muted}>Shld</div>,
-    <div key="weapon" className={cellCls} style={muted}>Weapon</div>,
-    <div key="creds" className={cellCls} style={muted}>Creds</div>,
-    <div key="abil" className={cellCls} style={muted}>Abils</div>,
-  ];
 
   return (
     <div>
-      {/* Column headers */}
-      <div
-        className="grid items-center px-4 py-1.5"
-        style={{
-          gridTemplateColumns: gridCols,
-          borderBottom: `1px solid ${COLORS.borderFaint}`,
-        }}
-      >
-        {mirror ? (
-          <>
-            <div key="sp-abil" className={cellCls} style={muted}>Abils</div>
-            <div key="sp-creds" className={cellCls} style={muted}>Creds</div>
-            <div key="sp-weapon" className={cellCls} style={muted}>Weapon</div>
-            <div key="sp-shield" className={cellCls} style={muted}>Shld</div>
-            <div key="sp-fk" className={cellCls} style={muted}>FK</div>
-            <div key="sp-hs" className={cellCls} style={muted}>HS%</div>
-            <div key="sp-kast" className={cellCls} style={muted}>KAST</div>
-            <div key="sp-adr" className={cellCls} style={muted}>ADR</div>
-            <div key="sp-acs" className={cellCls} style={muted}>ACS</div>
-            <div key="sp-a" className={cellCls} style={muted}>A</div>
-            <div key="sp-d" className={cellCls} style={muted}>D</div>
-            <div key="sp-k" className={cellCls} style={muted}>K</div>
-            <div key="sp-p" className="text-right text-[11px]" style={muted}>Player</div>
-            <div />
-          </>
-        ) : (
-          <>
-            <div />
-            {headerCells}
-          </>
-        )}
-      </div>
-
-      {/* Player rows */}
+      {/* Player rows — no column headers (broadcast style) */}
       {players.map((player, i) => {
         const s = stats.find((x) => x.ign === player.ign) ?? {
           ign: player.ign,
           k: 0, d: 0, a: 0, acs: 0, adr: 0, kast: 0, hs: 0, fk: 0,
         };
         const isMvp = mvpIgn === player.ign;
-        const kColor = s.k > s.d ? COLORS.accentGreen : s.k < s.d ? COLORS.accentRed : undefined;
-        const adrColor = s.adr > 130 ? COLORS.accentGreen : undefined;
-        const kastColor = s.kast >= 80 ? COLORS.accentGreen : s.kast < 65 ? COLORS.accentRed : undefined;
-        const fkColor = s.fk >= 3 ? COLORS.accentGreen : COLORS.textMuted;
-        const flashKey = `${currentRound}-${s.k}-${s.d}-${s.acs}`;
+        const flashKey = `${currentRound}-${s.k}-${s.d}-${s.a}`;
+        const cost = loadoutCost(s.weapon, s.armor, s.fromPickup);
 
-        // ── Loadout cells ──
-        const loadoutShield = <ShieldCell armor={s.armor} />;
-        const loadoutWeapon = <WeaponCell weapon={s.weapon} fromPickup={s.fromPickup} />;
-        const loadoutCreds = <CredsCell credits={s.credits} />;
-        const loadoutAbilities = <AbilitiesCell abilities={s.abilities} />;
+        const loadoutEl = <LoadoutCostCell cost={cost} />;
+        const credsEl = <BroadcastCredsCell credits={s.credits} mirror={mirror} />;
+        const abilEl = <AbilitiesCell abilities={s.abilities} />;
+        const wepShEl = (
+          <WeaponShieldCell
+            weapon={s.weapon}
+            armor={s.armor}
+            fromPickup={s.fromPickup}
+            mirror={mirror}
+          />
+        );
+        const ultEl = <UltReadyCell ultCharge={s.abilities?.ultCharge} agentColor={player.agentColor} />;
 
-        const agentBox = player.agentPortraitUrl ? (
+        const portraitEl = player.agentPortraitUrl ? (
           <div
-            className="h-7 w-7 shrink-0 overflow-hidden rounded-[3px]"
-            style={{ background: "rgba(255,255,255,0.04)" }}
+            className="h-8 w-8 shrink-0 overflow-hidden rounded-[3px]"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              boxShadow: isMvp ? `0 0 0 1px ${COLORS.accentGold}55` : "none",
+            }}
           >
             <img src={player.agentPortraitUrl} alt={player.agent} className="h-full w-full object-cover" />
           </div>
         ) : (
           <div
-            className="flex h-7 w-7 items-center justify-center rounded-[3px]"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[3px]"
             style={{ background: player.agentColor }}
           >
             <span className="text-[10px] font-medium text-white">{player.agent.slice(0, 2).toUpperCase()}</span>
           </div>
         );
 
-        const ignBlock = (
-          <div className={`flex min-w-0 flex-col ${mirror ? "items-end pr-3" : "pl-3"}`}>
-            <div className="flex items-center gap-1.5">
-              {mirror && isMvp && (
-                <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: COLORS.accentGold }} />
-              )}
-              <span className="truncate text-[14px] font-medium" style={{ color: COLORS.textPrimary }}>
-                {player.ign}
-              </span>
-              {!mirror && isMvp && (
-                <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: COLORS.accentGold }} />
-              )}
-            </div>
-            <div className="text-[11px]" style={{ color: COLORS.textMuted }}>
-              {player.agent}
-            </div>
+        const nameEl = (
+          <div className={`flex min-w-0 items-center gap-1.5 ${mirror ? "justify-end pr-2" : "pl-2"}`}>
+            {mirror && isMvp && (
+              <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: COLORS.accentGold }} />
+            )}
+            <span className="truncate text-[14px] font-medium" style={{ color: COLORS.textPrimary }}>
+              {player.ign}
+            </span>
+            {!mirror && isMvp && (
+              <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: COLORS.accentGold }} />
+            )}
           </div>
         );
 
-        const statCells = (
-          <>
-            <StatCell value={s.k} color={kColor} bold flashKey={flashKey} />
-            <StatCell value={s.d} flashKey={flashKey} />
-            <StatCell value={s.a} flashKey={flashKey} />
-            <StatCell value={s.acs} color={COLORS.accentGold} bold flashKey={flashKey} />
-            <StatCell value={s.adr} color={adrColor} flashKey={flashKey} />
-            <StatCell value={`${s.kast}%`} color={kastColor} flashKey={flashKey} />
-            <StatCell value={`${s.hs}%`} flashKey={flashKey} />
-            <StatCell value={s.fk} color={fkColor} flashKey={flashKey} />
-            {loadoutShield}
-            {loadoutWeapon}
-            {loadoutCreds}
-            {loadoutAbilities}
-          </>
-        );
-
-        const reversedStatCells = (
-          <>
-            {loadoutAbilities}
-            {loadoutCreds}
-            {loadoutWeapon}
-            {loadoutShield}
-            <StatCell value={s.fk} color={fkColor} flashKey={flashKey} />
-            <StatCell value={`${s.hs}%`} flashKey={flashKey} />
-            <StatCell value={`${s.kast}%`} color={kastColor} flashKey={flashKey} />
-            <StatCell value={s.adr} color={adrColor} flashKey={flashKey} />
-            <StatCell value={s.acs} color={COLORS.accentGold} bold flashKey={flashKey} />
-            <StatCell value={s.a} flashKey={flashKey} />
-            <StatCell value={s.d} flashKey={flashKey} />
-            <StatCell value={s.k} color={kColor} bold flashKey={flashKey} />
-          </>
-        );
+        const kdaEl = <KDACell k={s.k} d={s.d} a={s.a} flashKey={flashKey} />;
 
         return (
           <div
             key={player.ign + i}
-            className="grid items-center px-4 py-2 transition-colors"
+            className="grid items-center px-4 py-2.5 transition-colors"
             style={{
               gridTemplateColumns: gridCols,
               borderBottom: `1px solid ${COLORS.borderFaint}`,
@@ -1326,15 +1355,25 @@ function ScoreboardTable({
           >
             {mirror ? (
               <>
-                {reversedStatCells}
-                {ignBlock}
-                {agentBox}
+                {kdaEl}
+                {nameEl}
+                {portraitEl}
+                {ultEl}
+                {wepShEl}
+                {abilEl}
+                {credsEl}
+                {loadoutEl}
               </>
             ) : (
               <>
-                {agentBox}
-                {ignBlock}
-                {statCells}
+                {loadoutEl}
+                {credsEl}
+                {abilEl}
+                {wepShEl}
+                {ultEl}
+                {portraitEl}
+                {nameEl}
+                {kdaEl}
               </>
             )}
           </div>
