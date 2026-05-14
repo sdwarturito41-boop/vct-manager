@@ -5,6 +5,8 @@ import { MAP_POOLS, STAGE_MAP_POOL } from "@/constants/maps";
 import { applyPatchToMeta } from "@/constants/meta";
 import { VCT_TEAMS } from "@/constants/teams";
 import { allocateSeasonBudget } from "@/server/finance/budgets";
+import { applyOffSeasonFinancials } from "@/server/finance/seasonRollover";
+import { stageStartDay } from "@/constants/vct-calendar";
 
 /**
  * VCT 2026 Kickoff — Triple Elimination (31 matches per region)
@@ -167,6 +169,15 @@ function assignDaysWeek(
   });
 }
 
+/**
+ * Returns the absolute day number where game-week `W` begins. Used by
+ * VCT_CALENDAR-aware schedulers — when a stage anchors at Day 20 (week 3),
+ * we want subsequent rounds to start at week 3, 4, 5… relative to that.
+ */
+function weekFromAbsoluteDay(absoluteDay: number): number {
+  return Math.max(1, Math.ceil(absoluteDay / 7));
+}
+
 interface WL { winner: string; loser: string }
 
 async function getResults(prisma: PrismaClient, saveId: string, stageId: string, season: number, region: Region): Promise<WL[]> {
@@ -298,7 +309,11 @@ export async function initializeSeasonForTeam(
     const seed = KICKOFF_SEEDS[region];
     const pairs: [string, string][] = seed.round1Matchups.map(([a, b]) => [nameToId.get(a)!, nameToId.get(b)!]);
     const data = pairs.filter(([a,b]) => a && b).map(([team1Id, team2Id]) => ({ team1Id, team2Id, stageId: "KICKOFF_UB_R1", format: "BO3" as MatchFormat }));
-    const scheduled = assignDaysWeek(data, region, 1, 1);
+    // VCT calendar anchor — Kickoff opens Jan 20 (= Day 20, game-week 3)
+    // for EMEA, 1 week earlier for the other regions.
+    const calendarStart = stageStartDay("KICKOFF", region) ?? 1;
+    const kickoffWeek = weekFromAbsoluteDay(calendarStart);
+    const scheduled = assignDaysWeek(data, region, kickoffWeek, 1);
     if (scheduled.length > 0) await prisma.match.createMany({ data: scheduled });
     totalMatches += pairs.length;
   }
@@ -751,12 +766,21 @@ export async function initializeMasters(
 
   if (pairs.length === 0) return { matchesScheduled: 0 };
 
-  // Find last Kickoff match day to schedule after it
+  // Anchor on the VCT calendar (28 Feb / 6 Jun in 2026). Fall back to "right
+  // after the qualifying stage's last match" when no calendar entry exists.
   const lastKickoffMatch = await prisma.match.findFirst({
     where: { saveId, season: seasonNumber, stageId: { startsWith: qualifyingStagePrefix } },
     orderBy: { day: "desc" },
   });
-  const afterDay = lastKickoffMatch?.day ?? 0;
+  const fallbackAfter = lastKickoffMatch?.day ?? 0;
+  // International events use EMEA as the canonical anchor (regionOffsetDays
+  // is empty for MASTERS_* / CHAMPIONS, so all regions hit the same day).
+  const calendarStart = stageStartDay(stagePrefix, "EMEA");
+  // -1 because `createMatchesOnInternationalSlots(.., afterDay)` schedules
+  // matches starting at afterDay+1.
+  const afterDay = calendarStart != null
+    ? Math.max(calendarStart - 1, fallbackAfter)
+    : fallbackAfter;
 
   await createMatchesOnInternationalSlots(
     prisma, saveId, pairs, `${stagePrefix}_SWISS_R1`, afterDay, seasonNumber,
@@ -1404,16 +1428,26 @@ export async function initializeRegionalStage(
   });
   if (existing > 0) return { matchesScheduled: 0 };
 
+  // Anchor on the real VCT calendar (Apr 1 / Jul 9 for Stage 1/2 in 2026).
+  // Fallback to "first week after the last scheduled match" only when no
+  // calendar window is defined for this stage.
   const lastMatch = await prisma.match.findFirst({
     where: { saveId, season: seasonNumber },
     orderBy: { day: "desc" },
   });
   const afterDay = lastMatch?.day ?? 0;
-  const firstWeekStart = Math.ceil(afterDay / 7) * 7 + 1;
+  const calendarFallbackStart = Math.ceil(afterDay / 7) * 7 + 1;
 
   let totalMatches = 0;
 
   for (const region of ALL_REGIONS) {
+    // Per-region calendar anchor — Americas/Pacific/China start 1w earlier
+    // than EMEA so EMEA always finishes last, mirroring real VCT scheduling.
+    const calendarStart = stageStartDay(stageId, region);
+    const firstWeekStart = calendarStart != null
+      ? Math.max(calendarStart, calendarFallbackStart)
+      : calendarFallbackStart;
+
     const teams = await prisma.team.findMany({
       where: { saveId, region },
       select: { id: true, prestige: true },
@@ -1863,11 +1897,17 @@ export async function initializeInternationalEvent(
     pairs.push([sorted[i].teamId, sorted[sorted.length - 1 - i].teamId]);
   }
 
+  // VCT calendar anchor (Champions Shanghai = Day 280 / Sep-Oct in 2026).
+  // Fallback: schedule right after the previous stage's last match.
   const lastMatch = await prisma.match.findFirst({
     where: { saveId, season: seasonNumber },
     orderBy: { day: "desc" },
   });
-  const afterDay = lastMatch?.day ?? 0;
+  const fallbackAfter = lastMatch?.day ?? 0;
+  const calendarStart = stageStartDay(stagePrefix, "EMEA");
+  const afterDay = calendarStart != null
+    ? Math.max(calendarStart - 1, fallbackAfter)
+    : fallbackAfter;
 
   await createMatchesOnInternationalSlots(
     prisma, saveId, pairs, `${stagePrefix}_SWISS_R1`, afterDay, seasonNumber,
@@ -2067,6 +2107,11 @@ export async function rollOffSeason(
     rookiesCreated++;
   }
 
+  // 3b) Financial rollover — recompute bundle revenue from season results
+  //     + apply investor injection. Must run BEFORE the wins/losses reset
+  //     below (the recompute reads them).
+  await applyOffSeasonFinancials(prisma, saveId, currentSeasonNumber);
+
   // 4) Reset team stats (within this save)
   await prisma.team.updateMany({
     where: { saveId },
@@ -2132,7 +2177,9 @@ export async function rollOffSeason(
       stageId: "KICKOFF_UB_R1",
       format: "BO3" as MatchFormat,
     }));
-    const scheduled = assignDaysWeek(data, region, 1, newSeasonNumber);
+    const calendarStart = stageStartDay("KICKOFF", region) ?? 1;
+    const kickoffWeek = weekFromAbsoluteDay(calendarStart);
+    const scheduled = assignDaysWeek(data, region, kickoffWeek, newSeasonNumber);
     if (scheduled.length > 0) {
       await prisma.match.createMany({ data: scheduled });
       totalScheduled += scheduled.length;
@@ -2227,6 +2274,7 @@ export async function initializeSaveWorld(
             transferBudget: c.transferBudget,
             wageBudgetSeason: c.wageBudgetSeason,
             seasonStartBudget: c.budget + c.transferBudget + c.wageBudgetSeason,
+            bundleRevenueAnnual: c.bundleRevenueAnnual ?? 0,
           };
         }
         const split = allocateSeasonBudget({ totalCapital: t.budget });
@@ -2242,6 +2290,7 @@ export async function initializeSaveWorld(
           transferBudget: split.transferBudget,
           wageBudgetSeason: split.wageBudgetSeason,
           seasonStartBudget: split.seasonStartBudget,
+          bundleRevenueAnnual: c?.bundleRevenueAnnual ?? 0,
         };
       }),
     });
@@ -2377,7 +2426,9 @@ export async function initializeSaveWorld(
       stageId: "KICKOFF_UB_R1",
       format: "BO3" as MatchFormat,
     }));
-    const scheduled = assignDaysWeek(data, region, 1, 1);
+    const calendarStart = stageStartDay("KICKOFF", region) ?? 1;
+    const kickoffWeek = weekFromAbsoluteDay(calendarStart);
+    const scheduled = assignDaysWeek(data, region, kickoffWeek, 1);
     if (scheduled.length > 0) {
       await prisma.match.createMany({ data: scheduled });
       totalMatches += scheduled.length;

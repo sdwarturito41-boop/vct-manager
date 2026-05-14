@@ -25,7 +25,12 @@ import {
   totalAvailable,
 } from "@/server/finance/budgets";
 import { reconcileDebt } from "@/server/finance/investor";
-import { computeWeeklyRevenue } from "@/server/finance/revenue";
+import {
+  computeWeeklyRevenue,
+  computeQuarterlyBundle,
+  quarterIndex,
+  isQuarterStartWeek,
+} from "@/server/finance/revenue";
 import { computeWeeklyOperationalCost } from "@/server/finance/operations";
 import { SCOUTING_REVEAL_WEEKS } from "@/server/routers/scouting";
 import { runAiOfferResolutions } from "./transfer";
@@ -855,6 +860,38 @@ export const seasonRouter = router({
 
       // V4.1 — weekly snapshot of player stats for historical variance
       await snapshotPlayerStats(ctx.prisma, ctx.save.id, newWeek, season.number);
+
+      // ── Riot in-game bundle quarterly payout ──
+      // Fires on weeks 1 / 14 / 27 / 40. Each team gets bundleRevenueAnnual/4,
+      // split 35% transferBudget / 65% operational. Tracking via
+      // `lastBundleQuarter` ensures idempotency: even if a quarter Monday is
+      // advanced past (e.g. multi-day advance), it pays out exactly once.
+      if (isQuarterStartWeek(newWeek)) {
+        const qIdx = quarterIndex(season.number, newWeek);
+        const eligibleTeams = await ctx.prisma.team.findMany({
+          where: {
+            saveId: ctx.save.id,
+            bundleRevenueAnnual: { gt: 0 },
+            lastBundleQuarter: { lt: qIdx },
+          },
+          select: { id: true, bundleRevenueAnnual: true },
+        });
+        if (eligibleTeams.length > 0) {
+          await ctx.prisma.$transaction(
+            eligibleTeams.map((t) => {
+              const payout = computeQuarterlyBundle(t.bundleRevenueAnnual);
+              return ctx.prisma.team.update({
+                where: { id: t.id },
+                data: {
+                  transferBudget: { increment: payout.toTransfer },
+                  budget: { increment: payout.toOperational },
+                  lastBundleQuarter: qIdx,
+                },
+              });
+            }),
+          );
+        }
+      }
 
       const before = userTeam
         ? await ctx.prisma.transferOffer.findMany({

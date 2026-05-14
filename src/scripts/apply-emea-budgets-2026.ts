@@ -23,6 +23,7 @@ async function main() {
   for (const def of emea) {
     const transfer = def.transferBudget!;
     const wage = def.wageBudgetSeason!;
+    const bundle = def.bundleRevenueAnnual ?? 0;
     const total = def.budget + transfer + wage;
     const res = await prisma.team.updateMany({
       where: { name: def.name, region: "EMEA" },
@@ -31,6 +32,7 @@ async function main() {
         transferBudget: transfer,
         wageBudgetSeason: wage,
         seasonStartBudget: total,
+        bundleRevenueAnnual: bundle,
       },
     });
     console.log(
@@ -38,7 +40,8 @@ async function main() {
         `[op $${def.budget.toLocaleString()} · ` +
         `transfer $${transfer.toLocaleString()} · ` +
         `wage $${wage.toLocaleString()} · ` +
-        `total $${total.toLocaleString()}]`,
+        `total $${total.toLocaleString()} · ` +
+        `bundle $${bundle.toLocaleString()}/yr]`,
     );
   }
 

@@ -387,10 +387,14 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
       }),
     );
     if (offer.toTeamId) {
+      // Seller proceeds → transferBudget (the org can immediately reinvest
+      // in a replacement signing, not bury the cash in operational). Real
+      // VCT orgs explicitly route sale proceeds back into the recruitment
+      // envelope. Cash prize + sponsors continue to land in operational.
       updates.push(
         ctx.prisma.team.update({
           where: { id: offer.toTeamId },
-          data: { budget: { increment: offer.transferFee } },
+          data: { transferBudget: { increment: offer.transferFee } },
         }),
       );
     }

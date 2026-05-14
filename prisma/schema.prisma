@@ -93,6 +93,15 @@ model Team {
   //   bootcampWeeksLeft > 0 → team is in intensive prep (Masters week, etc).
   //   Costs $5k/week extra, grants prep boost to mapPrep via training mechanic.
   bootcampWeeksLeft Int @default(0)
+  // Riot in-game bundle revenue — quarterly. Reflects fan engagement. The
+  // value here is the ANNUAL projection; 25% is paid out at each quarter
+  // boundary (split 35% → transferBudget, 65% → operational). Recomputed at
+  // end of season based on competitive results (reached Masters / wins /
+  // eliminations) and roster star power.
+  bundleRevenueAnnual Int @default(0)
+  // Absolute quarter index already paid out (season*4 + quarter, where
+  // quarter is 1-4 per season). Prevents double-paying within a quarter.
+  lastBundleQuarter   Int @default(0)
   players        Player[]
   skillAim         Int       @default(0)
   skillUtility     Int       @default(0)
