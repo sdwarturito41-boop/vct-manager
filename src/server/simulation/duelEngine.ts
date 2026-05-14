@@ -73,6 +73,15 @@ interface PlayerState {
   consecutiveDuelsWon: number; // Resets on any duel loss
   consecutiveDuelsLost: number; // Resets on any duel win
   tiltResistance: number; // 0.35..0.95
+  clutchRating: number;  // 0..1 — boost applied in 1vN situations
+  /** Current ultimate points accumulated this map (resets at map start). */
+  ultPoints: number;
+  /** Points required to activate this agent's ultimate (7 default, 8 for heavy ults). */
+  ultMax: number;
+  /** Whether the player has popped their ult during the current round. */
+  isUsingUltThisRound: boolean;
+  /** When the player pops a duel-type ult, the +mechEdge bonus for their own duels this round. */
+  ultMechEdgeThisRound: number;
   total: RoundStats;
   perRound: RoundStats[];
 }
@@ -115,6 +124,17 @@ interface TeamRuntime {
    * affect duels.
    */
   pairs?: Map<string, number>;
+  /** Cached map attack bias — same for both teams in the same match. */
+  mapAtkBias: number;
+  // ── Team-level ult effects active THIS ROUND ──
+  /** Info-ult active (Sova/Fade/Cypher/Skye): infoEdge across all team duels. */
+  ultInfoEdge: number;
+  /** Zone control (Viper/Astra/Harbor/Brimstone): positional/ability edge in exec+postplant. */
+  ultZoneEdge: number;
+  /** Lockdown (Killjoy/Breach/Tejo/Deadlock/Vyse/Kayo): area-denial edge any phase. */
+  ultLockdownEdge: number;
+  /** Ability-edge component of zone/lockdown ults (separate from positional). */
+  ultAbilityEdge: number;
 }
 
 export interface RoundEventDetail {
@@ -477,6 +497,16 @@ function buildTeamRuntime(
     const kastBonus = clamp((p.kast - 70) / 200, -0.08, 0.08); // ±8% based on KAST
     const tiltResistance = clamp(base + kastBonus, 0.35, 0.95);
 
+    // Clutch rating — how well a player performs as the last alive (1vN).
+    // Derived from KAST consistency + role temperament. Duelists / Flex tend
+    // to thrive in clutch, Controllers / Sentinels less so on average. Boost
+    // is applied in `duelWinProb` when attacker or defender is solo.
+    const clutchKast = clamp((p.kast - 70) / 50, -0.4, 0.6);
+    const clutchRoleBonus: Record<string, number> = {
+      Duelist: 0.30, Flex: 0.25, IGL: 0.20, Initiator: 0.10, Sentinel: 0.05, Controller: -0.05,
+    };
+    const clutchRating = clamp(0.5 + clutchKast + (clutchRoleBonus[p.role] ?? 0.10), 0, 1);
+
     // Carry over 50% of prior-map hotness (confidence across maps in a series).
     // Streaks always reset between maps — they're a "right now" signal.
     // Carryover between maps in a series. Old 50% retention with [0.9, 1.10]
@@ -500,6 +530,11 @@ function buildTeamRuntime(
       consecutiveDuelsWon: 0,
       consecutiveDuelsLost: 0,
       tiltResistance,
+      clutchRating,
+      ultPoints: 0,
+      ultMax: ULT_MAX_BY_AGENT[agent] ?? 7,
+      isUsingUltThisRound: false,
+      ultMechEdgeThisRound: 0,
       total: { k: 0, d: 0, a: 0, fk: 0, fd: 0, damage: 0 },
       perRound: [],
     };
@@ -539,8 +574,85 @@ function buildTeamRuntime(
     roundEntryId: null,
     awperId,
     inSaveMode: false,
+    mapAtkBias: getMapProfile(mapName).attackBias,
+    ultInfoEdge: 0,
+    ultZoneEdge: 0,
+    ultLockdownEdge: 0,
+    ultAbilityEdge: 0,
   };
 }
+
+/**
+ * Ultimate point caps per agent (mirrors real Valorant). Defaults to 7 if the
+ * agent isn't catalogued. The heavier ults (Sage rez, Killjoy lockdown, Viper
+ * pit, Raze nade, Breach quake, Chamber sniper, Deadlock annihilation) sit at 8.
+ */
+const ULT_MAX_BY_AGENT: Record<string, number> = {
+  Sage: 8, Killjoy: 8, Viper: 8, Raze: 8, Breach: 8, Chamber: 8, Deadlock: 8,
+  Phoenix: 6, Reyna: 6,
+  // All others default to 7
+};
+
+/**
+ * Categorized ultimate effects. Real Valorant ults split into a handful of
+ * archetypes that should each affect duels differently:
+ *   - duel        : booster for the user's own duels (Jett, Reyna, Raze nade)
+ *   - info        : team-wide info advantage for the round (Sova, Fade, Cypher)
+ *   - zone_control: defenders gain positional hold or attackers gain area
+ *                   (Viper pit, Astra divide, Harbor reckoning, Brim strike)
+ *   - lockdown    : forced site abandon / mass-CC (Killjoy, Breach, Tejo,
+ *                   Deadlock); huge but slow
+ *
+ * `mechEdge` is per-duel boost when the user is in the duel. The team-level
+ * fields propagate into TeamRuntime when the ult fires so EVERY duel of that
+ * team gets the bonus where applicable.
+ */
+type UltType = "duel" | "info" | "zone_control" | "lockdown" | "revive";
+interface UltConfig {
+  type: UltType;
+  mechEdge?: number;     // applied only to duels the user is in
+  infoEdge?: number;     // team-wide, applies all phases
+  positionalEdge?: number; // team-wide, applies in execution + postplant
+  abilityEdge?: number;  // team-wide ability boost (lockdown, AOE forcing)
+}
+const ULT_CONFIG: Record<string, UltConfig> = {
+  // Duel ults — entry frags & 1v1 finishers
+  Jett:     { type: "duel", mechEdge: 0.22 },
+  Reyna:    { type: "duel", mechEdge: 0.20 },
+  Raze:     { type: "duel", mechEdge: 0.18 },
+  Phoenix:  { type: "duel", mechEdge: 0.16 },
+  Chamber:  { type: "duel", mechEdge: 0.17 },
+  Neon:     { type: "duel", mechEdge: 0.15 },
+  Yoru:     { type: "duel", mechEdge: 0.14 },
+  Iso:      { type: "duel", mechEdge: 0.16 },
+  Waylay:   { type: "duel", mechEdge: 0.17 },
+  Clove:    { type: "duel", mechEdge: 0.12 }, // self-revive mode
+
+  // Revive — special case, handled inline mid-round
+  Sage:     { type: "revive" },
+
+  // Info ults — guaranteed scans
+  Sova:     { type: "info", infoEdge: 0.15 },
+  Fade:     { type: "info", infoEdge: 0.12 },
+  Cypher:   { type: "info", infoEdge: 0.18 }, // neural theft = full reveal
+  Skye:     { type: "info", infoEdge: 0.10 },
+
+  // Zone control — area denial / massive positional advantage
+  Viper:    { type: "zone_control", positionalEdge: 0.15 },
+  Astra:    { type: "zone_control", positionalEdge: 0.10, abilityEdge: 0.05 },
+  Brimstone:{ type: "zone_control", abilityEdge: 0.12 },
+  Omen:     { type: "zone_control", positionalEdge: 0.10 }, // From the Shadows = global repositioning
+
+  // Lockdown — mass CC / forced vacate
+  Killjoy:  { type: "lockdown", positionalEdge: 0.18, infoEdge: 0.05 },
+  Breach:   { type: "lockdown", abilityEdge: 0.15 },
+  Tejo:     { type: "lockdown", abilityEdge: 0.13 },
+  Deadlock: { type: "lockdown", abilityEdge: 0.12 },
+  Vyse:     { type: "lockdown", abilityEdge: 0.10 },
+  Kayo:     { type: "lockdown", abilityEdge: 0.13 }, // null/cmd suppress = mass disable
+  Gekko:    { type: "lockdown", abilityEdge: 0.11 }, // thrash area denial creature
+  Harbor:   { type: "lockdown", positionalEdge: 0.14 }, // Reckoning forces vacate
+};
 
 function defaultAgentForRole(role: Role): string {
   switch (role) {
@@ -999,6 +1111,14 @@ interface DuelContext {
   attackerHasInfo: boolean;
   defenderHasAngle: boolean;
   abilityBonus: number;
+  /**
+   * Map ATK/DEF win-rate skew baked into each duel. Positive = ATK-favored
+   * map (Haven, Sunset), negative = DEF-favored (Bind, Ascent). Applied at
+   * ~0.5× scale per duel so cumulative round-level bias matches mapProfile
+   * intent (~3-5% round win-rate swing on the most lopsided maps).
+   * Set negative for postplant retake duels (defender becomes the entry).
+   */
+  mapAtkBias?: number;
 }
 
 /** Key-building helper shared with the backend relationships module. */
@@ -1083,17 +1203,61 @@ function duelWinProb(
   const defRelation = relationEdgeForSide(defender.input.id, defenderTeam, defenderAliveMates);
   const relationEdge = attRelation - defRelation;
 
-  const raw = 0.5 + mechanicalEdge + tiltEdge + positionalEdge + infoEdge + agentInDuelEdge + agentInfoEdge + agentPhaseBonus + agentDefBonus + weaponEdge + armorEdge + abilityEdge + relationEdge + luck;
+  // Map ATK/DEF asymmetry — Haven / Sunset / Lotus favor attackers, Bind /
+  // Pearl / Ascent favor defenders. Scaled to ~half the raw bias so that ~5
+  // duels per round sum to roughly the map's real-world atk win-rate skew.
+  const mapBiasEdge = (ctx.mapAtkBias ?? 0) * 0.5;
+
+  // Clutch factor — solo attackers and solo defenders get a +/- swing based
+  // on their clutchRating. A 1.0-rated Aspas/Zekken type gets +5%; a 0.0
+  // sentinel-anchor type gets -5%. Centered on 0.5 so most players are
+  // neutral. The boost helps the lone clutcher in their duel.
+  const attSolo = (attackerAliveMates?.size ?? 999) === 1;
+  const defSolo = (defenderAliveMates?.size ?? 999) === 1;
+  const attClutchEdge = attSolo ? (attacker.clutchRating - 0.5) * 0.10 : 0;
+  const defClutchEdge = defSolo ? -(defender.clutchRating - 0.5) * 0.10 : 0;
+  const clutchEdge = attClutchEdge + defClutchEdge;
+
+  // Ultimate impact — categorized per agent archetype.
+  //   - Duel ults (Jett/Reyna/Raze…): boost only when the user is in the duel
+  //   - Info ults (Sova/Fade/Cypher): boost ALL teammate duels this round
+  //   - Zone control (Viper/Astra/Brim/Harbor): positional + ability edge in
+  //     exec / postplant phases for the user's team
+  //   - Lockdown (Killjoy/Breach/Tejo/Deadlock/Vyse/Kayo): persistent area
+  //     denial edge any phase for the user's team
+  const zonePhaseRelevant = ctx.phase === "execution" || ctx.phase === "postplant";
+
+  const attUltDuel = attacker.ultMechEdgeThisRound;
+  const defUltDuel = defender.ultMechEdgeThisRound;
+
+  const attTeamUltInfo = attackerTeam?.ultInfoEdge ?? 0;
+  const defTeamUltInfo = defenderTeam?.ultInfoEdge ?? 0;
+
+  const attTeamUltZone = zonePhaseRelevant ? (attackerTeam?.ultZoneEdge ?? 0) : 0;
+  const defTeamUltZone = zonePhaseRelevant ? (defenderTeam?.ultZoneEdge ?? 0) : 0;
+
+  const attTeamUltAbility = (attackerTeam?.ultAbilityEdge ?? 0);
+  const defTeamUltAbility = (defenderTeam?.ultAbilityEdge ?? 0);
+
+  const attTeamUltLockdown = (attackerTeam?.ultLockdownEdge ?? 0);
+  const defTeamUltLockdown = (defenderTeam?.ultLockdownEdge ?? 0);
+
+  const ultEdge =
+    (attUltDuel + attTeamUltInfo + attTeamUltZone + attTeamUltAbility * 0.7 + attTeamUltLockdown * 0.6) -
+    (defUltDuel + defTeamUltInfo + defTeamUltZone + defTeamUltAbility * 0.7 + defTeamUltLockdown * 0.6);
+
+  const raw = 0.5 + mechanicalEdge + tiltEdge + positionalEdge + infoEdge + agentInDuelEdge + agentInfoEdge + agentPhaseBonus + agentDefBonus + weaponEdge + armorEdge + abilityEdge + relationEdge + mapBiasEdge + clutchEdge + ultEdge + luck;
   // Tighter clamp — no duel is ever a guaranteed win
   return clamp(raw, 0.15, 0.85);
 }
 
 function getWeaponEdge(att: Economy, def: Economy): number {
-  // 0.10 per tier — a Vandal vs pistol (2 tier delta) = ±0.20, which pushes
-  // the duel to roughly 70/30 before aim skill. That matches real anti-eco dynamics
-  // where a full-buy against pistols wins the round ~80% of the time, but individual
-  // duels are still losable (crosshair placement, headshots).
-  return (att.weaponTier - def.weaponTier) * 0.10;
+  // 0.06 per tier (was 0.10) — at 0.10 a good pistol player couldn't kill a
+  // rifle even with positional advantage. At 0.06, Vandal vs Classic = ±12%
+  // which keeps anti-eco rounds favored without making them deterministic.
+  // The round-level win rate of anti-eco still ends up ~75-80% due to
+  // economy snowball and multiple duels per round.
+  return (att.weaponTier - def.weaponTier) * 0.06;
 }
 
 // ──────────────────────────────────────────────────────────
@@ -1506,6 +1670,63 @@ function simulateClutch(
   }
 }
 
+/**
+ * Sage's ultimate is the only revive in the roster — it can flip a 4v5 back
+ * to 5v5 mid-round. Called after every duel resolution to check whether a
+ * ready Sage on either team should pop her ult to bring back a fallen
+ * teammate. Trigger conditions:
+ *   - Sage is on the team, alive, has ult ready, and hasn't ulted this round
+ *   - Her team is at a numeric disadvantage (fewer alive than the opponent)
+ *   - At least one teammate is dead and can be revived
+ *
+ * The revived player rejoins the alive set on Classic + no shield (their
+ * gear is lost at death). They also pick up a small one-round duel boost
+ * to represent the "fresh life" surge.
+ */
+function maybeSageRevive(
+  team: TeamRuntime,
+  ourAlive: Set<string>,
+  theirAlive: Set<string>,
+): void {
+  const sage = team.players.find(
+    (p) =>
+      p.agent === "Sage" &&
+      ourAlive.has(p.input.id) &&
+      p.ultPoints >= p.ultMax &&
+      !p.isUsingUltThisRound,
+  );
+  if (!sage) return;
+
+  // Only triggers when at a numeric disadvantage. A Sage with ult ready won't
+  // pop it in 5v5 — that's the whole reason the ult charges 8 points.
+  if (ourAlive.size >= theirAlive.size) return;
+
+  // Find the highest-rated dead teammate (excluding Sage herself).
+  const deadMates = team.players
+    .filter((p) => !ourAlive.has(p.input.id) && p.input.id !== sage.input.id)
+    .sort((a, b) => b.rating - a.rating);
+  if (deadMates.length === 0) return;
+  const revived = deadMates[0];
+
+  // Revive: rejoin the alive set on Classic + no shield. Their weapon was
+  // dropped to the pool on death; the revived player is at high risk.
+  ourAlive.add(revived.input.id);
+  const e = team.economy.get(revived.input.id);
+  if (e) {
+    setEconomyWeapon(e, "Classic", false);
+    e.armor = "none";
+  }
+  // Reset the revived player's per-round duel stats (they're getting a fresh
+  // chance — clean slate on the streak counters, not the totals).
+  revived.consecutiveDuelsLost = 0;
+
+  // Mark Sage as having used the ult. She also gets a small duel boost for
+  // the rest of the round (clutch heal mode).
+  sage.isUsingUltThisRound = true;
+  sage.ultPoints = 0;
+  sage.ultMechEdgeThisRound = 0.08;
+}
+
 function simulateRound(
   team1: TeamRuntime,
   team2: TeamRuntime,
@@ -1783,7 +2004,7 @@ function simulateRound(
   // Real Valorant timing:
   //   Plant: 4s to complete — so plantTime ≈ time when plant animation finished
   //   Fuse: 45s from plant completion
-  //   Defuse: 7s full / 3.5s half (risky)
+  //   Defuse: 7s full / 3.5s half (risky, can be picked back up)
   //   Detonation time = plantTime + 45
   const SPIKE_FUSE = 45;
   const DEFUSE_FULL = 7;
@@ -1791,6 +2012,21 @@ function simulateRound(
   const plantTime = spiked ? roundCtx.time : null;
   const detonationTime = plantTime !== null ? plantTime + SPIKE_FUSE : null;
   let spikeDefused = false;
+  let defuserId: string | null = null;
+
+  // Award the planter +1 ult point. Pick a random alive attacker as the
+  // planter — most pro plants are done by the player closest to spike site
+  // after the area is cleared, which is essentially random among alive
+  // attackers in the sim.
+  if (spiked) {
+    const alivePlanters = attackers.players.filter((p) =>
+      alive.attackers.has(p.input.id),
+    );
+    if (alivePlanters.length > 0) {
+      const planter = alivePlanters[Math.floor(Math.random() * alivePlanters.length)];
+      planter.ultPoints = Math.min(planter.ultMax, planter.ultPoints + 1);
+    }
+  }
 
   if (spiked && plantTime !== null && detonationTime !== null && alive.defenders.size > 0) {
     roundCtx.time = plantTime + 2; // retake starts ~2s after plant completes
@@ -1824,15 +2060,35 @@ function simulateRound(
       // Clamp current time to not exceed detonationTime (clutch can over-advance)
       if (roundCtx.time > detonationTime) roundCtx.time = detonationTime;
       const timeRemaining = detonationTime - roundCtx.time;
+      // Pick a defuser from alive defenders — random among them, since the
+      // closest-to-spike defender typically commits to the defuse.
+      const aliveDefusers = defenders.players.filter((p) =>
+        alive.defenders.has(p.input.id),
+      );
+      const defuserCandidate = aliveDefusers.length > 0
+        ? aliveDefusers[Math.floor(Math.random() * aliveDefusers.length)]
+        : null;
       if (timeRemaining >= DEFUSE_FULL) {
         spikeDefused = true; // safe full defuse
         roundCtx.time += DEFUSE_FULL;
+        defuserId = defuserCandidate?.input.id ?? null;
       } else if (timeRemaining >= DEFUSE_HALF) {
         // Risky half-defuse — 70% chance to land it
         spikeDefused = rand(0.7);
-        if (spikeDefused) roundCtx.time += timeRemaining;
+        if (spikeDefused) {
+          roundCtx.time += timeRemaining;
+          defuserId = defuserCandidate?.input.id ?? null;
+        }
       }
       // else: no time left, spike detonates
+    }
+  }
+
+  // Successful defuse awards +1 ult point to the defuser.
+  if (spikeDefused && defuserId) {
+    const defuser = defenders.players.find((p) => p.input.id === defuserId);
+    if (defuser) {
+      defuser.ultPoints = Math.min(defuser.ultMax, defuser.ultPoints + 1);
     }
   }
 
@@ -1982,12 +2238,28 @@ function resolveDuel(
   const attackerAliveMates = attackerIsRoundAttacker ? alive.attackers : alive.defenders;
   const defenderAliveMates = attackerIsRoundAttacker ? alive.defenders : alive.attackers;
 
+  // Inject the map ATK bias into the duel context. In setup/execution phases
+  // the duel attacker is on the round's ATK side, so positive bias favors them.
+  // In postplant retake duels the defender becomes the entry — invert the sign.
+  const cachedBias = attackerTeam.mapAtkBias;
+  const ctxWithBias: DuelContext = {
+    ...ctx,
+    mapAtkBias:
+      ctx.phase === "postplant" && !attackerIsRoundAttacker
+        ? -cachedBias
+        : ctx.phase === "postplant"
+          ? -cachedBias // postplant retake reverses who's "attacking"
+          : attackerIsRoundAttacker
+            ? cachedBias
+            : -cachedBias,
+  };
+
   const winProb = duelWinProb(
     attacker,
     defender,
     attEco,
     defEco,
-    ctx,
+    ctxWithBias,
     attackerTeam,
     defenderTeam,
     attackerAliveMates,
@@ -2043,6 +2315,14 @@ function resolveDuel(
     timing: roundCtx.time,
   };
   kills.push(kill);
+
+  // Sage revive check — fires when a teammate's death drops a Sage's team
+  // into numeric disadvantage. Both sides are checked because Sage could be
+  // on either team. Idempotent: each Sage can only trigger once per round.
+  // `attackerAliveMates` / `defenderAliveMates` are pre-computed earlier in
+  // this function and reflect which alive set each team's players occupy.
+  maybeSageRevive(attackerTeam, attackerAliveMates, defenderAliveMates);
+  maybeSageRevive(defenderTeam, defenderAliveMates, attackerAliveMates);
 
   return { killed: true, killer, victim, kill };
 }
@@ -2264,7 +2544,13 @@ function applyRoundStats(
     }
   }
 
-  // Commit to player totals and history
+  // Commit to player totals and history + accrue ultimate points.
+  // Ult charge sources (per real Valorant):
+  //   - +1 per kill
+  //   - +1 per death (consolation, prevents losing-side from never ulting)
+  //   - +1 every other round (proxy for the two ult orbs scattered on the map)
+  // The player who just popped their ult had `ultPoints` reset to 0 before
+  // round resolution; gains this round stick for the next one.
   for (const p of [...team1.players, ...team2.players]) {
     const s = statsThisRound.get(p.input.id)!;
     p.perRound.push(s);
@@ -2274,6 +2560,14 @@ function applyRoundStats(
     p.total.fk += s.fk;
     p.total.fd += s.fd;
     p.total.damage += s.damage;
+
+    // Ult accrual — capped at ultMax so we don't overshoot.
+    let gain = s.k + s.d;
+    // Every 2nd round, +1 from orb collection (deterministic, alternates per
+    // player's history length to vary per-player so the team doesn't all
+    // hit ult readiness on the same exact round).
+    if ((p.perRound.length + p.input.id.charCodeAt(0)) % 2 === 0) gain += 1;
+    p.ultPoints = Math.min(p.ultMax, p.ultPoints + gain);
   }
 }
 
@@ -2343,6 +2637,56 @@ export function simulateMapDuel(
   const runRound = (half: 1 | 2 | "OT", t1Attack: boolean, isPistol: boolean): void => {
     const buy1 = planBuys(team1, isPistol, team1Survivors);
     const buy2 = planBuys(team2, isPistol, team2Survivors);
+
+    // Ult usage decision — every round, each player with a ready ult has a
+    // chance to pop it. Pros don't ult every round even when ready: they save
+    // for high-impact moments. 50% chance per round if ready captures the
+    // pacing roughly (typically ult-ready 2-3 rounds before usage).
+    // Pistol rounds: no ults (insufficient orbs collected anyway).
+    //
+    // Effects are categorized per-agent (see ULT_CONFIG). Per-player buffs go
+    // on PlayerState; team-wide effects (info, zone, lockdown) propagate to
+    // the team's runtime fields so EVERY duel of that team gets the bonus.
+    for (const team of [team1, team2]) {
+      // Reset team-level ult effects from last round.
+      team.ultInfoEdge = 0;
+      team.ultZoneEdge = 0;
+      team.ultLockdownEdge = 0;
+      team.ultAbilityEdge = 0;
+      for (const p of team.players) {
+        p.isUsingUltThisRound = false;
+        p.ultMechEdgeThisRound = 0;
+        if (isPistol) continue;
+        if (p.ultPoints < p.ultMax) continue;
+        const cfg = ULT_CONFIG[p.agent];
+        // Sage holds her ult for mid-round revive (triggered by maybeSageRevive
+        // when her team falls into numeric disadvantage). Don't fire at round
+        // start.
+        if (cfg?.type === "revive") continue;
+        if (Math.random() >= 0.5) continue;
+        p.isUsingUltThisRound = true;
+        p.ultPoints = 0;
+        if (!cfg) {
+          // Unknown agent — generic small duel boost as fallback.
+          p.ultMechEdgeThisRound = 0.12;
+          continue;
+        }
+        if (cfg.type === "duel") {
+          p.ultMechEdgeThisRound = cfg.mechEdge ?? 0.15;
+        }
+        // Team-wide effects stack across multiple ulters via Math.max — two
+        // Sovas double-info doesn't double-stack the edge.
+        if (cfg.infoEdge) team.ultInfoEdge = Math.max(team.ultInfoEdge, cfg.infoEdge);
+        if (cfg.positionalEdge) team.ultZoneEdge = Math.max(team.ultZoneEdge, cfg.positionalEdge);
+        if (cfg.abilityEdge) team.ultAbilityEdge = Math.max(team.ultAbilityEdge, cfg.abilityEdge);
+        if (cfg.type === "lockdown") {
+          team.ultLockdownEdge = Math.max(
+            team.ultLockdownEdge,
+            cfg.positionalEdge ?? cfg.abilityEdge ?? 0.12,
+          );
+        }
+      }
+    }
 
     const budget1 = avgCredits(team1);
     const budget2 = avgCredits(team2);

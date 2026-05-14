@@ -376,17 +376,22 @@ function KillFeed({
   // if plantTime exists, show the label without explicit team attribution.
   if (plantTime !== null && plantTime !== undefined) {
     entries.push({ kind: "plant", team: "my", t: plantTime });
+    // Real Valorant: spike detonates exactly 45s after plant completion, no
+    // matter when the last duel happened. The old `min(lastKill+3, detTime)`
+    // heuristic kept showing "detonation" 3s after the final kill which made
+    // the fuse feel arbitrary (sometimes 20s, sometimes 45s on screen).
     const detonationTime = plantTime + 45;
     const lastKillTime = killFeed.length > 0 ? killFeed[killFeed.length - 1].timing : plantTime;
     if (spikeDefused) {
-      // Defuse ~7s after the last attacker kill (defender starts defusing then)
-      entries.push({ kind: "defuse", t: Math.min(lastKillTime + 7, detonationTime - 1) });
+      // Defuse completes ~7s after the defender starts (typically right after
+      // the last attacker dies). Clamp to detonationTime so we never show a
+      // defuse marker past when the spike would have blown.
+      const defuseTime = Math.min(lastKillTime + 7, detonationTime - 0.5);
+      entries.push({ kind: "defuse", t: defuseTime });
     } else {
-      // Detonation: if all defenders killed post-plant (team wipe), round ends at last
-      // kill + short beat for the spike auto-detonating. Otherwise (attackers all dead),
-      // spike fuses out naturally at detonationTime.
-      const detTime = Math.min(lastKillTime + 3, detonationTime);
-      entries.push({ kind: "detonate", t: detTime });
+      // Always at the actual fuse-out time. The round result is decided when
+      // defenders are wiped post-plant, but the spike itself blows at +45s.
+      entries.push({ kind: "detonate", t: detonationTime });
     }
   }
 
