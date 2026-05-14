@@ -89,6 +89,7 @@ export default function StaffPage() {
 
   const totalWeeklyWage = data.staff.reduce((s, st) => s + st.salary, 0);
   const totalCount = data.staff.length;
+  const pending = data.pending ?? [];
 
   return (
     <div className="flex min-h-full flex-col">
@@ -161,6 +162,62 @@ export default function StaffPage() {
           );
         })}
       </section>
+
+      {/* Pending — recrutements en attente de signature */}
+      {pending.length > 0 && (
+        <section
+          className="px-10 py-6"
+          style={{ borderBottom: `1px solid ${D.border}` }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-[13px] font-medium" style={{ color: D.textPrimary }}>
+              En attente de décision
+            </h2>
+            <span className="text-[10px]" style={{ color: D.textSubtle }}>
+              · {pending.length} candidat(s) réfléchi(ssent) à ton offre (7 jours max)
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {pending.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center gap-3 px-3 py-2"
+                style={{
+                  background: D.card,
+                  border: `1px solid ${D.amber}40`,
+                  borderRadius: D.radiusStat,
+                }}
+              >
+                <div className="flex-1 min-w-0">
+                  <div
+                    className="truncate text-[12px] font-medium"
+                    style={{ color: D.textPrimary }}
+                  >
+                    {p.name}
+                    <span className="ml-2 text-[10px]" style={{ color: D.textSubtle }}>
+                      · {p.role}
+                    </span>
+                  </div>
+                  <div className="text-[10px]" style={{ color: D.textSubtle }}>
+                    {p.nationality} · {p.age} ans · {formatCurrency(p.salary)}/sem
+                  </div>
+                </div>
+                <div className="flex flex-col items-end">
+                  <span
+                    className="text-[10px] font-medium"
+                    style={{ color: D.amber }}
+                  >
+                    {p.daysLeft} j restants
+                  </span>
+                  <span className="text-[9px]" style={{ color: D.textSubtle }}>
+                    Décision imminente
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Per-role sections */}
       <section className="flex flex-col">
@@ -437,7 +494,7 @@ function MarketCard({
             color: "white",
           }}
         >
-          {pending ? "…" : "Recruter"}
+          {pending ? "…" : "Proposer"}
         </button>
       </div>
     </div>

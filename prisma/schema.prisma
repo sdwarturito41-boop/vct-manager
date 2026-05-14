@@ -307,11 +307,17 @@ model Staff {
   skill3            Int       @default(50)
   teamId            String?
   team              Team?     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  // Pending signature — quand un user/AI propose au staff de rejoindre, on
+  // crée le Staff row avec teamId=null mais pendingTeamId=offerteurId. Le
+  // daily tick promote vers teamId après pendingDeadlineDay (7 jours).
+  pendingTeamId     String?
+  pendingSinceDay   Int?
   createdAt         DateTime  @default(now())
 
   @@index([saveId])
   @@index([teamId])
   @@index([saveId, role])
+  @@index([pendingTeamId])
 }
 
 enum StaffRole {

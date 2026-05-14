@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMatch, simulateMap as simulateMapEngine } from "@/server/simulation/engine";
 import { applyMasteryUpdate, applyPassiveDecay } from "@/server/simulation/mastery";
+import { applyStatRollingUpdate } from "@/server/simulation/statRolling";
 import { loadActivePairMaps } from "@/server/mercato/relationships";
 import type { SimTeam, AgentPick } from "@/server/simulation/engine";
 import { VALORANT_AGENTS } from "@/constants/agents";
@@ -600,6 +601,20 @@ export const matchRouter = router({
             playerACS: stat.acs,
             naturalRole: userRoleByPlayerId.get(pa.playerId) ?? "Flex",
             isScrim: false,
+          });
+        }
+
+        // Rolling-average stat update — chaque map post-Match update les
+        // stats de base (ACS, K/D, KAST, ADR, HS, Rating) via EMA. Ça permet
+        // aux joueurs de "progresser" ou "régresser" en fonction de leur
+        // forme réelle au lieu de stagner sur la valeur VLR initiale.
+        for (const stat of mapResult.playerStats) {
+          await applyStatRollingUpdate(ctx.prisma, {
+            playerId: stat.playerId,
+            acs: stat.acs,
+            kills: stat.kills,
+            deaths: stat.deaths,
+            assists: stat.assists,
           });
         }
       } catch (err) {

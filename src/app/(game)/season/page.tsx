@@ -1,286 +1,288 @@
-import { serverTrpc } from "@/lib/trpc-server";
-import { VCT_STAGES, STAGE_ORDER } from "@/constants/vct-format";
-import type { StageId } from "@/constants/vct-format";
-import { formatGameDate, dayNameFull, dayOfWeek } from "@/lib/game-date";
-import { AdvanceDayButton } from "@/components/AdvanceDayButton";
-import Link from "next/link";
+"use client";
 
-export default async function SeasonPage() {
-  const api = await serverTrpc();
-  const season = await api.season.getCurrent().catch(() => null);
-  const team = await api.team.get().catch(() => null);
+import { trpc } from "@/lib/trpc-client";
+import { formatGameDate, formatGameDateLong } from "@/lib/game-date";
+import { D } from "@/constants/design";
 
-  const currentStageIndex = season
-    ? STAGE_ORDER.indexOf(season.currentStage as StageId)
-    : 0;
+/**
+ * Page Saison — résumé compétitif :
+ *   - Bandeau date courante + saison
+ *   - Top 3 podiums par split régional (Kickoff / Stage 1 / Stage 2)
+ *   - Top 2 podiums par tournoi international (Masters 1/2 / Champions)
+ *
+ * Quand un split/tournoi n'est pas encore joué, on l'omet (la page se
+ * remplit progressivement à mesure que la saison avance).
+ */
+export default function SeasonPage() {
+  const seasonQ = trpc.season.getCurrent.useQuery();
+  const recapQ = trpc.season.recap.useQuery();
 
-  // Fetch schedule and compute stage stats
-  let stageMatchesPlayed = 0;
-  let stageMatchesTotal = 0;
-  let teamWins = 0;
-  let teamLosses = 0;
-  let nextMatch: {
-    day: number;
-    opponent: string;
-    opponentTag: string;
-    format: string;
-  } | null = null;
+  const season = seasonQ.data;
+  const recap = recapQ.data;
 
-  if (season && team) {
-    const schedule = await api.season.getSchedule().catch(() => []);
-    stageMatchesTotal = schedule.length;
-    stageMatchesPlayed = schedule.filter((m) => m.isPlayed).length;
-
-    for (const m of schedule) {
-      const isTeam1 = m.team1Id === team.id;
-      const isTeam2 = m.team2Id === team.id;
-      if (!isTeam1 && !isTeam2) continue;
-
-      if (m.isPlayed && m.winnerId) {
-        if (m.winnerId === team.id) teamWins++;
-        else teamLosses++;
-      }
-
-      if (!m.isPlayed && !nextMatch && m.day > 0) {
-        const opponent = isTeam1 ? m.team2 : m.team1;
-        nextMatch = {
-          day: m.day,
-          opponent: opponent.name,
-          opponentTag: opponent.tag,
-          format: m.format,
-        };
-      }
-    }
+  if (!season) {
+    return (
+      <div className="p-10 text-sm" style={{ color: D.textMuted }}>
+        Chargement de la saison…
+      </div>
+    );
   }
 
-  const currentStage = season
-    ? VCT_STAGES[season.currentStage as StageId]
-    : null;
-
   return (
-    <div className="space-y-6">
-      {/* Advance Day - prominent at top */}
-      <AdvanceDayButton />
-
-      {/* Header with day/week counter */}
-      <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-3xl font-black uppercase tracking-[0.15em] text-[var(--val-white)]">
-            Season
-          </h1>
-          <p className="mt-1 text-sm uppercase tracking-[0.1em] text-[var(--val-white)]/30">
-            VCT 2026 Calendar
-          </p>
-        </div>
-        {season && (
+    <div className="flex min-h-full flex-col">
+      {/* Hero — date + saison */}
+      <section
+        className="relative px-10 pt-8 pb-6"
+        style={{ borderBottom: `1px solid ${D.border}` }}
+      >
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <div className="text-[11px] font-medium" style={{ color: D.textSubtle }}>
+              Calendrier VCT {season.year}
+            </div>
+            <h1
+              className="mt-1 text-[34px] font-medium leading-none"
+              style={{ color: D.textPrimary }}
+            >
+              Saison {season.number}
+            </h1>
+            <div
+              className="mt-2 flex items-center gap-3 text-[11px]"
+              style={{ color: D.textMuted }}
+            >
+              <span>{formatGameDateLong(season.currentDay, season.year)}</span>
+              <span>·</span>
+              <span>Stage {season.currentStage}</span>
+            </div>
+          </div>
           <div className="text-right">
-            <div className="text-2xl font-black text-[var(--val-white)]">
-              {dayNameFull(season.currentDay, season.year)}
+            <div
+              className="text-[28px] font-medium tabular-nums"
+              style={{ color: D.textPrimary }}
+            >
+              {formatGameDate(season.currentDay, season.year)}
             </div>
-            <div className="text-xs font-semibold uppercase tracking-[0.15em] text-[var(--val-white)]/40">
-              {formatGameDate(season.currentDay, season.year)} &middot; Day {season.currentDay}
+            <div className="text-[10px]" style={{ color: D.textSubtle }}>
+              Day {season.currentDay} · Week {season.currentWeek}
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Splits régionaux */}
+      <section
+        className="px-10 py-6"
+        style={{ borderBottom: `1px solid ${D.border}` }}
+      >
+        <div className="flex items-baseline gap-3 mb-4">
+          <h2
+            className="text-[16px] font-medium"
+            style={{ color: D.textPrimary }}
+          >
+            Splits régionaux
+          </h2>
+          {recap?.userRegion && (
+            <span className="text-[11px]" style={{ color: D.textSubtle }}>
+              · {recap.userRegion}
+            </span>
+          )}
+        </div>
+
+        {!recap || recap.splits.length === 0 ? (
+          <EmptyState text="Aucun split terminé pour l'instant." />
+        ) : (
+          <div className="grid grid-cols-3 gap-4">
+            {recap.splits.map((s) => (
+              <SplitPodiumCard key={s.stageId} name={s.name} podium={s.podium} />
+            ))}
           </div>
         )}
+      </section>
+
+      {/* Tournois internationaux */}
+      <section
+        className="px-10 py-6"
+        style={{ borderBottom: `1px solid ${D.border}` }}
+      >
+        <div className="flex items-baseline gap-3 mb-4">
+          <h2
+            className="text-[16px] font-medium"
+            style={{ color: D.textPrimary }}
+          >
+            Tournois internationaux
+          </h2>
+          <span className="text-[11px]" style={{ color: D.textSubtle }}>
+            · Toutes régions
+          </span>
+        </div>
+
+        {!recap || recap.masters.length === 0 ? (
+          <EmptyState text="Aucun tournoi international terminé pour l'instant." />
+        ) : (
+          <div className="grid grid-cols-3 gap-4">
+            {recap.masters.map((m) => (
+              <InternationalPodiumCard
+                key={m.stageId}
+                name={m.name}
+                city={m.city}
+                podium={m.podium}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ─────────────────────── Components ───────────────────────
+
+type Team = {
+  id: string;
+  name: string;
+  tag: string;
+  logoUrl: string | null;
+  region: string;
+};
+
+type Podium = Array<{ rank: number; team: Team }>;
+
+function SplitPodiumCard({ name, podium }: { name: string; podium: Podium }) {
+  return (
+    <div
+      className="flex flex-col p-5"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.borderFaint}`,
+        borderRadius: D.radiusCard,
+      }}
+    >
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
+          {name}
+        </h3>
+        <span className="text-[10px]" style={{ color: D.textSubtle }}>
+          Top 3 qualifiés Masters
+        </span>
       </div>
+      <div className="flex flex-col gap-2">
+        {podium.map((p) => (
+          <PodiumRow key={p.team.id} rank={p.rank} team={p.team} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-      {/* Current stage detail card */}
-      {season && currentStage && (
-        <div className="rounded-lg border border-[var(--val-red)] bg-[var(--val-red)]/5 p-5 shadow-lg shadow-[var(--val-red)]/10">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--val-red)]/60">
-                Current Stage
-              </div>
-              <h2 className="mt-1 text-xl font-black uppercase tracking-[0.1em] text-[var(--val-red)]">
-                {currentStage.name}
-              </h2>
-              {currentStage.format !== "offseason" && (
-                <div className="mt-2 flex items-center gap-3 text-xs text-[var(--val-white)]/40">
-                  <span className="capitalize">{currentStage.format.replace(/_/g, " ")}</span>
-                  <span>&middot;</span>
-                  <span>{currentStage.bo} / {currentStage.finalBo}</span>
-                  <span>&middot;</span>
-                  <span>{currentStage.durationWeeks} weeks</span>
-                  {"isInternational" in currentStage && currentStage.isInternational && (
-                    <>
-                      <span>&middot;</span>
-                      <span className="text-[var(--val-gold)]">International</span>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Stage progress */}
-            <div className="text-right">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--val-white)]/30">
-                Stage Progress
-              </div>
-              <div className="mt-1 text-2xl font-black text-[var(--val-white)]">
-                {stageMatchesPlayed}
-                <span className="text-sm text-[var(--val-white)]/30"> / {stageMatchesTotal}</span>
-              </div>
-              <div className="text-[10px] text-[var(--val-white)]/30">
-                matches played
-              </div>
-            </div>
+function InternationalPodiumCard({
+  name,
+  city,
+  podium,
+}: {
+  name: string;
+  city: string;
+  podium: Podium;
+}) {
+  return (
+    <div
+      className="flex flex-col p-5"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.borderFaint}`,
+        borderRadius: D.radiusCard,
+      }}
+    >
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3
+            className="text-[14px] font-medium"
+            style={{ color: D.textPrimary }}
+          >
+            {name}
+          </h3>
+          <div className="text-[10px]" style={{ color: D.textSubtle }}>
+            {city}
           </div>
+        </div>
+        <span className="text-[10px]" style={{ color: D.textSubtle }}>
+          Finalistes
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {podium.map((p) => (
+          <PodiumRow key={p.team.id} rank={p.rank} team={p.team} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-          {/* Team record + Next match row */}
-          {team && (
-            <div className="mt-4 flex gap-4">
-              <div className="flex-1 rounded border border-[var(--val-gray)] bg-[var(--val-bg)] p-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--val-white)]/30">
-                  Your Record
-                </div>
-                <div className="mt-1 text-lg font-black">
-                  <span className="text-[var(--val-green)]">{teamWins}W</span>
-                  <span className="mx-1 text-[var(--val-white)]/20">-</span>
-                  <span className="text-[var(--val-red)]">{teamLosses}L</span>
-                </div>
-              </div>
-
-              <div className="flex-1 rounded border border-[var(--val-gray)] bg-[var(--val-bg)] p-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--val-white)]/30">
-                  Next Match
-                </div>
-                {nextMatch ? (
-                  <div className="mt-1">
-                    <span className="text-sm font-bold text-[var(--val-white)]">
-                      vs {nextMatch.opponentTag}
-                    </span>
-                    <span className="ml-2 text-xs text-[var(--val-white)]/30">
-                      Day {nextMatch.day} &middot; {nextMatch.format}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="mt-1 text-sm text-[var(--val-white)]/30">
-                    No upcoming matches
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Quick link */}
-          <div className="mt-4">
-            <Link
-              href="/league"
-              className="inline-flex items-center gap-2 rounded border border-[var(--val-red)]/30 bg-[var(--val-red)]/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.15em] text-[var(--val-red)] transition-colors hover:bg-[var(--val-red)]/20"
-            >
-              View League / Bracket
-              <span>&rarr;</span>
-            </Link>
-          </div>
+function PodiumRow({ rank, team }: { rank: number; team: Team }) {
+  const medalColor =
+    rank === 1 ? D.gold : rank === 2 ? "#c0c0c0" : rank === 3 ? "#cd7f32" : D.textSubtle;
+  const medalLabel = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `#${rank}`;
+  return (
+    <div
+      className="flex items-center gap-3 px-3 py-2"
+      style={{
+        background: "rgba(255,255,255,0.02)",
+        borderRadius: D.radiusStat,
+        border: `1px solid ${rank === 1 ? `${medalColor}30` : D.borderFaint}`,
+      }}
+    >
+      <span
+        className="text-[16px] font-medium tabular-nums w-7 text-center"
+        style={{ color: medalColor }}
+      >
+        {medalLabel}
+      </span>
+      {team.logoUrl ? (
+        <img
+          src={team.logoUrl}
+          alt={team.name}
+          className="h-7 w-7 object-contain"
+        />
+      ) : (
+        <div
+          className="flex h-7 w-7 items-center justify-center rounded-full"
+          style={{
+            background: D.card,
+            border: `1px solid ${D.borderFaint}`,
+            color: D.textMuted,
+            fontSize: 10,
+            fontWeight: 500,
+          }}
+        >
+          {team.tag.slice(0, 2)}
         </div>
       )}
-
-      {/* Stage Timeline */}
-      <div>
-        <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--val-white)]/30">
-          Season Timeline
+      <div className="flex-1 min-w-0">
+        <div
+          className="truncate text-[13px] font-medium"
+          style={{ color: D.textPrimary }}
+        >
+          {team.name}
         </div>
-        <div className="space-y-2">
-          {STAGE_ORDER.map((stageId, index) => {
-            const stage = VCT_STAGES[stageId];
-            const isCurrent = season?.currentStage === stageId;
-            const isCompleted = index < currentStageIndex;
-            const isUpcoming = index > currentStageIndex;
-
-            return (
-              <div
-                key={stageId}
-                className={`relative flex items-center justify-between rounded-lg border p-4 transition-all ${
-                  isCurrent
-                    ? "border-[var(--val-red)] bg-[var(--val-red)]/5 shadow-lg shadow-[var(--val-red)]/10"
-                    : isCompleted
-                    ? "border-[var(--val-gray)]/50 bg-[var(--val-surface)]/50"
-                    : "border-[var(--val-gray)] bg-[var(--val-surface)]"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  {/* Status indicator */}
-                  <div
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${
-                      isCurrent
-                        ? "border-[var(--val-red)] bg-[var(--val-red)]/20"
-                        : isCompleted
-                        ? "border-[var(--val-green)]/50 bg-[var(--val-green)]/10"
-                        : "border-[var(--val-gray)] bg-[var(--val-bg)]"
-                    }`}
-                  >
-                    {isCompleted ? (
-                      <svg
-                        className="h-3.5 w-3.5 text-[var(--val-green)]"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={2.5}
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    ) : isCurrent ? (
-                      <div className="h-2 w-2 animate-pulse rounded-full bg-[var(--val-red)]" />
-                    ) : (
-                      <div className="h-1.5 w-1.5 rounded-full bg-[var(--val-gray)]" />
-                    )}
-                  </div>
-
-                  <div>
-                    <h3
-                      className={`text-sm font-bold uppercase tracking-[0.1em] ${
-                        isCurrent
-                          ? "text-[var(--val-red)]"
-                          : isCompleted
-                          ? "text-[var(--val-white)]/40"
-                          : "text-[var(--val-white)]"
-                      }`}
-                    >
-                      {stage.name}
-                    </h3>
-                    <div className="flex items-center gap-2 text-[10px] text-[var(--val-white)]/30">
-                      {stage.format !== "offseason" && (
-                        <>
-                          <span className="capitalize">{stage.format.replace(/_/g, " ")}</span>
-                          <span>&middot;</span>
-                        </>
-                      )}
-                      <span>{stage.durationWeeks}w</span>
-                      {"isInternational" in stage && stage.isInternational && (
-                        <>
-                          <span>&middot;</span>
-                          <span className="text-[var(--val-gold)]">Intl</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Status badge */}
-                <div>
-                  {isCurrent && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--val-red)]/30 bg-[var(--val-red)]/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-[var(--val-red)]">
-                      <span className="h-1 w-1 animate-pulse rounded-full bg-[var(--val-red)]" />
-                      Active
-                    </span>
-                  )}
-                  {isCompleted && (
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--val-green)]/50">
-                      Done
-                    </span>
-                  )}
-                  {isUpcoming && (
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--val-white)]/20">
-                      Upcoming
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+        <div className="text-[10px]" style={{ color: D.textSubtle }}>
+          {team.tag} · {team.region}
         </div>
       </div>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div
+      className="px-4 py-8 text-center text-[11px]"
+      style={{
+        color: D.textSubtle,
+        background: D.card,
+        border: `1px dashed ${D.borderFaint}`,
+        borderRadius: D.radiusCard,
+      }}
+    >
+      {text}
     </div>
   );
 }

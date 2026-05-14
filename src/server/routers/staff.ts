@@ -1,8 +1,65 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, saveProcedure } from "../trpc";
-import type { StaffRole, Region } from "@/generated/prisma/client";
+import type { StaffRole, Region, PrismaClient } from "@/generated/prisma/client";
 import { STAFF_SLOTS, scaledSalary, ALL_STAFF_ROLES } from "@/constants/staff";
+
+const STAFF_HIRE_WAIT_DAYS = 7;
+
+/**
+ * Évalue les pending staff hires : si le délai d'attente (7 jours) est
+ * atteint, le candidat accepte (V1 sans compétition AI — accept = automatic
+ * une fois la deadline passée). Si l'équipe a entre-temps dépassé la slot
+ * cap (signature concurrente), on rejette.
+ */
+export async function evaluatePendingStaffHires(
+  prisma: PrismaClient,
+  saveId: string,
+  currentDay: number,
+): Promise<{ accepted: number; rejected: number }> {
+  let accepted = 0;
+  let rejected = 0;
+
+  const pending = await prisma.staff.findMany({
+    where: {
+      saveId,
+      teamId: null,
+      pendingTeamId: { not: null },
+    },
+  });
+
+  for (const s of pending) {
+    const waited = currentDay - (s.pendingSinceDay ?? currentDay);
+    if (waited < STAFF_HIRE_WAIT_DAYS) continue;
+    if (!s.pendingTeamId) continue;
+
+    // Re-check slot capacity at promotion time (l'équipe peut avoir hired
+    // un autre candidat depuis).
+    const existingCount = await prisma.staff.count({
+      where: { teamId: s.pendingTeamId, role: s.role },
+    });
+    const rule = STAFF_SLOTS[s.role];
+    if (existingCount >= rule.max) {
+      // Plus de place — rejette
+      await prisma.staff.delete({ where: { id: s.id } });
+      rejected++;
+      continue;
+    }
+
+    // Accept : promote
+    await prisma.staff.update({
+      where: { id: s.id },
+      data: {
+        teamId: s.pendingTeamId,
+        pendingTeamId: null,
+        pendingSinceDay: null,
+      },
+    });
+    accepted++;
+  }
+
+  return { accepted, rejected };
+}
 
 const STAFF_ROLE_ENUM = z.enum(["COACH", "ANALYST", "MANAGER", "FITNESS"]);
 
@@ -50,23 +107,46 @@ function getMarket(region: Region, role: StaffRole, stage: string): CachedOffer[
 }
 
 export const staffRouter = router({
-  /** All staff currently on the user team — grouped by role. */
+  /** All staff currently on the user team — grouped by role + pending hires. */
   listMine: saveProcedure.query(async ({ ctx }) => {
     const team = await ctx.prisma.team.findFirst({
       where: { saveId: ctx.save.id, isPlayerTeam: true },
       select: { id: true },
     });
-    if (!team) return { staff: [], slots: emptySlots() };
-    const staff = await ctx.prisma.staff.findMany({
-      where: { teamId: team.id },
-      orderBy: [{ role: "asc" }, { salary: "desc" }],
-    });
+    if (!team) return { staff: [], pending: [], slots: emptySlots() };
+
+    const [staff, pending, season] = await Promise.all([
+      ctx.prisma.staff.findMany({
+        where: { teamId: team.id },
+        orderBy: [{ role: "asc" }, { salary: "desc" }],
+      }),
+      ctx.prisma.staff.findMany({
+        where: { pendingTeamId: team.id, teamId: null },
+        orderBy: { pendingSinceDay: "asc" },
+      }),
+      ctx.prisma.season.findFirst({
+        where: { saveId: ctx.save.id, isActive: true },
+        select: { currentDay: true },
+      }),
+    ]);
+    const currentDay = season?.currentDay ?? 0;
+
+    // Slots counts incluent les pending pour éviter d'over-hire pendant une
+    // attente (sinon l'user signerait 5 Analystes alors qu'il en a 3 pending).
     const counts: Record<StaffRole, number> = {
       COACH: 0, ANALYST: 0, MANAGER: 0, FITNESS: 0,
     };
     for (const s of staff) counts[s.role]++;
+    for (const s of pending) counts[s.role]++;
     return {
       staff,
+      pending: pending.map((s) => ({
+        ...s,
+        daysLeft: Math.max(
+          0,
+          7 - (currentDay - (s.pendingSinceDay ?? currentDay)),
+        ),
+      })),
       slots: ALL_STAFF_ROLES.reduce((acc, role) => {
         const rule = STAFF_SLOTS[role];
         acc[role] = {
@@ -137,10 +217,21 @@ export const staffRouter = router({
         });
       }
 
+      // Pending hire — le candidat prend jusqu'à 7 jours pour décider.
+      // teamId reste null pendant l'attente, pendingTeamId pointe sur l'org
+      // qui a fait l'offre. Le daily tick promote ou rejette.
+      const season = await ctx.prisma.season.findFirst({
+        where: { saveId: ctx.save.id, isActive: true },
+        select: { currentDay: true },
+      });
+      const sinceDay = season?.currentDay ?? 1;
+
       await ctx.prisma.staff.create({
         data: {
           saveId: ctx.save.id,
-          teamId: team.id,
+          teamId: null,
+          pendingTeamId: team.id,
+          pendingSinceDay: sinceDay,
           name: input.name,
           role: input.role,
           region: input.region,
@@ -152,7 +243,7 @@ export const staffRouter = router({
           skill3: input.skill3,
         },
       });
-      return { ok: true };
+      return { ok: true, pending: true };
     }),
 
   /**

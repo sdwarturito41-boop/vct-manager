@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMatch } from "@/server/simulation/engine";
+import { applyStatRollingUpdate } from "@/server/simulation/statRolling";
 import type { SimTeam } from "@/server/simulation/engine";
 import type { Player, Team, Region } from "@/generated/prisma/client";
 import {
@@ -33,7 +34,8 @@ import {
 } from "@/server/finance/revenue";
 import { computeWeeklyOperationalCost } from "@/server/finance/operations";
 import { SCOUTING_REVEAL_WEEKS } from "@/server/routers/scouting";
-import { runAiOfferResolutions } from "./transfer";
+import { runAiOfferResolutions, evaluateFreeAgentDecisions } from "./transfer";
+import { evaluatePendingStaffHires } from "./staff";
 import { invalidateSponsorOffersCache } from "./sponsor";
 import { invalidateCoachOffersCache } from "./coach";
 import { runAiTransferActivity, expireStaleOffers } from "@/server/mercato/iaOffers";
@@ -318,6 +320,20 @@ export const seasonRouter = router({
         isStage12Group,
       });
       completedRounds.add(match.stageId);
+
+      // Rolling stat update pour TOUS les joueurs ayant joué cette série AI.
+      // Update une fois par map jouée (BO3 = 2-3 maps, BO5 = 3-5 maps).
+      for (const map of result.maps) {
+        for (const stat of map.playerStats) {
+          await applyStatRollingUpdate(ctx.prisma, {
+            playerId: stat.playerId,
+            acs: stat.acs,
+            kills: stat.kills,
+            deaths: stat.deaths,
+            assists: stat.assists,
+          });
+        }
+      }
     }
 
     // Phase 2 — collapse all of today's match writes into ONE transaction.
@@ -826,6 +842,13 @@ export const seasonRouter = router({
 
     // Daily: AI resolves pending transfer offers (buyouts etc.)
     await runAiOfferResolutions({ prisma: ctx.prisma, save: { id: ctx.save.id } });
+    // FA signings : décision par le joueur quand deadline atteinte OU 2+
+    // clubs intéressés. Tourne tous les jours pour réagir vite à la
+    // compétition entre clubs.
+    await evaluateFreeAgentDecisions({ prisma: ctx.prisma, save: { id: ctx.save.id } });
+    // Staff hires : 7 jours d'attente puis promote en titulaire (ou reject
+    // si le slot a été pris entre-temps par un autre hire).
+    await evaluatePendingStaffHires(ctx.prisma, ctx.save.id, newDay);
 
     const prevWeek = Math.ceil(season.currentDay / 7);
     const isNewWeekTick = newWeek > prevWeek;
@@ -1335,5 +1358,165 @@ export const seasonRouter = router({
     }
 
     return matches;
+  }),
+
+  /**
+   * Season recap — top 3 qualifiés par "split" régional (Kickoff / Stage 1 /
+   * Stage 2) pour la région du user + top 2 (finalistes) de chaque tournoi
+   * international (Masters 1 / Masters 2 / Champions).
+   *
+   * Pour les splits régionaux :
+   *   - Kickoff : winners de UB Final / MID Final / LB Final
+   *   - Stage 1/2 : UB Final winner (#1), GF winner (#2), GF loser (#3)
+   *
+   * Pour les Masters/Champions : GF winner (#1), GF loser (#2).
+   *
+   * Renvoie les seasons précédentes aussi pour avoir l'historique.
+   */
+  recap: saveProcedure.query(async ({ ctx }) => {
+    const season = await ctx.prisma.season.findFirst({
+      where: { saveId: ctx.save.id, isActive: true },
+    });
+    if (!season) {
+      return {
+        seasonNumber: 0,
+        seasonYear: 2026,
+        userRegion: "EMEA" as const,
+        splits: [] as Array<{ name: string; stageId: string; podium: Array<{ rank: number; team: { id: string; name: string; tag: string; logoUrl: string | null; region: string } }> }>,
+        masters: [] as Array<{ name: string; stageId: string; city: string; podium: Array<{ rank: number; team: { id: string; name: string; tag: string; logoUrl: string | null; region: string } }> }>,
+      };
+    }
+
+    const userTeam = await ctx.prisma.team.findFirst({
+      where: { saveId: ctx.save.id, isPlayerTeam: true },
+      select: { region: true },
+    });
+    const userRegion = userTeam?.region ?? "EMEA";
+
+    type TeamMini = {
+      id: string;
+      name: string;
+      tag: string;
+      logoUrl: string | null;
+      region: string;
+    };
+
+    async function findStageWinner(stageId: string, region?: string) {
+      const m = await ctx.prisma.match.findFirst({
+        where: {
+          saveId: ctx.save.id,
+          season: season!.number,
+          stageId,
+          isPlayed: true,
+          winnerId: { not: null },
+          ...(region ? { team1: { region: region as "EMEA" | "Americas" | "Pacific" | "China" } } : {}),
+        },
+        include: {
+          team1: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
+          team2: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
+        },
+      });
+      if (!m || !m.winnerId) return null;
+      const winner = (m.winnerId === m.team1.id ? m.team1 : m.team2) as TeamMini;
+      const loser = (m.winnerId === m.team1.id ? m.team2 : m.team1) as TeamMini;
+      return { winner, loser, matchId: m.id };
+    }
+
+    // ── Splits régionaux ──
+    const splits: Array<{
+      name: string;
+      stageId: string;
+      podium: Array<{ rank: number; team: TeamMini }>;
+    }> = [];
+
+    // Kickoff
+    const kickoffUB = await findStageWinner("KICKOFF_UB_FINAL", userRegion);
+    const kickoffMID = await findStageWinner("KICKOFF_MID_FINAL", userRegion);
+    const kickoffLB = await findStageWinner("KICKOFF_LB_FINAL", userRegion);
+    const kickoffPodium = [
+      kickoffUB?.winner ? { rank: 1, team: kickoffUB.winner } : null,
+      kickoffMID?.winner ? { rank: 2, team: kickoffMID.winner } : null,
+      kickoffLB?.winner ? { rank: 3, team: kickoffLB.winner } : null,
+    ].filter((x): x is { rank: number; team: TeamMini } => x !== null);
+    if (kickoffPodium.length > 0) {
+      splits.push({ name: "Kickoff", stageId: "KICKOFF", podium: kickoffPodium });
+    }
+
+    // Stage 1
+    const s1UB = await findStageWinner("STAGE_1_PO_UB_FINAL", userRegion);
+    const s1GF = await findStageWinner("STAGE_1_PO_GF", userRegion);
+    const s1Podium: typeof kickoffPodium = [];
+    if (s1UB?.winner) s1Podium.push({ rank: 1, team: s1UB.winner });
+    if (s1GF?.winner) s1Podium.push({ rank: 2, team: s1GF.winner });
+    if (s1GF?.loser) s1Podium.push({ rank: 3, team: s1GF.loser });
+    if (s1Podium.length > 0) {
+      splits.push({ name: "Stage 1", stageId: "STAGE_1", podium: s1Podium });
+    }
+
+    // Stage 2
+    const s2UB = await findStageWinner("STAGE_2_PO_UB_FINAL", userRegion);
+    const s2GF = await findStageWinner("STAGE_2_PO_GF", userRegion);
+    const s2Podium: typeof kickoffPodium = [];
+    if (s2UB?.winner) s2Podium.push({ rank: 1, team: s2UB.winner });
+    if (s2GF?.winner) s2Podium.push({ rank: 2, team: s2GF.winner });
+    if (s2GF?.loser) s2Podium.push({ rank: 3, team: s2GF.loser });
+    if (s2Podium.length > 0) {
+      splits.push({ name: "Stage 2", stageId: "STAGE_2", podium: s2Podium });
+    }
+
+    // ── Tournois internationaux ──
+    const masters: Array<{
+      name: string;
+      stageId: string;
+      city: string;
+      podium: Array<{ rank: number; team: TeamMini }>;
+    }> = [];
+
+    const m1GF = await findStageWinner("MASTERS_1_GF");
+    if (m1GF) {
+      masters.push({
+        name: "Masters Santiago",
+        stageId: "MASTERS_1",
+        city: season.masters1City,
+        podium: [
+          { rank: 1, team: m1GF.winner },
+          { rank: 2, team: m1GF.loser },
+        ],
+      });
+    }
+
+    const m2GF = await findStageWinner("MASTERS_2_GF");
+    if (m2GF) {
+      masters.push({
+        name: "Masters London",
+        stageId: "MASTERS_2",
+        city: season.masters2City,
+        podium: [
+          { rank: 1, team: m2GF.winner },
+          { rank: 2, team: m2GF.loser },
+        ],
+      });
+    }
+
+    const cGF = await findStageWinner("CHAMPIONS_GF");
+    if (cGF) {
+      masters.push({
+        name: "Champions Shanghai",
+        stageId: "CHAMPIONS",
+        city: season.championsCity,
+        podium: [
+          { rank: 1, team: cGF.winner },
+          { rank: 2, team: cGF.loser },
+        ],
+      });
+    }
+
+    return {
+      seasonNumber: season.number,
+      seasonYear: season.year,
+      userRegion,
+      splits,
+      masters,
+    };
   }),
 });

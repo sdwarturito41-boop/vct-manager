@@ -9,9 +9,14 @@ import { countRoster, assignSigningSlot, canSign, MAX_TOTAL_ROSTER } from "@/ser
 import { debitTransfer, totalAvailable } from "@/server/finance/budgets";
 
 const OFFER_DEADLINE_HOURS = 72;
+const FA_DEADLINE_HOURS = 24 * 7; // FA signings: 1 semaine pour décider
 
 function offerDeadline(): Date {
   return new Date(Date.now() + OFFER_DEADLINE_HOURS * 3600 * 1000);
+}
+
+function faOfferDeadline(): Date {
+  return new Date(Date.now() + FA_DEADLINE_HOURS * 3600 * 1000);
 }
 
 function totalOfferCost(o: {
@@ -223,12 +228,11 @@ async function resolveOfferDecision(
       decision = "REJECTED";
     }
   } else if (offer.offerType === "FREE_AGENT_SIGNING") {
-    if (offer.proposedSalary >= player.salary) {
-      decision = "ACCEPTED";
-    } else {
-      const ratio = offer.proposedSalary / Math.max(1, player.salary);
-      decision = Math.random() < ratio * 0.5 ? "ACCEPTED" : "REJECTED";
-    }
+    // FA signings ne sont JAMAIS auto-résolues ici — elles passent par
+    // evaluateFreeAgentDecisions qui regroupe toutes les offres pendantes
+    // d'un joueur et choisit la meilleure une fois la deadline atteinte
+    // (ou si au moins 2 clubs proposent en parallèle).
+    return "PENDING";
   } else if (offer.offerType === "CONTRACT_EXTENSION") {
     if (offer.proposedSalary >= Math.ceil(player.salary * 1.1)) {
       decision = "ACCEPTED";
@@ -527,6 +531,106 @@ async function applyAcceptedOffer(ctx: ResolveCtx, offerId: string): Promise<voi
  * Hook called from season.advanceDay to resolve AI team decisions on
  * pending offers. Safe to call every tick — it only processes PENDING offers.
  */
+/**
+ * Évalue les FA signings PENDING et accepte la meilleure offre par joueur.
+ * Appelé chaque jour (advanceDay tick). Un joueur ne décide pas avant :
+ *   - que la deadline soit atteinte, OU
+ *   - qu'au moins 2 offres soient sur la table (compétition active)
+ *
+ * Le scoring privilégie : salaire hebdo + bonus / longueur contrat.
+ * Si la meilleure offre est < 70% du salaire actuel du joueur, il rejette tout.
+ */
+export async function evaluateFreeAgentDecisions(
+  ctx: ResolveCtx,
+): Promise<{ accepted: number; rejected: number }> {
+  let accepted = 0;
+  let rejected = 0;
+
+  const now = new Date();
+  // Tous les FA offers PENDING — groupés par player pour traiter la concurrence.
+  const allPending = await ctx.prisma.transferOffer.findMany({
+    where: {
+      saveId: ctx.save.id,
+      status: "PENDING",
+      offerType: "FREE_AGENT_SIGNING",
+    },
+    orderBy: { proposedSalary: "desc" },
+  });
+  if (allPending.length === 0) return { accepted, rejected };
+
+  // Group by playerId
+  type PendingOffer = (typeof allPending)[number];
+  const byPlayer = new Map<string, PendingOffer[]>();
+  for (const o of allPending) {
+    const arr = byPlayer.get(o.playerId) ?? [];
+    arr.push(o);
+    byPlayer.set(o.playerId, arr);
+  }
+
+  for (const [playerId, offers] of byPlayer) {
+    const deadlinePassed = offers.some(
+      (o: PendingOffer) => o.deadlineAt != null && o.deadlineAt <= now,
+    );
+    const hasCompetition = offers.length >= 2;
+    if (!deadlinePassed && !hasCompetition) continue;
+
+    const player = await ctx.prisma.player.findUnique({
+      where: { id: playerId },
+      select: { id: true, salary: true, teamId: true, happiness: true },
+    });
+    if (!player || player.teamId != null) {
+      // Joueur déjà signé ailleurs entre temps — rejette tout
+      for (const o of offers) {
+        await ctx.prisma.transferOffer.update({
+          where: { id: o.id },
+          data: { status: "REJECTED" },
+        });
+        rejected++;
+      }
+      continue;
+    }
+
+    // Scoring par offre : weekly value = proposedSalary + (bonuses / contract weeks)
+    const scored = offers.map((o: PendingOffer) => {
+      const bonusValue = o.signingBonus + o.loyaltyBonus + o.performanceBonus;
+      const perWeekBonus = bonusValue / Math.max(1, o.contractLengthWeeks);
+      const weeklyValue = o.proposedSalary + perWeekBonus;
+      return { offer: o, weeklyValue };
+    });
+    scored.sort((a: { weeklyValue: number }, b: { weeklyValue: number }) => b.weeklyValue - a.weeklyValue);
+
+    const best = scored[0];
+    // Le joueur n'accepte que si la meilleure offre vaut >= 70% de son
+    // salaire courant. En dessous il considère qu'aucun club ne lui propose
+    // un contrat décent et rejette tout (il continue d'attendre).
+    const minAcceptable = player.salary * 0.7;
+    if (best.weeklyValue < minAcceptable) {
+      // Tout le monde rejeté, le joueur reste FA
+      for (const o of offers) {
+        await ctx.prisma.transferOffer.update({
+          where: { id: o.id },
+          data: { status: "REJECTED" },
+        });
+        rejected++;
+      }
+      continue;
+    }
+
+    // Accept best, reject others
+    await applyAcceptedOffer(ctx, best.offer.id);
+    accepted++;
+    for (const s of scored.slice(1)) {
+      await ctx.prisma.transferOffer.update({
+        where: { id: s.offer.id },
+        data: { status: "REJECTED" },
+      });
+      rejected++;
+    }
+  }
+
+  return { accepted, rejected };
+}
+
 export async function runAiOfferResolutions(ctx: ResolveCtx): Promise<number> {
   // Scope to the active save. Without this filter we would churn through
   // offers from other saves (multi-user prod deployment).
@@ -820,16 +924,20 @@ export const transferRouter = router({
           week: season.currentWeek,
           season: season.number,
           negotiationRound: 1,
-          deadlineAt: offerDeadline(),
+          // FA signings : 7 jours pour laisser le joueur décider (compétition
+          // possible d'autres clubs entre-temps). BUYOUT / EXTENSION gardent
+          // les 72h classiques.
+          deadlineAt:
+            input.offerType === "FREE_AGENT_SIGNING"
+              ? faOfferDeadline()
+              : offerDeadline(),
         },
       });
 
-      // Auto-resolve FA signings and auto-accept BUYOUTs where fee >= clause
+      // BUYOUT auto-accept si fee >= clause, EXTENSION auto-résolu, FA reste
+      // PENDING jusqu'à évaluation par le daily tick.
       let decision: OfferStatus = "PENDING";
-      if (input.offerType === "FREE_AGENT_SIGNING") {
-        const d = await resolveOfferDecision(ctx, offer.id);
-        decision = d as OfferStatus;
-      } else if (input.offerType === "BUYOUT") {
+      if (input.offerType === "BUYOUT") {
         const clause = effectiveBuyoutClause(player);
         // Auto-resolve only when fee triggers automatic acceptance, else keep PENDING
         if (transferFee >= clause) {
