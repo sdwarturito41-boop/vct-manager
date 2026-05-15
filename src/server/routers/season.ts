@@ -350,11 +350,56 @@ export const seasonRouter = router({
 
     await applyStatRollingUpdatesBatch(ctx.prisma, pendingStatUpdates);
 
-    // Phase 2 — collapse all of today's match writes into ONE transaction.
-    // Previously this was N parallel transactions (3 statements each), so ~3
-    // round-trips × N matches against Neon's pooler. One mega-transaction caps
-    // the latency at a single round-trip regardless of match count.
+    // Phase 2 — collapse ALL today's writes (match updates + per-team
+    // win/loss/champPts/budget deltas) into ONE transaction. Includes:
+    //   - match.update for each played match
+    //   - wins/losses + group-stage champPts
+    //   - finals placement champPts (KICKOFF_UB_FINAL, GRAND_FINAL, etc.)
+    //   - prize money payouts (Masters/Champions/Stage 2)
+    //
+    // Previously these were 3 separate phases firing dozens of sequential
+    // transactions: one per match for placement + one per match for prize,
+    // burning ~30-60 round-trips. Aggregating into one transaction keeps
+    // latency at a single round-trip regardless of match count.
     const playedAt = new Date();
+    const finalsPointsConfig: Record<string, { winner: number; loser: number }> = {
+      "KICKOFF_UB_FINAL":      { winner: 4, loser: 0 },
+      "KICKOFF_MID_FINAL":     { winner: 3, loser: 0 },
+      "KICKOFF_LB_FINAL":      { winner: 2, loser: 1 },
+      "MASTERS_1_GRAND_FINAL": { winner: 4, loser: 3 },
+      "MASTERS_1_LB_FINAL":    { winner: 0, loser: 2 },
+      "MASTERS_1_LB_SF":       { winner: 0, loser: 1 },
+      "MASTERS_2_GRAND_FINAL": { winner: 4, loser: 3 },
+      "MASTERS_2_LB_FINAL":    { winner: 0, loser: 2 },
+      "MASTERS_2_LB_SF":       { winner: 0, loser: 1 },
+      "STAGE_1_PO_GF":         { winner: 4, loser: 3 },
+      "STAGE_1_PO_LB_FINAL":   { winner: 0, loser: 2 },
+      "STAGE_1_PO_LB_R2":      { winner: 0, loser: 1 },
+      "STAGE_2_PO_GF":         { winner: 4, loser: 3 },
+      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 2 },
+      "STAGE_2_PO_LB_R2":      { winner: 0, loser: 1 },
+    };
+    const prizePayouts: Record<string, { winner: number; loser: number }> = {
+      "STAGE_2_PO_GF":         { winner: 100_000, loser: 65_000 },
+      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 40_000 },
+      "STAGE_2_PO_UB_FINAL":   { winner: 0, loser: 25_000 },
+      "STAGE_2_PO_LB_R2":      { winner: 0, loser: 10_000 },
+      "MASTERS_1_GRAND_FINAL": { winner: 175_000, loser: 100_000 },
+      "MASTERS_1_LB_FINAL":    { winner: 0, loser: 62_500 },
+      "MASTERS_1_LB_SF":       { winner: 0, loser: 37_500 },
+      "MASTERS_1_LB_R2":       { winner: 0, loser: 25_000 },
+      "MASTERS_1_LB_R1":       { winner: 0, loser: 17_500 },
+      "MASTERS_2_GRAND_FINAL": { winner: 350_000, loser: 200_000 },
+      "MASTERS_2_LB_FINAL":    { winner: 0, loser: 125_000 },
+      "MASTERS_2_LB_SF":       { winner: 0, loser: 75_000 },
+      "MASTERS_2_LB_R2":       { winner: 0, loser: 50_000 },
+      "MASTERS_2_LB_R1":       { winner: 0, loser: 35_000 },
+      "CHAMPIONS_GRAND_FINAL": { winner: 1_000_000, loser: 400_000 },
+      "CHAMPIONS_LB_FINAL":    { winner: 0, loser: 250_000 },
+      "CHAMPIONS_LB_SF":       { winner: 0, loser: 130_000 },
+      "CHAMPIONS_LB_R2":       { winner: 0, loser: 85_000 },
+      "CHAMPIONS_LB_R1":       { winner: 0, loser: 50_000 },
+    };
     if (aiResults.length > 0) {
       const writes: import("@/generated/prisma/client").Prisma.PrismaPromise<unknown>[] = [];
       for (const r of aiResults) {
@@ -371,34 +416,44 @@ export const seasonRouter = router({
           }),
         );
       }
-      // Aggregate per-team win/loss/champPts across all matches today, then
-      // emit one update per team. Collapses the 2-update-per-match pattern into
-      // ~equal-or-fewer rows total (a team rarely plays >1 match per day, but
-      // when they do this dedupes the writes too).
       const teamDeltas = new Map<
         string,
-        { wins: number; losses: number; champPts: number }
+        { wins: number; losses: number; champPts: number; budget: number }
       >();
       const ensure = (id: string) => {
         let d = teamDeltas.get(id);
         if (!d) {
-          d = { wins: 0, losses: 0, champPts: 0 };
+          d = { wins: 0, losses: 0, champPts: 0, budget: 0 };
           teamDeltas.set(id, d);
         }
         return d;
       };
       for (const r of aiResults) {
-        const w = ensure(r.winnerId);
-        w.wins += 1;
-        if (r.isStage12Group) w.champPts += 1;
-        const l = ensure(r.loserId);
-        l.losses += 1;
+        ensure(r.winnerId).wins += 1;
+        ensure(r.loserId).losses += 1;
+        if (r.isStage12Group) ensure(r.winnerId).champPts += 1;
+        const fp = finalsPointsConfig[r.stageId];
+        if (fp) {
+          if (fp.winner > 0) ensure(r.winnerId).champPts += fp.winner;
+          if (fp.loser > 0) ensure(r.loserId).champPts += fp.loser;
+        }
+        const pz = prizePayouts[r.stageId];
+        if (pz) {
+          if (pz.winner > 0) ensure(r.winnerId).budget += pz.winner;
+          if (pz.loser > 0) ensure(r.loserId).budget += pz.loser;
+        }
       }
       for (const [teamId, d] of teamDeltas) {
-        const data: { wins?: { increment: number }; losses?: { increment: number }; champPts?: { increment: number } } = {};
+        const data: {
+          wins?: { increment: number };
+          losses?: { increment: number };
+          champPts?: { increment: number };
+          budget?: { increment: number };
+        } = {};
         if (d.wins) data.wins = { increment: d.wins };
         if (d.losses) data.losses = { increment: d.losses };
         if (d.champPts) data.champPts = { increment: d.champPts };
+        if (d.budget) data.budget = { increment: d.budget };
         writes.push(
           ctx.prisma.team.update({
             where: { id: teamId },
@@ -521,117 +576,8 @@ export const seasonRouter = router({
       }
     }
 
-    // VCT 2026 Championship Points — max 4 per placement, group stages give 1pt per win.
-    // EWC + Champions give NO points.
-    // Only award at final elimination — no double-counting.
-    const finalsPointsConfig: Record<string, { winner: number; loser: number }> = {
-      // Kickoff — triple elim: each final WINNER is awarded their placement.
-      // Losers of UB_FINAL and MID_FINAL continue to lower brackets — no double-award.
-      // Only LB_FINAL loser gets a placement (4th) since they're fully eliminated.
-      "KICKOFF_UB_FINAL": { winner: 4, loser: 0 }, // 1st (loser → MID_FINAL)
-      "KICKOFF_MID_FINAL": { winner: 3, loser: 0 }, // 2nd (loser → LB_FINAL)
-      "KICKOFF_LB_FINAL": { winner: 2, loser: 1 }, // 3rd / 4th (full elimination)
-      // Masters (8-team double elim): GF = 1st/2nd, LB Final loser = 3rd,
-      // LB SF loser = 4th, LB R2 losers = 5th-6th, LB R1 losers = 7th-8th.
-      "MASTERS_1_GRAND_FINAL": { winner: 4, loser: 3 },
-      "MASTERS_1_LB_FINAL": { winner: 0, loser: 2 }, // 3rd place
-      "MASTERS_1_LB_SF": { winner: 0, loser: 1 }, // 4th place
-      "MASTERS_2_GRAND_FINAL": { winner: 4, loser: 3 },
-      "MASTERS_2_LB_FINAL": { winner: 0, loser: 2 },
-      "MASTERS_2_LB_SF": { winner: 0, loser: 1 },
-      // Stage 1 playoffs (8-team bracket):
-      //   GF → 1st/2nd, LB Final loser → 3rd, LB R2 loser → 4th
-      //   LB R1 losers (7th/8th from 4th group seeds) → no points
-      "STAGE_1_PO_GF": { winner: 4, loser: 3 },
-      "STAGE_1_PO_LB_FINAL": { winner: 0, loser: 2 }, // 3rd
-      "STAGE_1_PO_LB_R2": { winner: 0, loser: 1 }, // 4th
-      "STAGE_2_PO_GF": { winner: 4, loser: 3 },
-      "STAGE_2_PO_LB_FINAL": { winner: 0, loser: 2 },
-      "STAGE_2_PO_LB_R2": { winner: 0, loser: 1 },
-    };
-    for (const result of simulatedResults) {
-      const pointsCfg = finalsPointsConfig[result.stageId];
-      if (pointsCfg && result.winnerId) {
-        const loserId = result.winnerId === result.team1Id ? result.team2Id : result.team1Id;
-        const updates = [];
-        if (pointsCfg.winner > 0) {
-          updates.push(ctx.prisma.team.update({
-            where: { id: result.winnerId },
-            data: { champPts: { increment: pointsCfg.winner } },
-          }));
-        }
-        if (pointsCfg.loser > 0) {
-          updates.push(ctx.prisma.team.update({
-            where: { id: loserId },
-            data: { champPts: { increment: pointsCfg.loser } },
-          }));
-        }
-        if (updates.length > 0) {
-          await ctx.prisma.$transaction(updates);
-        }
-      }
-    }
-
-    // ── Prize money payouts (USD into team.budget) ──────────────────
-    // Cash awarded at elimination match. Spec sourced from VCT 2026 prize
-    // breakdowns: Champions $2.25M, big Masters (Shanghai-tier) $1M, small
-    // Masters (Madrid-tier) $500k, regional Stage 2 $250k. Kickoff and
-    // Stage 1 are qualifiers only — no direct prize money.
-    //
-    // Eliminations match → placement mapping:
-    //   GF winner = 1st, GF loser = 2nd, LB Final loser = 3rd, LB SF loser = 4th
-    //   LB R3 losers = 5-6, LB R1 losers = 7-8 (Masters/Champions 8-team bracket).
-    //   For regional Stage 2 (8-team but no LB SF): UB Final loser is treated as 4th,
-    //   LB R2 losers as 5-6, LB R1 losers no payout.
-    const prizePayouts: Record<string, { winner: number; loser: number }> = {
-      // Stage 2 regional ($250k per region)
-      "STAGE_2_PO_GF":         { winner: 100_000, loser: 65_000 },
-      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 40_000 },
-      "STAGE_2_PO_UB_FINAL":   { winner: 0, loser: 25_000 },
-      "STAGE_2_PO_LB_R2":      { winner: 0, loser: 10_000 },
-      // Masters 1 — Madrid-tier ($500k). Placement mapping:
-      //   GF W/L → 1st/2nd, LB Final loser → 3rd, LB SF loser → 4th,
-      //   LB R2 losers → 5th-6th, LB R1 losers → 7th-8th.
-      "MASTERS_1_GRAND_FINAL": { winner: 175_000, loser: 100_000 },
-      "MASTERS_1_LB_FINAL":    { winner: 0, loser: 62_500 },
-      "MASTERS_1_LB_SF":       { winner: 0, loser: 37_500 },
-      "MASTERS_1_LB_R2":       { winner: 0, loser: 25_000 },
-      "MASTERS_1_LB_R1":       { winner: 0, loser: 17_500 },
-      // Masters 2 — Shanghai-tier ($1M)
-      "MASTERS_2_GRAND_FINAL": { winner: 350_000, loser: 200_000 },
-      "MASTERS_2_LB_FINAL":    { winner: 0, loser: 125_000 },
-      "MASTERS_2_LB_SF":       { winner: 0, loser: 75_000 },
-      "MASTERS_2_LB_R2":       { winner: 0, loser: 50_000 },
-      "MASTERS_2_LB_R1":       { winner: 0, loser: 35_000 },
-      // Champions — the big one ($2.25M). Same placement structure as Masters.
-      "CHAMPIONS_GRAND_FINAL": { winner: 1_000_000, loser: 400_000 },
-      "CHAMPIONS_LB_FINAL":    { winner: 0, loser: 250_000 },
-      "CHAMPIONS_LB_SF":       { winner: 0, loser: 130_000 },
-      "CHAMPIONS_LB_R2":       { winner: 0, loser: 85_000 },
-      "CHAMPIONS_LB_R1":       { winner: 0, loser: 50_000 },
-    };
-    for (const result of simulatedResults) {
-      const payout = prizePayouts[result.stageId];
-      if (payout && result.winnerId) {
-        const loserId = result.winnerId === result.team1Id ? result.team2Id : result.team1Id;
-        const updates: ReturnType<typeof ctx.prisma.team.update>[] = [];
-        if (payout.winner > 0) {
-          updates.push(ctx.prisma.team.update({
-            where: { id: result.winnerId },
-            data: { budget: { increment: payout.winner } },
-          }));
-        }
-        if (payout.loser > 0) {
-          updates.push(ctx.prisma.team.update({
-            where: { id: loserId },
-            data: { budget: { increment: payout.loser } },
-          }));
-        }
-        if (updates.length > 0) {
-          await ctx.prisma.$transaction(updates);
-        }
-      }
-    }
+    // Final-placement champPts + prize money are now applied in the Phase 2
+    // mega-transaction above (via teamDeltas). No separate loops needed.
 
     // ═══════════════════════════════════════════════════════════
     // Stage transitions
@@ -904,18 +850,19 @@ export const seasonRouter = router({
     // ═══════════════════════════════════════════════════════════
     // Mercato V1 ticks — expire stale offers (daily), recompute happiness +
     // run IA transfer activity on weekly tick (first day of a new week).
+    //
+    // The TransferOffer chain (expire → run IA → evaluate FA) must stay
+    // sequential — each step's writes feed the next read. Staff hires touch
+    // a different table and are safe to run in parallel with that chain.
     // ═══════════════════════════════════════════════════════════
-    await expireStaleOffers(ctx.prisma);
-
-    // Daily: AI resolves pending transfer offers (buyouts etc.)
-    await runAiOfferResolutions({ prisma: ctx.prisma, save: { id: ctx.save.id } });
-    // FA signings : décision par le joueur quand deadline atteinte OU 2+
-    // clubs intéressés. Tourne tous les jours pour réagir vite à la
-    // compétition entre clubs.
-    await evaluateFreeAgentDecisions({ prisma: ctx.prisma, save: { id: ctx.save.id } });
-    // Staff hires : 7 jours d'attente puis promote en titulaire (ou reject
-    // si le slot a été pris entre-temps par un autre hire).
-    await evaluatePendingStaffHires(ctx.prisma, ctx.save.id, newDay);
+    await Promise.all([
+      (async () => {
+        await expireStaleOffers(ctx.prisma);
+        await runAiOfferResolutions({ prisma: ctx.prisma, save: { id: ctx.save.id } });
+        await evaluateFreeAgentDecisions({ prisma: ctx.prisma, save: { id: ctx.save.id } });
+      })(),
+      evaluatePendingStaffHires(ctx.prisma, ctx.save.id, newDay),
+    ]);
 
     const prevWeek = Math.ceil(season.currentDay / 7);
     const isNewWeekTick = newWeek > prevWeek;
@@ -1069,27 +1016,44 @@ export const seasonRouter = router({
     }
 
     // ── Sponsor champPts bonuses when finals are decided ──
-    for (const result of simulatedResults) {
-      const pointsCfg = finalsPointsConfig[result.stageId];
-      if (!pointsCfg || !result.winnerId) continue;
-      const loserId = result.winnerId === result.team1Id ? result.team2Id : result.team1Id;
-      const payments: Array<[string, number]> = [];
-      if (pointsCfg.winner > 0) payments.push([result.winnerId, pointsCfg.winner]);
-      if (pointsCfg.loser > 0) payments.push([loserId, pointsCfg.loser]);
-      for (const [teamId, pts] of payments) {
-        const t = await ctx.prisma.team.findUnique({
-          where: { id: teamId },
-          include: {
+    // Batched: 1 findMany (all involved teams + sponsors) + 1 transaction.
+    // Used to be N teams × 2 queries each (findUnique + update) sequentially.
+    {
+      const ptsByTeam = new Map<string, number>();
+      for (const result of simulatedResults) {
+        const pointsCfg = finalsPointsConfig[result.stageId];
+        if (!pointsCfg || !result.winnerId) continue;
+        const loserId = result.winnerId === result.team1Id ? result.team2Id : result.team1Id;
+        if (pointsCfg.winner > 0) {
+          ptsByTeam.set(result.winnerId, (ptsByTeam.get(result.winnerId) ?? 0) + pointsCfg.winner);
+        }
+        if (pointsCfg.loser > 0) {
+          ptsByTeam.set(loserId, (ptsByTeam.get(loserId) ?? 0) + pointsCfg.loser);
+        }
+      }
+      if (ptsByTeam.size > 0) {
+        const teams = await ctx.prisma.team.findMany({
+          where: { id: { in: [...ptsByTeam.keys()] } },
+          select: {
+            id: true,
             sponsors: { where: { isActive: true }, select: { champPtsBonus: true } },
           },
         });
-        if (!t) continue;
-        const bonus = t.sponsors.reduce((s, sp) => s + sp.champPtsBonus * pts, 0);
-        if (bonus > 0) {
-          await ctx.prisma.team.update({
-            where: { id: teamId },
-            data: { budget: { increment: bonus } },
-          });
+        const bonusWrites: import("@/generated/prisma/client").Prisma.PrismaPromise<unknown>[] = [];
+        for (const t of teams) {
+          const pts = ptsByTeam.get(t.id) ?? 0;
+          const bonus = t.sponsors.reduce((s, sp) => s + sp.champPtsBonus * pts, 0);
+          if (bonus > 0) {
+            bonusWrites.push(
+              ctx.prisma.team.update({
+                where: { id: t.id },
+                data: { budget: { increment: bonus } },
+              }),
+            );
+          }
+        }
+        if (bonusWrites.length > 0) {
+          await ctx.prisma.$transaction(bonusWrites);
         }
       }
     }
