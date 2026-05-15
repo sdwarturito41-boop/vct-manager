@@ -17,9 +17,6 @@ export async function evaluatePendingStaffHires(
   saveId: string,
   currentDay: number,
 ): Promise<{ accepted: number; rejected: number }> {
-  let accepted = 0;
-  let rejected = 0;
-
   const pending = await prisma.staff.findMany({
     where: {
       saveId,
@@ -28,36 +25,57 @@ export async function evaluatePendingStaffHires(
     },
   });
 
-  for (const s of pending) {
-    const waited = currentDay - (s.pendingSinceDay ?? currentDay);
-    if (waited < STAFF_HIRE_WAIT_DAYS) continue;
-    if (!s.pendingTeamId) continue;
+  // Filter to hires that have waited enough. No-ops fast on the common path.
+  const ripe = pending.filter(
+    (s) => s.pendingTeamId && currentDay - (s.pendingSinceDay ?? currentDay) >= STAFF_HIRE_WAIT_DAYS,
+  );
+  if (ripe.length === 0) return { accepted: 0, rejected: 0 };
 
-    // Re-check slot capacity at promotion time (l'équipe peut avoir hired
-    // un autre candidat depuis).
-    const existingCount = await prisma.staff.count({
-      where: { teamId: s.pendingTeamId, role: s.role },
-    });
+  // Batched slot check: one groupBy gets ALL (team, role) counts we need in
+  // a single round-trip. Used to be `staff.count` per ripe hire.
+  const teamRolePairs = [...new Set(ripe.map((s) => `${s.pendingTeamId}|${s.role}`))];
+  const counts = await prisma.staff.groupBy({
+    by: ["teamId", "role"],
+    where: {
+      teamId: { in: ripe.map((s) => s.pendingTeamId as string) },
+      role: { in: ripe.map((s) => s.role) },
+    },
+    _count: { _all: true },
+  });
+  const countMap = new Map<string, number>();
+  for (const c of counts) {
+    if (c.teamId) countMap.set(`${c.teamId}|${c.role}`, c._count._all);
+  }
+  void teamRolePairs;
+
+  // Decide accept/reject in memory, then fire ONE transaction with all writes.
+  // Track per-(team, role) usage as we accept so we don't over-fill a slot if
+  // multiple candidates were waiting for the same opening.
+  const usage = new Map(countMap);
+  let accepted = 0;
+  let rejected = 0;
+  const writes: import("@/generated/prisma/client").Prisma.PrismaPromise<unknown>[] = [];
+
+  for (const s of ripe) {
+    const k = `${s.pendingTeamId}|${s.role}`;
+    const existing = usage.get(k) ?? 0;
     const rule = STAFF_SLOTS[s.role];
-    if (existingCount >= rule.max) {
-      // Plus de place — rejette
-      await prisma.staff.delete({ where: { id: s.id } });
+    if (existing >= rule.max) {
+      writes.push(prisma.staff.delete({ where: { id: s.id } }));
       rejected++;
-      continue;
+    } else {
+      writes.push(
+        prisma.staff.update({
+          where: { id: s.id },
+          data: { teamId: s.pendingTeamId, pendingTeamId: null, pendingSinceDay: null },
+        }),
+      );
+      usage.set(k, existing + 1);
+      accepted++;
     }
-
-    // Accept : promote
-    await prisma.staff.update({
-      where: { id: s.id },
-      data: {
-        teamId: s.pendingTeamId,
-        pendingTeamId: null,
-        pendingSinceDay: null,
-      },
-    });
-    accepted++;
   }
 
+  if (writes.length > 0) await prisma.$transaction(writes);
   return { accepted, rejected };
 }
 

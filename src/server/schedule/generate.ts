@@ -328,24 +328,37 @@ async function getResultsByTeams(
   prisma: PrismaClient, saveId: string, stageId: string, season: number,
   teamPairs: [string, string][], nameToId: Map<string, string>,
 ): Promise<WL[]> {
-  const results: WL[] = [];
-  for (const [a, b] of teamPairs) {
+  // Batched: 1 findMany covering all pairs, then we look up in memory.
+  // Was: N sequential findFirst (one per pair).
+  const pairIds = teamPairs
+    .map(([a, b]) => [nameToId.get(a), nameToId.get(b)] as const)
+    .filter((p): p is readonly [string, string] => !!p[0] && !!p[1]);
+  const allTeamIds = [...new Set(pairIds.flat())];
+  const matches = allTeamIds.length === 0
+    ? []
+    : await prisma.match.findMany({
+        where: {
+          saveId, stageId, season, isPlayed: true,
+          team1Id: { in: allTeamIds },
+          team2Id: { in: allTeamIds },
+        },
+        select: { team1Id: true, team2Id: true, winnerId: true },
+      });
+  const key = (x: string, y: string) => (x < y ? `${x}|${y}` : `${y}|${x}`);
+  const byPair = new Map<string, { team1Id: string; team2Id: string; winnerId: string | null }>();
+  for (const m of matches) byPair.set(key(m.team1Id, m.team2Id), m);
+
+  return teamPairs.map(([a, b]) => {
     const aId = nameToId.get(a);
     const bId = nameToId.get(b);
-    if (!aId || !bId) { results.push({ winner: "", loser: "" }); continue; }
-    const match = await prisma.match.findFirst({
-      where: {
-        saveId, stageId, season, isPlayed: true,
-        OR: [{ team1Id: aId, team2Id: bId }, { team1Id: bId, team2Id: aId }],
-      },
-    });
-    if (match?.winnerId) {
-      results.push({ winner: match.winnerId, loser: match.winnerId === match.team1Id ? match.team2Id : match.team1Id });
-    } else {
-      results.push({ winner: "", loser: "" });
-    }
-  }
-  return results;
+    if (!aId || !bId) return { winner: "", loser: "" };
+    const m = byPair.get(key(aId, bId));
+    if (!m?.winnerId) return { winner: "", loser: "" };
+    return {
+      winner: m.winnerId,
+      loser: m.winnerId === m.team1Id ? m.team2Id : m.team1Id,
+    };
+  });
 }
 
 async function createMatchesOnNextSlots(
