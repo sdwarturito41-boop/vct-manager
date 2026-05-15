@@ -277,15 +277,19 @@ export async function getEwcQualifierS1Winners(
 // ──────────────────────────────────────────────────────────────────────
 
 /**
- * Récupère les 8 seeds Stage 2 Qualifier pour une région.
+ * Récupère les 8 seeds Stage 2 Qualifier pour une région — basés sur la
+ * **placement Stage 1 PO** (pas le classement group stage).
  *
- * Le VCT #1 (groupe stage) est **direct qualifié EWC**, donc absent du
- * qualifier. Le bracket démarre à VCT #2. Ranks 3 et 4 ont leur slot Masters
- * London. Donc :
- *   vctA = rank 2 (slot M4 dans UB R1)
- *   vctB = rank 3 (slot M1 dans UB R1)
- *   top5..top8 = ranks 5-8
- *   qual1, qual2 = UB Final / LB Final du Stage 1 Qualifier
+ * PO 1er est direct EWC, donc absent. PO 4e est éliminé (juste +2 pts, pas
+ * de qualif). Les 6 autres placements PO entrent dans le qualifier avec les
+ * 2 vainqueurs S1 qualifier.
+ *
+ *   vctA = PO 2 (GF loser)              → slot M1
+ *   vctB = PO 3 (LB GF loser)           → slot M4
+ *   top5..top8 = PO 5..8
+ *     PO 5 / 6 = LB R2 losers
+ *     PO 7 / 8 = LB R1 losers
+ *   qual1, qual2 = UB Final / LB Final winners du S1 Qualifier
  */
 async function getEwcQualifierS2Seeds(
   prisma: PrismaClient,
@@ -293,8 +297,8 @@ async function getEwcQualifierS2Seeds(
   region: Region,
   season: number,
 ): Promise<{
-  vctA: string; // VCT #2 of group stage (was named vct1)
-  vctB: string; // VCT #3 of group stage (was named vct2)
+  vctA: string; // PO 2 (Grand Final loser)
+  vctB: string; // PO 3 (LB GF loser)
   top5: string;
   top6: string;
   top7: string;
@@ -302,60 +306,86 @@ async function getEwcQualifierS2Seeds(
   qual1: string;
   qual2: string;
 } | null> {
-  // Standings overall = wins cumulés sur ALPHA + OMEGA
-  const groupMatches = await prisma.match.findMany({
+  // Résoudre les placements via les matchs de PO joués.
+  const findLoser = async (stageId: string): Promise<string | null> => {
+    const m = await prisma.match.findFirst({
+      where: {
+        saveId, season, stageId,
+        team1: { region }, isPlayed: true,
+        winnerId: { not: null },
+      },
+      select: { team1Id: true, team2Id: true, winnerId: true },
+    });
+    if (!m || !m.winnerId) return null;
+    return m.winnerId === m.team1Id ? m.team2Id : m.team1Id;
+  };
+
+  // PO 2 = GF loser, PO 3 = LB GF loser, PO 4 = LB SF loser (LB_FINAL stageId).
+  const po2 = await findLoser("STAGE_1_PO_GF");
+  const po3 = await findLoser("STAGE_1_PO_LB_GF");
+  if (!po2 || !po3) return null;
+
+  // PO 5-6 = LB R2 losers (2 matches), PO 7-8 = LB R1 losers (2 matches).
+  const lbR2Matches = await prisma.match.findMany({
     where: {
       saveId, season,
-      OR: [{ stageId: "STAGE_1_ALPHA" }, { stageId: "STAGE_1_OMEGA" }],
-      team1: { region },
-      isPlayed: true,
+      stageId: "STAGE_1_PO_LB_R2",
+      team1: { region }, isPlayed: true,
+      winnerId: { not: null },
     },
     select: { team1Id: true, team2Id: true, winnerId: true },
   });
-  if (groupMatches.length === 0) return null;
+  const lbR1Matches = await prisma.match.findMany({
+    where: {
+      saveId, season,
+      stageId: "STAGE_1_PO_LB_R1",
+      team1: { region }, isPlayed: true,
+      winnerId: { not: null },
+    },
+    select: { team1Id: true, team2Id: true, winnerId: true },
+  });
+  const lbR2Losers = lbR2Matches
+    .map((m) => (m.winnerId === m.team1Id ? m.team2Id : m.team1Id))
+    .filter((id): id is string => !!id);
+  const lbR1Losers = lbR1Matches
+    .map((m) => (m.winnerId === m.team1Id ? m.team2Id : m.team1Id))
+    .filter((id): id is string => !!id);
+  if (lbR2Losers.length < 2 || lbR1Losers.length < 2) return null;
 
-  const winMap = new Map<string, number>();
-  const participants = new Set<string>();
-  for (const m of groupMatches) {
-    participants.add(m.team1Id);
-    participants.add(m.team2Id);
-    if (m.winnerId) winMap.set(m.winnerId, (winMap.get(m.winnerId) ?? 0) + 1);
-  }
-  const ranked = [...participants].sort(
-    (a, b) => (winMap.get(b) ?? 0) - (winMap.get(a) ?? 0),
-  );
-  if (ranked.length < 8) return null; // pas assez d'équipes
-
-  // QUAL 1 = UB Final winner, QUAL 2 = LB Final winner du S1 Qualifier
+  // QUAL 1 = S1 UB Final winner, QUAL 2 = S1 LB Final winner.
   const qualifiers = await getEwcQualifierS1Winners(prisma, saveId, region, season);
   if (!qualifiers) return null;
 
   return {
-    // VCT #1 is direct-qualified to EWC main (handled elsewhere). Bracket
-    // starts at rank 2.
-    vctA: ranked[1], // rank 2
-    vctB: ranked[2], // rank 3
-    // skip rank 4 (Masters London via Stage 1 PO)
-    top5: ranked[4],
-    top6: ranked[5],
-    top7: ranked[6],
-    top8: ranked[7],
+    vctA: po2,            // PO 2 → M1 vs QUAL 1
+    vctB: po3,            // PO 3 → M4 vs QUAL 2
+    top5: lbR2Losers[0],  // PO 5
+    top6: lbR2Losers[1],  // PO 6
+    top7: lbR1Losers[0],  // PO 7
+    top8: lbR1Losers[1],  // PO 8
     qual1: qualifiers.qual1,
     qual2: qualifiers.qual2,
   };
 }
 
 /**
- * Initialise le Stage 2 Qualifier pour UNE région. Joué après le Stage 1
- * Qualifier (LB Final terminé). 8 équipes, format double élim, top 3 → EWC.
+ * Initialise le Stage 2 Qualifier pour UNE région. Démarre une fois que
+ * (a) le Stage 1 Qualifier S1 est terminé (LB Final joué) ET (b) le PO #1
+ * régional est connu (Stage 1 PO GF joué) — sans ce dernier on ne saurait
+ * pas qui est direct-EWC à exclure du bracket. 8 équipes, double élim,
+ * top 3 → EWC.
  *
- * Le VCT #1 (groupe stage) est direct EWC (ne joue pas le qualifier).
+ * Le PO #1 (vainqueur Stage 1 PO GF) est direct EWC, donc absent du bracket.
+ * Le bracket utilise les classements group stage (Alpha+Omega wins) pour les
+ * seeds VCT, en commençant à VCT #2 (puisque VCT #1 group stage ≈ PO #1
+ * typiquement). En cas de désalignement (PO #1 ≠ group stage #1), la dédup
+ * dans `initializeEwcMainFromQualifiers` gère le cas.
  *
  * UB R1 (Mon, 4 matchs) :
- *   M1: VCT 3 vs QUAL 1   (anciennement VCT 2)
+ *   M1: VCT 2 vs QUAL 1
  *   M2: top 8 vs top 5
  *   M3: top 7 vs top 6
- *   M4: VCT 2 vs QUAL 2   (anciennement VCT 1)
+ *   M4: VCT 3 vs QUAL 2
  *
  * Crée UB R1 seulement ; les rounds suivants progressent via
  * `progressEwcQualifierS2`.
@@ -372,6 +402,20 @@ export async function initializeEwcQualifierS2(
   });
   if (existing > 0) return { matchesScheduled: 0 };
 
+  // Gate: wait for the Stage 1 PO Grand Final so PO #1 is known. Without
+  // this, the qualifier might include a team that later wins PO and takes
+  // the direct EWC slot — leaving us with only 2 effective qualifiers.
+  const poGf = await prisma.match.findFirst({
+    where: {
+      saveId, season,
+      stageId: "STAGE_1_PO_GF",
+      team1: { region },
+      isPlayed: true,
+      winnerId: { not: null },
+    },
+  });
+  if (!poGf) return { matchesScheduled: 0 };
+
   const seeds = await getEwcQualifierS2Seeds(prisma, saveId, region, season);
   if (!seeds) return { matchesScheduled: 0 };
 
@@ -382,11 +426,12 @@ export async function initializeEwcQualifierS2(
   while (dayOfWeek(monday) !== 1) monday++;
 
   const matches = [
-    // vctB = rank 3, vctA = rank 2 (after the VCT #1 direct-qual shift)
-    { team1Id: seeds.vctB, team2Id: seeds.qual1 },
+    // M1: VCT 2 vs QUAL 1   (vctA = group stage rank 2)
+    { team1Id: seeds.vctA, team2Id: seeds.qual1 },
     { team1Id: seeds.top8, team2Id: seeds.top5 },
     { team1Id: seeds.top7, team2Id: seeds.top6 },
-    { team1Id: seeds.vctA, team2Id: seeds.qual2 },
+    // M4: VCT 3 vs QUAL 2   (vctB = group stage rank 3)
+    { team1Id: seeds.vctB, team2Id: seeds.qual2 },
   ].map((p) => ({
     saveId,
     team1Id: p.team1Id,

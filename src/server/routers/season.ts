@@ -600,6 +600,14 @@ export const seasonRouter = router({
             }
             if (roundId.includes("_PO_")) {
               await progressRegionalPlayoffs(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
+              // When the Stage 1 PO GF completes, the regional PO #1 becomes
+              // known. That's a precondition for `initializeEwcQualifierS2`
+              // (so the qualifier seeds aren't polluted by the eventual direct
+              // EWC qualifier). Try to fire it here — idempotent, so a no-op
+              // if S1 LB Final hasn't created the S2 yet.
+              if (roundId === "STAGE_1_PO_GF") {
+                await initializeEwcQualifierS2(ctx.prisma, ctx.save.id, region as Region, season.number, newDay);
+              }
             }
             if (roundId.startsWith("EWC_QUAL_S1_")) {
               await progressEwcQualifierS1(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
