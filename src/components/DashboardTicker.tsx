@@ -188,7 +188,7 @@ export function DashboardTicker() {
                   style={{ color: D.textPrimary }}
                 >
                   {p.ign}
-                  <span style={{ color: D.textSubtle }}> · OVR {p.overall}</span>
+                  <span style={{ color: D.textSubtle }}> · OVR {Math.round(p.overall)}</span>
                 </Link>
                 <span
                   className="shrink-0 text-[10px]"

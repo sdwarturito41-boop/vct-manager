@@ -462,7 +462,11 @@ function rollGameDay(consistencyRating: number = 50, formMomentum: number = 0): 
   // derniers, j'arrive avec la flèche". Indépendant de la variance
   // (s'applique après le scaling consistency).
   if (formMomentum !== 0) {
-    const momentumMul = 1 + (formMomentum / 10) * 0.05;
+    // Was 0.05 → momentum=+8 gave +4% (saturating with the ±8 soft cap to
+    // +5% pre-cap). Reduced to 0.03 so the snowball is tamer: at the new
+    // ±5 soft cap, max boost is ±1.5% (vs ±4% before). Form still matters
+    // but doesn't single-handedly carry a streak.
+    const momentumMul = 1 + (formMomentum / 10) * 0.03;
     scaled *= momentumMul;
   }
   return scaled;

@@ -426,8 +426,8 @@ export default function PlayerPage() {
                   </div>
                   {typeof player.overall === "number" && (
                     <div className="mt-1 text-[10px]" style={{ color: D.textSubtle }}>
-                      {player.potential > player.overall
-                        ? `+${player.potential - player.overall} room to grow`
+                      {player.potential > Math.round(player.overall)
+                        ? `+${player.potential - Math.round(player.overall)} room to grow`
                         : "Already at ceiling"}
                     </div>
                   )}

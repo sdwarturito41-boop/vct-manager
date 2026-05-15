@@ -1,4 +1,11 @@
 import type { PrismaClient } from "@/generated/prisma/client";
+
+/** Soft cap on form momentum gained from match wins. Hard ceiling stays at
+ *  ±10 (for one-off bonuses outside the match loop). Lowered from 8 → 5 to
+ *  prevent the +momentum × +0.03 multiplier from snowballing a winning team
+ *  to a permanent rating boost. */
+const MOMENTUM_SOFT_CAP = 5;
+
 import {
   recomputePlayerOverall,
   getPercentileCache,
@@ -87,11 +94,11 @@ export async function applyStatRollingUpdate(
     momentumDelta = acsAboveBaseline ? 0 : -2;
   }
   const raw = player.formMomentum + momentumDelta;
-  // Soft cap : si on dépasse ±8 via les gains de matchs, on snap à 8.
-  // Préserve le signe pour pas tuer un momentum positif avec un seul mauvais match.
+  // Soft cap MOMENTUM_SOFT_CAP — snap to the cap when match wins would push
+  // past it. Hard ceiling ±10 stays for one-off non-match adjustments.
   let newMomentum = Math.max(-10, Math.min(10, raw));
-  if (Math.abs(newMomentum) > 8) {
-    newMomentum = Math.sign(newMomentum) * 8;
+  if (Math.abs(newMomentum) > MOMENTUM_SOFT_CAP) {
+    newMomentum = Math.sign(newMomentum) * MOMENTUM_SOFT_CAP;
   }
 
   await prisma.player.update({
@@ -211,8 +218,8 @@ export async function applyStatRollingUpdatesBatch(
       }
       const raw = curMomentum + momentumDelta;
       let newMomentum = Math.max(-10, Math.min(10, raw));
-      if (Math.abs(newMomentum) > 8) {
-        newMomentum = Math.sign(newMomentum) * 8;
+      if (Math.abs(newMomentum) > MOMENTUM_SOFT_CAP) {
+        newMomentum = Math.sign(newMomentum) * MOMENTUM_SOFT_CAP;
       }
 
       curAcs = round2(newAcs);

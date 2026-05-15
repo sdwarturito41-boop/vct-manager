@@ -259,7 +259,7 @@ export default function RecruitmentHubPage() {
                       {p.ign}
                     </div>
                     <div className="text-[10px]" style={{ color: D.textSubtle }}>
-                      {p.role} · OVR {p.overall ?? "—"} · {formatCurrency(p.salary)}/sem
+                      {p.role} · OVR {typeof p.overall === "number" ? Math.round(p.overall) : "—"} · {formatCurrency(p.salary)}/sem
                     </div>
                   </div>
                   <span
@@ -455,7 +455,7 @@ function CandidateRow({ candidate }: { candidate: Candidate }) {
       <div className="flex items-center gap-3 text-[11px] tabular-nums">
         {isScouted ? (
           <>
-            <StatChip label="OVR" value={c.overall ?? "—"} color={D.gold} />
+            <StatChip label="OVR" value={typeof c.overall === "number" ? Math.round(c.overall) : "—"} color={D.gold} />
             <StatChip label="ACS" value={Math.round(c.acs)} />
             <StatChip label="K/D" value={c.kd.toFixed(2)} />
             <StatChip label="POT" value={c.potential} color={D.primary} />
