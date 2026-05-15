@@ -49,7 +49,10 @@ export const playerRouter = router({
    * the EMA-rolling career K/D (which drifts and didn't match across views).
    */
   stageStats: saveProcedure
-    .input(z.object({ playerIds: z.array(z.string()).min(1).max(60) }))
+    .input(z.object({
+      playerIds: z.array(z.string()).min(1).max(60),
+      teamIds: z.array(z.string()).optional(),
+    }))
     .query(async ({ ctx, input }): Promise<Record<string, StageStats>> => {
       const season = await ctx.prisma.season.findFirst({
         where: { isActive: true, saveId: ctx.save.id },
@@ -62,6 +65,7 @@ export const playerRouter = router({
         season.number,
         season.currentStage,
         input.playerIds,
+        input.teamIds,
       );
     }),
 

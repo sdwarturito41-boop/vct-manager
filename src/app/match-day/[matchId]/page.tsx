@@ -63,12 +63,6 @@ interface MapResultData {
   highlights: { type: string; round: number; playerIgn?: string; text: string }[];
 }
 
-interface StoredMapResult {
-  map: string;
-  score1: number;
-  score2: number;
-}
-
 interface RoundEventDetail {
   type: "clutch" | "ace" | "eco_win" | "first_blood" | "momentum_break" | "defuse_clutch" | "flawless";
   text: string;
@@ -791,10 +785,23 @@ export default function MatchDayPage() {
   async function handleMatchComplete() {
     const winnerId = seriesScore.team1 >= winsNeeded ? team1Id : team2Id;
 
-    const maps: StoredMapResult[] = mapResults.map((r) => ({
+    const maps = mapResults.map((r) => ({
       map: r.map,
       score1: r.score1,
       score2: r.score2,
+      // Persisting playerStats is what feeds the stage-scoped K/D / ACS shown
+      // on the dashboard + roster.
+      playerStats: r.playerStats.map((s) => ({
+        playerId: s.playerId,
+        teamId: s.teamId,
+        ign: s.ign,
+        kills: s.kills,
+        deaths: s.deaths,
+        assists: s.assists,
+        acs: s.acs,
+        fk: s.fk,
+        fd: s.fd,
+      })),
     }));
 
     try {

@@ -79,8 +79,13 @@ export function aggregateStageStats(
 }
 
 /**
- * Convenience wrapper — fetches all played matches for the current stage in
- * the given save/season, then aggregates. Used by tRPC and by server pages.
+ * Convenience wrapper — fetches played matches for the current stage scoped
+ * to the teams the requested players belong to (passed in via `teamIds`).
+ *
+ * Scoping by team is critical: pulling every match in the stage returns the
+ * full `maps` JSON blob (round-by-round kill feed, loadouts, etc.) for every
+ * team's series — easily a few MB on a busy stage. Limiting to 2-3 teams
+ * keeps it under ~200 KB and the parse under 50 ms.
  */
 export async function getCurrentStageStats(
   prisma: PrismaClient,
@@ -88,17 +93,25 @@ export async function getCurrentStageStats(
   seasonNumber: number,
   stagePrefix: string,
   playerIds: string[],
+  teamIds?: string[],
 ): Promise<Record<string, StageStats>> {
   if (playerIds.length === 0) return {};
+  const stageOr = [
+    { stageId: { startsWith: stagePrefix } },
+    { stageId: stagePrefix },
+  ];
+  const teamOr =
+    teamIds && teamIds.length > 0
+      ? [{ team1Id: { in: teamIds } }, { team2Id: { in: teamIds } }]
+      : null;
   const matches = await prisma.match.findMany({
     where: {
       saveId,
       season: seasonNumber,
       isPlayed: true,
-      OR: [
-        { stageId: { startsWith: stagePrefix } },
-        { stageId: stagePrefix },
-      ],
+      AND: teamOr
+        ? [{ OR: stageOr }, { OR: teamOr }]
+        : [{ OR: stageOr }],
     },
     select: { maps: true },
   });

@@ -652,6 +652,24 @@ export const matchRouter = router({
             map: z.string(),
             score1: z.number(),
             score2: z.number(),
+            // Optional — older clients may not send these, but new flow does.
+            // Persisting them is what powers the stage-scoped K/D + ACS on
+            // the dashboard + roster.
+            playerStats: z
+              .array(
+                z.object({
+                  playerId: z.string(),
+                  teamId: z.string(),
+                  ign: z.string(),
+                  kills: z.number(),
+                  deaths: z.number(),
+                  assists: z.number(),
+                  acs: z.number(),
+                  fk: z.number().optional(),
+                  fd: z.number().optional(),
+                }),
+              )
+              .optional(),
           })
         ),
         winnerId: z.string(),

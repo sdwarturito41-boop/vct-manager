@@ -51,8 +51,10 @@ export default function RosterPage() {
   // generic recursion limit on the .map() — same workaround as line 53.
   const playerIds: string[] = ((allPlayers ?? []) as Array<{ id: string }>).map((p) => p.id);
   const { data: stageStats } = trpc.player.stageStats.useQuery(
-    { playerIds },
-    { enabled: playerIds.length > 0, retry: false },
+    // Scope match scan to the user's team only — otherwise we'd pull every
+    // team's heavy `maps` JSON blob just to discard 90% of it.
+    { playerIds, teamIds: team ? [team.id] : undefined },
+    { enabled: playerIds.length > 0 && !!team, retry: false },
   );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rosterRelations = trpc.player.rosterRelationSummary.useQuery(undefined, {

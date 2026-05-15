@@ -197,12 +197,15 @@ export default async function DashboardPage() {
 
   // Stage-scoped stats (K/D + ACS from current-stage matches only). Replaces
   // the EMA-rolling career stat that drifted between dashboard ↔ roster views.
+  // Scope the match scan to the 2 teams involved so we don't pull every
+  // played match's heavy JSON blob (it was adding ~3-5 s to the dashboard).
   const allLineupIds = [
     ...myStarters.map((p) => p.id),
     ...((opponentTeam?.players as Player[] | undefined) ?? []).map((p) => p.id),
   ];
+  const stageStatsTeamIds = [team.id, ...(opponentTeam?.id ? [opponentTeam.id] : [])];
   const stageStats = allLineupIds.length > 0
-    ? await api.player.stageStats({ playerIds: allLineupIds }).catch(() => ({}))
+    ? await api.player.stageStats({ playerIds: allLineupIds, teamIds: stageStatsTeamIds }).catch(() => ({}))
     : {};
 
   const currentStage =
