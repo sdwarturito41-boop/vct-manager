@@ -274,7 +274,15 @@ export async function applyStatRollingUpdatesBatch(
     );
   }
 
+  // Parallel chunked execution instead of one big $transaction. Prisma's
+  // sequential transaction API serializes each UPDATE on its connection — at
+  // ~50 ms Neon RTT × 60 player updates that was 3 s of pure wait. Chunks of
+  // 10 fan out across the pool while staying well under its 100-conn cap.
+  // Updates are independent (different player ids), so atomicity isn't needed.
   if (writes.length > 0) {
-    await prisma.$transaction(writes);
+    const CHUNK = 10;
+    for (let i = 0; i < writes.length; i += CHUNK) {
+      await Promise.all(writes.slice(i, i + CHUNK));
+    }
   }
 }

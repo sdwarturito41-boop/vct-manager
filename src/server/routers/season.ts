@@ -110,7 +110,9 @@ export const seasonRouter = router({
 
   advanceDay: saveProcedure.mutation(async ({ ctx }) => {
     // Per-section timing instrumentation — visible in Vercel logs to identify
-    // which phase eats the wall-clock time. Negligible overhead.
+    // which phase eats the wall-clock time. mark() logs immediately so that
+    // even if the function times out mid-flight we still see how far it got
+    // (the final summary log would otherwise never emit).
     const t0 = Date.now();
     const queryAt0 = getQueryCount();
     const marks: Array<{ label: string; ms: number; queries: number }> = [];
@@ -119,7 +121,10 @@ export const seasonRouter = router({
     const mark = (label: string) => {
       const now = Date.now();
       const q = getQueryCount();
-      marks.push({ label, ms: now - lastT, queries: q - lastQ });
+      const ms = now - lastT;
+      const queries = q - lastQ;
+      marks.push({ label, ms, queries });
+      console.log(`[advanceDay·step] +${ms}ms · ${queries}q · ${label} (total ${now - t0}ms)`);
       lastT = now;
       lastQ = q;
     };
@@ -1310,10 +1315,21 @@ export const seasonRouter = router({
     // tick. Catches edge cases where the per-resolve dispatch missed a round
     // (older saves, races, code paths bypassing the dispatcher).
     //
-    // Perf gate: skip the scan entirely on idle days. If nothing completed
-    // today, no successor needs creating — running it anyway costs a full
-    // season-wide findMany for nothing.
-    if (completedRounds.size > 0) {
+    // Perf gate: even though each progressXxx early-returns when the successor
+    // exists, it still fires 3-5 queries per fully-played stage just to make
+    // that determination. Mid-season we have ~50+ played stages → 200+ queries
+    // every advance day for ~zero work. Gate to Mondays + stage transitions so
+    // we still cover edge cases without burning 29s/day on idle scans.
+    const latestStageEarly = await ctx.prisma.season.findFirst({
+      where: { id: season.id },
+      select: { currentStage: true },
+    });
+    const stageJustTransitioned =
+      latestStageEarly != null && latestStageEarly.currentStage !== season.currentStage;
+    const isMondayTick = dayOfWeek(newDay, season.year) === 1;
+    const shouldSelfHeal =
+      completedRounds.size > 0 && (stageJustTransitioned || isMondayTick);
+    if (shouldSelfHeal) {
       const allMatches = await ctx.prisma.match.findMany({
         where: { saveId: ctx.save.id, season: season.number },
         select: {
