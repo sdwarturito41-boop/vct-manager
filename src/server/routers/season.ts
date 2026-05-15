@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { getQueryCount } from "@/lib/prisma";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
 import { simulateMatch } from "@/server/simulation/engine";
 import { applyStatRollingUpdatesBatch, type MatchStatInput } from "@/server/simulation/statRolling";
@@ -108,6 +109,21 @@ export const seasonRouter = router({
   }),
 
   advanceDay: saveProcedure.mutation(async ({ ctx }) => {
+    // Per-section timing instrumentation — visible in Vercel logs to identify
+    // which phase eats the wall-clock time. Negligible overhead.
+    const t0 = Date.now();
+    const queryAt0 = getQueryCount();
+    const marks: Array<{ label: string; ms: number; queries: number }> = [];
+    let lastT = t0;
+    let lastQ = queryAt0;
+    const mark = (label: string) => {
+      const now = Date.now();
+      const q = getQueryCount();
+      marks.push({ label, ms: now - lastT, queries: q - lastQ });
+      lastT = now;
+      lastQ = q;
+    };
+
     const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
     if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
@@ -348,7 +364,9 @@ export const seasonRouter = router({
       }
     }
 
+    mark("sim AI matches");
     await applyStatRollingUpdatesBatch(ctx.prisma, pendingStatUpdates);
+    mark("stat rolling batch");
 
     // Phase 2 — collapse ALL today's writes (match updates + per-team
     // win/loss/champPts/budget deltas) into ONE transaction. Includes:
@@ -483,6 +501,7 @@ export const seasonRouter = router({
       });
     }
 
+    mark("write match results (phase 2 tx)");
     // Progress bracket/Swiss — check completion PER REGION for Kickoff, globally for international
     for (const roundId of completedRounds) {
       const isInternational = roundId.startsWith("MASTERS_") || roundId.startsWith("EWC_") || roundId.startsWith("CHAMPIONS_");
@@ -578,6 +597,7 @@ export const seasonRouter = router({
 
     // Final-placement champPts + prize money are now applied in the Phase 2
     // mega-transaction above (via teamDeltas). No separate loops needed.
+    mark("progress brackets");
 
     // ═══════════════════════════════════════════════════════════
     // Stage transitions
@@ -847,6 +867,7 @@ export const seasonRouter = router({
       }
     }
 
+    mark("stage transitions + offseason");
     // ═══════════════════════════════════════════════════════════
     // Mercato V1 ticks — expire stale offers (daily), recompute happiness +
     // run IA transfer activity on weekly tick (first day of a new week).
@@ -1015,6 +1036,7 @@ export const seasonRouter = router({
       }
     }
 
+    mark("mercato daily ticks");
     // ── Sponsor champPts bonuses when finals are decided ──
     // Batched: 1 findMany (all involved teams + sponsors) + 1 transaction.
     // Used to be N teams × 2 queries each (findUnique + update) sequentially.
@@ -1361,6 +1383,16 @@ export const seasonRouter = router({
         }
       }
     }
+
+    mark("end-of-tick (weekly + rounds replay)");
+    const totalMs = Date.now() - t0;
+    const totalQueries = getQueryCount() - queryAt0;
+    const breakdown = marks
+      .map((m) => `${m.label} ${m.ms}ms/${m.queries}q`)
+      .join(" | ");
+    console.log(
+      `[advanceDay] day ${newDay} · ${totalMs}ms · ${totalQueries} queries · ${breakdown}`,
+    );
 
     return {
       day: newDay,
