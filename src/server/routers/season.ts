@@ -1403,6 +1403,13 @@ export const seasonRouter = router({
       results: simulatedResults,
       salaryDeductions,
       seasonRolledOver,
+      // Server-side timing breakdown — surfaced so the client can console.log
+      // it in the browser (avoids having to hunt through Vercel function logs).
+      debug: {
+        totalMs,
+        totalQueries,
+        sections: marks,
+      },
     };
   }),
 

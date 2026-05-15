@@ -99,6 +99,21 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
       }
       const playable = data.results.filter((r) => !r.needsVeto);
       setResults(playable);
+      // Surface server-side timing breakdown into the browser console so we
+      // can spot slow phases without digging into Vercel function logs.
+      const dbg = (data as unknown as { debug?: { totalMs: number; totalQueries: number; sections: Array<{ label: string; ms: number; queries: number }> } }).debug;
+      if (dbg) {
+        console.groupCollapsed(
+          `%c[advanceDay] day ${data.day} · ${dbg.totalMs}ms · ${dbg.totalQueries} queries`,
+          "color:#FF4655;font-weight:bold;",
+        );
+        for (const s of dbg.sections) {
+          const slow = s.ms > 1000 ? "%c⚠ " : "  ";
+          const color = s.ms > 1000 ? "color:#FF4655" : "color:#888";
+          console.log(`${slow}%c${s.label.padEnd(40)} ${s.ms.toString().padStart(6)}ms · ${s.queries}q`, "", color);
+        }
+        console.groupEnd();
+      }
       router.refresh();
     },
     onError: (err) => {
