@@ -465,6 +465,50 @@ export async function initializeSeasonForTeam(
 
 // ── Bracket progression ──
 
+/**
+ * Per-pair existence check — robust against partial-state bugs where the
+ * old `stageExistsForRegion(...) return` pattern bailed out early as soon
+ * as ONE match for the stage existed, leaving siblings forever missing.
+ */
+async function pairExists(
+  prisma: PrismaClient,
+  saveId: string,
+  stageId: string,
+  season: number,
+  a: string,
+  b: string,
+): Promise<boolean> {
+  if (!a || !b) return false;
+  const m = await prisma.match.findFirst({
+    where: {
+      saveId, stageId, season,
+      OR: [
+        { team1Id: a, team2Id: b },
+        { team1Id: b, team2Id: a },
+      ],
+    },
+    select: { id: true },
+  });
+  return m != null;
+}
+
+/** Filter out invalid (empty-id) and already-existing pairs. */
+async function newPairsOnly(
+  prisma: PrismaClient,
+  saveId: string,
+  stageId: string,
+  season: number,
+  pairs: [string, string][],
+): Promise<[string, string][]> {
+  const out: [string, string][] = [];
+  for (const [a, b] of pairs) {
+    if (!a || !b) continue;
+    if (await pairExists(prisma, saveId, stageId, season, a, b)) continue;
+    out.push([a, b]);
+  }
+  return out;
+}
+
 export async function progressBracket(
   prisma: PrismaClient, saveId: string, completedStageId: string, region: Region, seasonNumber: number, currentDay: number,
 ) {
@@ -483,40 +527,42 @@ export async function progressBracket(
     createMatchesOnNextSlots(prisma, saveId, pairs, stageId, R, D, S, format);
 
   // ── UB R1 done → create UB QF ──
+  // Per-pair check (not stage-wide): if R1 plays across two advance ticks
+  // we still want to create the QFs whose R1 dependency arrived on tick 2.
   if (completedStageId === "KICKOFF_UB_R1") {
-    if (await stageExistsForRegion(prisma, saveId, "KICKOFF_UB_QF", S, R)) return;
     const r1Results = await getResultsByTeams(prisma, saveId, "KICKOFF_UB_R1", S, seed.round1Matchups, nameToId);
     const pairs: [string, string][] = seed.qfPairings.map(([byeName, r1Idx]) => {
-      const byeId = nameToId.get(byeName)!;
+      const byeId = nameToId.get(byeName) ?? "";
       return [byeId, r1Results[r1Idx].winner];
     });
-    await cm(pairs, "KICKOFF_UB_QF");
+    const fresh = await newPairsOnly(prisma, saveId, "KICKOFF_UB_QF", S, pairs);
+    if (fresh.length > 0) await cm(fresh, "KICKOFF_UB_QF");
   }
 
   // ── UB QF done → create UB SF + MID R1 ──
   if (completedStageId === "KICKOFF_UB_QF") {
     const r1Results = await getResultsByTeams(prisma, saveId, "KICKOFF_UB_R1", S, seed.round1Matchups, nameToId);
-    const qfMatches: [string, string][] = seed.qfPairings.map(([byeName, r1Idx]) => [byeName, seed.round1Matchups[r1Idx][0]]);
     const qfResultsRaw = await getResults(prisma, saveId, "KICKOFF_UB_QF", S, R);
     // Map QF results to bracket position by bye team
     const qfResults: WL[] = seed.qfPairings.map(([byeName]) => {
-      const byeId = nameToId.get(byeName)!;
+      const byeId = nameToId.get(byeName) ?? "";
       return qfResultsRaw.find((r) => r.winner === byeId || r.loser === byeId) ?? { winner: "", loser: "" };
     });
 
     // UB SF: top half (QF 0+1 winners) and bottom half (QF 2+3 winners)
-    if (!await stageExistsForRegion(prisma, saveId, "KICKOFF_UB_SF", S, R)) {
-      await cm([
-        [qfResults[0].winner, qfResults[1].winner],
-        [qfResults[2].winner, qfResults[3].winner],
-      ], "KICKOFF_UB_SF");
-    }
+    const sfPairs: [string, string][] = [
+      [qfResults[0].winner, qfResults[1].winner],
+      [qfResults[2].winner, qfResults[3].winner],
+    ];
+    const freshSf = await newPairsOnly(prisma, saveId, "KICKOFF_UB_SF", S, sfPairs);
+    if (freshSf.length > 0) await cm(freshSf, "KICKOFF_UB_SF");
 
     // MID R1: QF[3-i] loser vs R1[i] loser (reversed to avoid rematches)
-    if (!await stageExistsForRegion(prisma, saveId, "KICKOFF_MID_R1", S, R)) {
-      const midR1Pairs: [string, string][] = [0, 1, 2, 3].map((i) => [qfResults[3 - i].loser, r1Results[i].loser]);
-      await cm(midR1Pairs, "KICKOFF_MID_R1");
-    }
+    const midR1Pairs: [string, string][] = [0, 1, 2, 3].map(
+      (i) => [qfResults[3 - i].loser, r1Results[i].loser] as [string, string],
+    );
+    const freshMidR1 = await newPairsOnly(prisma, saveId, "KICKOFF_MID_R1", S, midR1Pairs);
+    if (freshMidR1.length > 0) await cm(freshMidR1, "KICKOFF_MID_R1");
   }
 
   // ── UB SF done → create UB FINAL ──
@@ -539,17 +585,20 @@ export async function progressBracket(
   // ── MID R1 done → create MID R2 + LB R1 ──
   if (completedStageId === "KICKOFF_MID_R1") {
     const midR1 = await getResults(prisma, saveId, "KICKOFF_MID_R1", S, R);
-    if (!await stageExistsForRegion(prisma, saveId, "KICKOFF_MID_R2", S, R) && midR1.length >= 4) {
-      await cm([
+    if (midR1.length >= 4) {
+      const r2Pairs: [string, string][] = [
         [midR1[0].winner, midR1[1].winner],
         [midR1[2].winner, midR1[3].winner],
-      ], "KICKOFF_MID_R2");
-    }
-    if (!await stageExistsForRegion(prisma, saveId, "KICKOFF_LB_R1", S, R) && midR1.length >= 4) {
-      await cm([
+      ];
+      const freshR2 = await newPairsOnly(prisma, saveId, "KICKOFF_MID_R2", S, r2Pairs);
+      if (freshR2.length > 0) await cm(freshR2, "KICKOFF_MID_R2");
+
+      const lbR1Pairs: [string, string][] = [
         [midR1[0].loser, midR1[1].loser],
         [midR1[2].loser, midR1[3].loser],
-      ], "KICKOFF_LB_R1");
+      ];
+      const freshLbR1 = await newPairsOnly(prisma, saveId, "KICKOFF_LB_R1", S, lbR1Pairs);
+      if (freshLbR1.length > 0) await cm(freshLbR1, "KICKOFF_LB_R1");
     }
   }
 
