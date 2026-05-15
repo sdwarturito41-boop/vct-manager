@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { trpc } from "@/lib/trpc-client";
 import { formatGameDate, formatGameDateLong } from "@/lib/game-date";
 import { D } from "@/constants/design";
@@ -26,9 +27,9 @@ type TeamMini = {
 };
 
 type Section =
-  | { kind: "REGIONAL_PODIUM"; title: string; regions: Record<string, TeamMini[]> }
-  | { kind: "INTERNATIONAL_FINAL"; title: string; city: string | null; finalists: TeamMini[] }
-  | { kind: "QUALIFIERS"; title: string; subtitle: string; regions: Record<string, TeamMini[]> };
+  | { kind: "REGIONAL_PODIUM"; title: string; regions: Record<string, TeamMini[]>; stagePrefix: string }
+  | { kind: "INTERNATIONAL_FINAL"; title: string; city: string | null; finalists: TeamMini[]; stagePrefix: string }
+  | { kind: "QUALIFIERS"; title: string; subtitle: string; regions: Record<string, TeamMini[]>; stagePrefix: string };
 
 const ALL_REGIONS = ["EMEA", "Americas", "Pacific", "China"] as const;
 
@@ -113,9 +114,7 @@ function SectionRenderer({ section }: { section: Section }) {
         className="px-10 py-6"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
-        <h2 className="text-[16px] font-medium mb-4" style={{ color: D.textPrimary }}>
-          {section.title}
-        </h2>
+        <BracketLinkHeader title={section.title} stagePrefix={section.stagePrefix} />
         <div className="grid grid-cols-4 gap-3">
           {ALL_REGIONS.map((reg) => (
             <RegionPodiumCard
@@ -123,6 +122,7 @@ function SectionRenderer({ section }: { section: Section }) {
               region={reg}
               podium={section.regions[reg] ?? []}
               max={3}
+              stagePrefix={section.stagePrefix}
             />
           ))}
         </div>
@@ -136,16 +136,11 @@ function SectionRenderer({ section }: { section: Section }) {
         className="px-10 py-6"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
-        <div className="flex items-baseline gap-3 mb-4">
-          <h2 className="text-[16px] font-medium" style={{ color: D.textPrimary }}>
-            {section.title}
-          </h2>
-          {section.city && (
-            <span className="text-[11px]" style={{ color: D.textSubtle }}>
-              · Finale internationale
-            </span>
-          )}
-        </div>
+        <BracketLinkHeader
+          title={section.title}
+          stagePrefix={section.stagePrefix}
+          subtitle={section.city ? "· Finale internationale" : undefined}
+        />
         <div className="grid grid-cols-2 gap-3 max-w-2xl">
           {section.finalists.map((t, i) => (
             <FinalistCard key={t.id} rank={i + 1} team={t} />
@@ -161,14 +156,11 @@ function SectionRenderer({ section }: { section: Section }) {
         className="px-10 py-6"
         style={{ borderBottom: `1px solid ${D.border}` }}
       >
-        <div className="flex items-baseline gap-3 mb-4">
-          <h2 className="text-[16px] font-medium" style={{ color: D.textPrimary }}>
-            {section.title}
-          </h2>
-          <span className="text-[11px]" style={{ color: D.textSubtle }}>
-            · {section.subtitle}
-          </span>
-        </div>
+        <BracketLinkHeader
+          title={section.title}
+          stagePrefix={section.stagePrefix}
+          subtitle={`· ${section.subtitle}`}
+        />
         <div className="grid grid-cols-4 gap-3">
           {ALL_REGIONS.map((reg) => (
             <RegionPodiumCard
@@ -177,6 +169,7 @@ function SectionRenderer({ section }: { section: Section }) {
               podium={section.regions[reg] ?? []}
               max={5}
               showRank={false}
+              stagePrefix={section.stagePrefix}
             />
           ))}
         </div>
@@ -187,26 +180,58 @@ function SectionRenderer({ section }: { section: Section }) {
   return null;
 }
 
+/** Clickable section header that links to /league?stage={stagePrefix}. */
+function BracketLinkHeader({
+  title,
+  stagePrefix,
+  subtitle,
+}: {
+  title: string;
+  stagePrefix: string;
+  subtitle?: string;
+}) {
+  return (
+    <Link
+      href={`/league?stage=${stagePrefix}`}
+      className="group mb-4 flex items-baseline gap-3 transition-colors hover:opacity-80"
+    >
+      <h2
+        className="text-[16px] font-medium underline-offset-4 group-hover:underline"
+        style={{ color: D.textPrimary }}
+      >
+        {title}
+      </h2>
+      {subtitle && (
+        <span className="text-[11px]" style={{ color: D.textSubtle }}>
+          {subtitle}
+        </span>
+      )}
+      <span
+        className="text-[10px] font-medium opacity-0 transition-opacity group-hover:opacity-100"
+        style={{ color: D.gold }}
+      >
+        Voir le bracket →
+      </span>
+    </Link>
+  );
+}
+
 function RegionPodiumCard({
   region,
   podium,
   max,
   showRank = true,
+  stagePrefix,
 }: {
   region: string;
   podium: TeamMini[];
   max: number;
   showRank?: boolean;
+  /** When provided, the card becomes a Link to /league?stage={prefix}&region={region}. */
+  stagePrefix?: string;
 }) {
-  return (
-    <div
-      className="flex flex-col p-4"
-      style={{
-        background: D.card,
-        border: `1px solid ${D.borderFaint}`,
-        borderRadius: D.radiusCard,
-      }}
-    >
+  const inner = (
+    <>
       <div className="flex items-center justify-between mb-3">
         <span
           className="text-[10px] font-medium uppercase tracking-wider"
@@ -229,6 +254,41 @@ function RegionPodiumCard({
           ))}
         </div>
       )}
+    </>
+  );
+
+  if (stagePrefix) {
+    return (
+      <Link
+        href={`/league?stage=${stagePrefix}&region=${region}`}
+        className="group flex flex-col p-4 transition-all hover:scale-[1.02]"
+        style={{
+          background: D.card,
+          border: `1px solid ${D.borderFaint}`,
+          borderRadius: D.radiusCard,
+        }}
+      >
+        {inner}
+        <span
+          className="mt-3 text-[9px] font-medium opacity-0 transition-opacity group-hover:opacity-100"
+          style={{ color: D.gold }}
+        >
+          Voir le bracket {region} →
+        </span>
+      </Link>
+    );
+  }
+
+  return (
+    <div
+      className="flex flex-col p-4"
+      style={{
+        background: D.card,
+        border: `1px solid ${D.borderFaint}`,
+        borderRadius: D.radiusCard,
+      }}
+    >
+      {inner}
     </div>
   );
 }

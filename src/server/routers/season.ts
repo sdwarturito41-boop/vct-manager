@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { getQueryCount } from "@/lib/prisma";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
@@ -1441,37 +1442,42 @@ export const seasonRouter = router({
     };
   }),
 
-  getSchedule: saveProcedure.query(async ({ ctx }) => {
-    const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
-    if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
+  getSchedule: saveProcedure
+    .input(z.object({ stage: z.string().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const season = await ctx.prisma.season.findFirst({ where: { isActive: true, saveId: ctx.save.id } });
+      if (!season) throw new TRPCError({ code: "NOT_FOUND", message: "No active season." });
 
-    // Try current stage first, fall back to showing all matches if none found
-    let matches = await ctx.prisma.match.findMany({
-      where: {
-        saveId: ctx.save.id,
-        season: season.number,
-        stageId: { startsWith: season.currentStage },
-      },
-      include: {
-        team1: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
-        team2: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
-      },
-      orderBy: [{ day: "asc" }],
-    });
-
-    if (matches.length === 0) {
-      matches = await ctx.prisma.match.findMany({
-        where: { saveId: ctx.save.id, season: season.number },
+      // Allow callers to peek at a specific stage (Kickoff, Stage 1 playoffs, an
+      // older Masters, etc.) — used by the league page when navigating from the
+      // season recap. Falls back to the current stage when no stage is asked.
+      const targetStage = input?.stage ?? season.currentStage;
+      let matches = await ctx.prisma.match.findMany({
+        where: {
+          saveId: ctx.save.id,
+          season: season.number,
+          stageId: { startsWith: targetStage },
+        },
         include: {
           team1: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
           team2: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
         },
         orderBy: [{ day: "asc" }],
       });
-    }
 
-    return matches;
-  }),
+      if (matches.length === 0 && !input?.stage) {
+        matches = await ctx.prisma.match.findMany({
+          where: { saveId: ctx.save.id, season: season.number },
+          include: {
+            team1: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
+            team2: { select: { id: true, name: true, tag: true, logoUrl: true, region: true } },
+          },
+          orderBy: [{ day: "asc" }],
+        });
+      }
+
+      return matches;
+    }),
 
   /**
    * Season recap — top 3 qualifiés par "split" régional (Kickoff / Stage 1 /
@@ -1503,18 +1509,22 @@ export const seasonRouter = router({
       kind: "REGIONAL_PODIUM";
       title: string;
       regions: Record<string, TeamMini[]>; // top 3 par région
+      /** Stage prefix understood by /league?stage=… (e.g. "KICKOFF"). */
+      stagePrefix: string;
     };
     type SectionInternationalFinal = {
       kind: "INTERNATIONAL_FINAL";
       title: string;
       city: string | null;
       finalists: TeamMini[]; // [winner, loser]
+      stagePrefix: string;
     };
     type SectionQualifiers = {
       kind: "QUALIFIERS";
       title: string;
       subtitle: string;
       regions: Record<string, TeamMini[]>;
+      stagePrefix: string;
     };
     type Section = SectionRegionalPodium | SectionInternationalFinal | SectionQualifiers;
 
@@ -1613,7 +1623,7 @@ export const seasonRouter = router({
     const kickoffRegions: Record<string, TeamMini[]> = {};
     for (const r of ALL_REGIONS) kickoffRegions[r] = await kickoffTop3(r);
     if (Object.values(kickoffRegions).some((v) => v.length > 0)) {
-      sections.push({ kind: "REGIONAL_PODIUM", title: "Kickoff — Top 3 régional", regions: kickoffRegions });
+      sections.push({ kind: "REGIONAL_PODIUM", title: "Kickoff — Top 3 régional", regions: kickoffRegions, stagePrefix: "KICKOFF" });
     }
 
     // 2. Masters 1 finalists
@@ -1624,6 +1634,7 @@ export const seasonRouter = router({
         title: `Masters ${season.masters1City}`,
         city: season.masters1City,
         finalists: [m1.winner, m1.loser],
+        stagePrefix: "MASTERS_1",
       });
     }
 
@@ -1631,7 +1642,7 @@ export const seasonRouter = router({
     const s1Regions: Record<string, TeamMini[]> = {};
     for (const r of ALL_REGIONS) s1Regions[r] = await stageTop3("STAGE_1", r);
     if (Object.values(s1Regions).some((v) => v.length > 0)) {
-      sections.push({ kind: "REGIONAL_PODIUM", title: "Stage 1 — Top 3 régional", regions: s1Regions });
+      sections.push({ kind: "REGIONAL_PODIUM", title: "Stage 1 — Top 3 régional", regions: s1Regions, stagePrefix: "STAGE_1" });
     }
 
     // 4. EWC qualifiers (par région) — équipes ayant joué au moins 1 match EWC_*
@@ -1642,6 +1653,7 @@ export const seasonRouter = router({
         title: "Qualifiés Esports World Cup",
         subtitle: "Sortis du Stage 2 vers Riyadh",
         regions: ewcQuals,
+        stagePrefix: "EWC_QUAL",
       });
     }
 
@@ -1653,6 +1665,7 @@ export const seasonRouter = router({
         title: `Masters ${season.masters2City}`,
         city: season.masters2City,
         finalists: [m2.winner, m2.loser],
+        stagePrefix: "MASTERS_2",
       });
     }
 
@@ -1664,6 +1677,7 @@ export const seasonRouter = router({
         title: "Qualifiés Champions",
         subtitle: `Direction ${season.championsCity}`,
         regions: championsQuals,
+        stagePrefix: "STAGE_2",
       });
     }
 
@@ -1675,6 +1689,7 @@ export const seasonRouter = router({
         title: `Champions ${season.championsCity}`,
         city: season.championsCity,
         finalists: [champ.winner, champ.loser],
+        stagePrefix: "CHAMPIONS",
       });
     }
 
@@ -1686,6 +1701,7 @@ export const seasonRouter = router({
         title: "Esports World Cup",
         city: "Riyadh",
         finalists: [ewc.winner, ewc.loser],
+        stagePrefix: "EWC",
       });
     }
 

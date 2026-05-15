@@ -584,7 +584,7 @@ export function DoubleElimBracket({
   lowerRounds,
   lowerLabels,
   grandFinalRound,
-  grandFinalLabel = "Grand Final · BO5",
+  grandFinalLabel = "Grand Final · BO3",
   title,
   subtitle,
   isUserContext = false,
@@ -594,18 +594,6 @@ export function DoubleElimBracket({
     if (!byRound.has(m.stageId)) byRound.set(m.stageId, []);
     byRound.get(m.stageId)!.push(m);
   }
-
-  const gfDb = (byRound.get(grandFinalRound) ?? [])[0] ?? null;
-  const gfSlot: SlotData = gfDb
-    ? {
-        match: gfDb,
-        t1: { name: gfDb.team1.name, tag: gfDb.team1.tag, logo: gfDb.team1.logoUrl },
-        t2: { name: gfDb.team2.name, tag: gfDb.team2.tag, logo: gfDb.team2.logoUrl },
-        label: "",
-        format: "BO5",
-        isFinal: true,
-      }
-    : { match: null, t1: null, t2: null, label: "", format: "BO5", isFinal: true };
 
   // Show this bracket only if at least one of UB / LB / GF has data — otherwise
   // it's a pure-TBD shell that just adds noise to the page.
@@ -646,22 +634,25 @@ export function DoubleElimBracket({
         </div>
       )}
 
-      {/* Upper bracket */}
+      {/* Upper bracket — GF appended as the final column so the
+          UB chain visually flows: UB QF → UB SF → UB Final → GF. */}
       <div className="px-10 py-6" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
-        <SectionHeader label="Upper Bracket" color={D.green} sub="Winners advance, losers drop" />
+        <SectionHeader label="Upper Bracket" color={D.green} sub={`Winners advance · ${grandFinalLabel}`} />
         <div className="mt-4">
           <GenericBracketGrid
-            rounds={upperRounds}
-            roundLabels={upperLabels}
+            rounds={[...upperRounds, grandFinalRound]}
+            roundLabels={[...upperLabels, grandFinalLabel]}
             byRound={byRound}
             userTeamId={userTeamId}
           />
         </div>
       </div>
 
-      {/* Lower bracket */}
-      <div className="px-10 py-6" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
-        <SectionHeader label="Lower Bracket" color={D.red} sub="One more loss = eliminated" />
+      {/* Lower bracket — its final round (LB Final) winner feeds into the GF
+          rendered above. Drawn separately because rendering as a single tree
+          would force one shared column layout that compresses both halves. */}
+      <div className="px-10 py-6">
+        <SectionHeader label="Lower Bracket" color={D.red} sub="One more loss = eliminated · LB Final → GF" />
         <div className="mt-4">
           <GenericBracketGrid
             rounds={lowerRounds}
@@ -669,16 +660,6 @@ export function DoubleElimBracket({
             byRound={byRound}
             userTeamId={userTeamId}
           />
-        </div>
-      </div>
-
-      {/* Grand Final */}
-      <div className="px-10 py-6">
-        <SectionHeader label="Grand Final" color={D.gold} sub="BO5 · Winners take all" />
-        <div className="mt-4 flex justify-center">
-          <div style={{ width: 240 }}>
-            <MatchCard slot={gfSlot} userTeamId={userTeamId} isFinal />
-          </div>
         </div>
       </div>
     </div>

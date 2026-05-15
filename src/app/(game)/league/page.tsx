@@ -5,19 +5,28 @@ import { VCT_STAGES } from "@/constants/vct-format";
 import type { StageId } from "@/constants/vct-format";
 import { D } from "@/constants/design";
 
-export default async function LeaguePage() {
+export default async function LeaguePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ stage?: string; region?: string }>;
+}) {
   const api = await serverTrpc();
 
+  // ?stage=KICKOFF (or STAGE_1, MASTERS_1, EWC_QUAL_S1, …) lets the user peek
+  // at a past or in-progress stage's brackets even when the season has moved
+  // on. Optionally `?region=EMEA` to filter regional stages to one region.
+  const sp = (await searchParams) ?? {};
+  const viewedStage = sp.stage;
+  const viewedRegion = sp.region;
+
   // Run every initial query in parallel — none of them depend on each other.
-  // Previously these were 7 sequential awaits, costing ~7 round-trips to Neon
-  // before the page could render. With Promise.all we cap that at one RT total.
   const [seasonResult, schedule, team, standingsRaw, templates, allTeams] =
     await Promise.all([
       api.season.getCurrent().then(
         (s) => ({ ok: true, data: s }) as const,
         () => ({ ok: false }) as const,
       ),
-      api.season.getSchedule(),
+      api.season.getSchedule(viewedStage ? { stage: viewedStage } : undefined),
       api.team.get(),
       api.league.standings().catch(() => []),
       prisma.vctTeamTemplate.findMany({
@@ -54,12 +63,16 @@ export default async function LeaguePage() {
   for (const t of allTeams) if (t.logoUrl) teamNameToLogo[t.name] = t.logoUrl;
   const teamIdToTeam = new Map(allTeams.map((t) => [t.id, t]));
 
+  // Stage we're displaying — may differ from the season's current stage when
+  // the user navigated here from the season recap (?stage=PAST_STAGE).
+  const currentStage = (viewedStage ?? season.currentStage) as string;
+  const isViewingPast =
+    viewedStage != null && viewedStage !== season.currentStage;
   const currentStageName =
-    season.currentStage in VCT_STAGES
-      ? VCT_STAGES[season.currentStage as StageId].name
-      : season.currentStage;
+    currentStage in VCT_STAGES
+      ? VCT_STAGES[currentStage as StageId].name
+      : currentStage;
 
-  const currentStage = season.currentStage as string;
   const isKickoff = currentStage === "KICKOFF";
   const isMasters = currentStage === "MASTERS_1" || currentStage === "MASTERS_2";
   const isStage = currentStage === "STAGE_1" || currentStage === "STAGE_2";
@@ -70,7 +83,12 @@ export default async function LeaguePage() {
   const byRegion = new Map<string, typeof schedule>();
   for (const r of regions) byRegion.set(r, []);
   for (const m of schedule) byRegion.get(m.team1.region)?.push(m);
-  const orderedRegions = [team.region, ...regions.filter((r) => r !== team.region)];
+  // When ?region= is in the URL, narrow regional displays to that one region.
+  // Validate against the known list so a bogus query param doesn't render nothing.
+  const validatedRegion = regions.find((r) => r === viewedRegion) ?? null;
+  const orderedRegions = validatedRegion
+    ? [validatedRegion]
+    : [team.region, ...regions.filter((r) => r !== team.region)];
 
   // `schedule` (from getSchedule) already returns every match in the current
   // stage scoped to this save, with team1/team2 selects sufficient for
@@ -190,9 +208,45 @@ export default async function LeaguePage() {
     }
   }
 
-  // ─── Bracket rounds for Masters/EWC/Champions ───
-  // 8-team double elim (standard VCT naming): UB QF → UB SF → UB Final, with
-  // LB R1 → LB R2 → LB SF → LB Final feeding into the Grand Final.
+  // ─── International group standings (EWC + Champions: 4 groups A/B/C/D) ───
+  type IntlGroupRow = { team: typeof allTeams[0]; wins: number; losses: number };
+  const intlGroups = new Map<string, IntlGroupRow[]>(); // "A" → rows, "B" → rows, ...
+  const intlGroupLetters = ["A", "B", "C", "D"];
+  if (isEwc || isChampions) {
+    for (const letter of intlGroupLetters) {
+      const stageId = `${stagePrefix}_GROUP_${letter}`;
+      const ms = allStageMatches.filter((m) => m.stageId === stageId);
+      if (ms.length === 0) continue;
+      const rec = new Map<string, { wins: number; losses: number }>();
+      const participantIds = new Set<string>();
+      for (const m of ms) {
+        participantIds.add(m.team1Id);
+        participantIds.add(m.team2Id);
+        if (m.isPlayed && m.winnerId) {
+          const loserId = m.winnerId === m.team1Id ? m.team2Id : m.team1Id;
+          const w = rec.get(m.winnerId) ?? { wins: 0, losses: 0 };
+          w.wins++;
+          rec.set(m.winnerId, w);
+          const l = rec.get(loserId) ?? { wins: 0, losses: 0 };
+          l.losses++;
+          rec.set(loserId, l);
+        }
+      }
+      const rows: IntlGroupRow[] = [...participantIds]
+        .map((id) => {
+          const t = teamIdToTeam.get(id);
+          if (!t) return null;
+          const r = rec.get(id) ?? { wins: 0, losses: 0 };
+          return { team: t, wins: r.wins, losses: r.losses };
+        })
+        .filter((x): x is IntlGroupRow => x !== null)
+        .sort((a, b) => b.wins - a.wins || a.losses - b.losses);
+      intlGroups.set(letter, rows);
+    }
+  }
+
+  // ─── Bracket rounds for Masters/Champions (DE 8-team) ───
+  // UB QF → UB SF → UB Final, with LB R1 → LB R2 → LB SF → LB Final → GF.
   const bracketRoundOrder = [
     "_UB_QF",
     "_UB_SF",
@@ -204,12 +258,27 @@ export default async function LeaguePage() {
     "_GRAND_FINAL",
   ];
   const bracketRounds: Array<{ label: string; matches: typeof allStageMatches }> = [];
-  if (isMasters || isEwc || isChampions) {
+  if (isMasters || isChampions) {
     for (const suffix of bracketRoundOrder) {
       const stageId = `${stagePrefix}${suffix}`;
       const ms = allStageMatches.filter((m) => m.stageId === stageId);
       if (ms.length > 0) {
         bracketRounds.push({ label: suffix.slice(1).replace(/_/g, " "), matches: ms });
+      }
+    }
+  }
+
+  // ─── EWC single-elim playoff (QF → SF → GF, no LB) ───
+  const ewcPlayoffRoundOrder = ["EWC_QF", "EWC_SF", "EWC_GRAND_FINAL"];
+  const ewcPlayoffRounds: Array<{ label: string; matches: typeof allStageMatches }> = [];
+  if (isEwc) {
+    for (const stageId of ewcPlayoffRoundOrder) {
+      const ms = allStageMatches.filter((m) => m.stageId === stageId);
+      if (ms.length > 0) {
+        const label = stageId === "EWC_QF" ? "Quarterfinals"
+          : stageId === "EWC_SF" ? "Semifinals"
+          : "Grand Final · BO5";
+        ewcPlayoffRounds.push({ label, matches: ms });
       }
     }
   }
@@ -256,6 +325,22 @@ export default async function LeaguePage() {
               <span style={{ color: D.red }}>{currentStageName}</span>
               <span>·</span>
               <span>{heroSub}</span>
+              {isViewingPast && (
+                <>
+                  <span>·</span>
+                  <a
+                    href="/league"
+                    className="rounded-full px-2 py-0.5 text-[10px] font-medium hover:underline"
+                    style={{
+                      background: "rgba(198,155,58,0.15)",
+                      color: D.gold,
+                      border: `1px solid rgba(198,155,58,0.3)`,
+                    }}
+                  >
+                    Vue archive · retour stage en cours →
+                  </a>
+                </>
+              )}
             </div>
           </div>
 
@@ -294,20 +379,23 @@ export default async function LeaguePage() {
       )}
 
       {/* ═══════════════════════════════════════ */}
-      {/* ─── MASTERS / EWC / CHAMPIONS: Swiss + bracket ── */}
+      {/* ─── MASTERS: Swiss (seeds 2+3) + DE bracket (seed 1 byes) ── */}
       {/* ═══════════════════════════════════════ */}
-      {(isMasters || isEwc || isChampions) && (
+      {isMasters && (
         <>
           {swissStandings.length > 0 && (
             <section className="flex flex-col" style={{ borderBottom: `1px solid ${D.border}` }}>
-              <SectionHeader label="Swiss Stage" sub={`${swissStandings.length} teams · Top 8 advance`} />
+              <SectionHeader
+                label="Swiss Stage"
+                sub="Seeds 2 + 3 of each region · Seed 1 = bye → bracket directly"
+              />
               <SwissTable standings={swissStandings} userTeamId={team.id} />
             </section>
           )}
 
           {bracketRounds.length > 0 && (
             <section className="flex flex-col">
-              <SectionHeader label="Bracket Stage" sub="Double Elimination" />
+              <SectionHeader label="Bracket Stage" sub="Double Elimination · 8 teams (4 byes + 4 Swiss qualifiers)" />
               <DoubleElimBracket
                 matches={bracketRounds.flatMap((r) => r.matches)}
                 userTeamId={team.id}
@@ -316,14 +404,105 @@ export default async function LeaguePage() {
                   `${stagePrefix}_UB_SF`,
                   `${stagePrefix}_UB_FINAL`,
                 ]}
-                upperLabels={["UB QF", "UB SF", "UB Final · BO5"]}
+                upperLabels={["UB QF", "UB SF", "UB Final"]}
                 lowerRounds={[
                   `${stagePrefix}_LB_R1`,
                   `${stagePrefix}_LB_R2`,
                   `${stagePrefix}_LB_SF`,
                   `${stagePrefix}_LB_FINAL`,
                 ]}
-                lowerLabels={["LB R1", "LB R2", "LB SF", "LB Final · BO5"]}
+                lowerLabels={["LB R1", "LB R2", "LB SF", "LB Final"]}
+                grandFinalRound={`${stagePrefix}_GRAND_FINAL`}
+              />
+            </section>
+          )}
+        </>
+      )}
+
+      {/* ═══════════════════════════════════════ */}
+      {/* ─── EWC: 4 Groups → SE playoffs (QF / SF / GF) ── */}
+      {/* ═══════════════════════════════════════ */}
+      {isEwc && (
+        <>
+          {intlGroups.size > 0 && (
+            <section className="flex flex-col" style={{ borderBottom: `1px solid ${D.border}` }}>
+              <SectionHeader label="Group Stage" sub="4 groups · Round Robin · Top 2 advance" />
+              <div className="grid grid-cols-2 gap-0">
+                {intlGroupLetters.map((letter) => {
+                  const rows = intlGroups.get(letter) ?? [];
+                  if (rows.length === 0) return null;
+                  return (
+                    <div
+                      key={letter}
+                      className="flex flex-col"
+                      style={{ borderRight: `1px solid ${D.border}`, borderBottom: `1px solid ${D.border}` }}
+                    >
+                      <GroupHeader name={`Group ${letter}`} count={rows.length} />
+                      <IntlGroupTable rows={rows} userTeamId={team.id} />
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {ewcPlayoffRounds.length > 0 && (
+            <section className="flex flex-col">
+              <SectionHeader label="Playoffs" sub="Single Elimination · Top 8 from groups" />
+              <div className="px-10 py-6">
+                <SingleElimRow rounds={ewcPlayoffRounds} userTeamId={team.id} />
+              </div>
+            </section>
+          )}
+        </>
+      )}
+
+      {/* ═══════════════════════════════════════ */}
+      {/* ─── CHAMPIONS: 4 Groups → DE bracket ── */}
+      {/* ═══════════════════════════════════════ */}
+      {isChampions && (
+        <>
+          {intlGroups.size > 0 && (
+            <section className="flex flex-col" style={{ borderBottom: `1px solid ${D.border}` }}>
+              <SectionHeader label="Group Stage" sub="4 groups · Round Robin · Top 2 → Playoffs" />
+              <div className="grid grid-cols-2 gap-0">
+                {intlGroupLetters.map((letter) => {
+                  const rows = intlGroups.get(letter) ?? [];
+                  if (rows.length === 0) return null;
+                  return (
+                    <div
+                      key={letter}
+                      className="flex flex-col"
+                      style={{ borderRight: `1px solid ${D.border}`, borderBottom: `1px solid ${D.border}` }}
+                    >
+                      <GroupHeader name={`Group ${letter}`} count={rows.length} />
+                      <IntlGroupTable rows={rows} userTeamId={team.id} />
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {bracketRounds.length > 0 && (
+            <section className="flex flex-col">
+              <SectionHeader label="Playoffs" sub="Double Elimination · 8 teams" />
+              <DoubleElimBracket
+                matches={bracketRounds.flatMap((r) => r.matches)}
+                userTeamId={team.id}
+                upperRounds={[
+                  `${stagePrefix}_UB_QF`,
+                  `${stagePrefix}_UB_SF`,
+                  `${stagePrefix}_UB_FINAL`,
+                ]}
+                upperLabels={["UB QF", "UB SF", "UB Final"]}
+                lowerRounds={[
+                  `${stagePrefix}_LB_R1`,
+                  `${stagePrefix}_LB_R2`,
+                  `${stagePrefix}_LB_SF`,
+                  `${stagePrefix}_LB_FINAL`,
+                ]}
+                lowerLabels={["LB R1", "LB R2", "LB SF", "LB Final"]}
                 grandFinalRound={`${stagePrefix}_GRAND_FINAL`}
               />
             </section>
@@ -766,5 +945,169 @@ function ChampPtsTable({
         );
       })}
     </>
+  );
+}
+
+// ── International group table (4 groups A/B/C/D for EWC + Champions) ──
+
+function IntlGroupTable({
+  rows,
+  userTeamId,
+}: {
+  rows: Array<{ team: { id: string; name: string; tag: string; logoUrl: string | null }; wins: number; losses: number }>;
+  userTeamId: string;
+}) {
+  return (
+    <>
+      <div
+        className="grid items-center gap-3 px-6 py-2"
+        style={{
+          gridTemplateColumns: "28px 1fr 36px 36px",
+          borderBottom: `1px solid ${D.borderFaint}`,
+        }}
+      >
+        <span className="text-[9px] font-medium" style={{ color: D.textSubtle }}>#</span>
+        <span className="text-[9px] font-medium" style={{ color: D.textSubtle }}>Team</span>
+        <span className="text-right text-[9px] font-medium" style={{ color: D.textSubtle }}>W</span>
+        <span className="text-right text-[9px] font-medium" style={{ color: D.textSubtle }}>L</span>
+      </div>
+      {rows.map((row, idx) => {
+        const isUser = row.team.id === userTeamId;
+        const qualifies = idx < 2;
+        return (
+          <div
+            key={row.team.id}
+            className="grid items-center gap-3 px-6 py-2.5"
+            style={{
+              gridTemplateColumns: "28px 1fr 36px 36px",
+              borderBottom: `1px solid ${D.borderFaint}`,
+              background: isUser ? "rgba(255,70,85,0.06)" : "transparent",
+            }}
+          >
+            <span
+              className="text-[12px] font-medium tabular-nums"
+              style={{ color: qualifies ? D.gold : D.textMuted }}
+            >
+              {idx + 1}
+            </span>
+            <div className="flex min-w-0 items-center gap-2.5">
+              {row.team.logoUrl ? (
+                <img src={row.team.logoUrl} alt="" className="h-5 w-5 shrink-0 object-contain" />
+              ) : (
+                <div className="h-5 w-5 shrink-0 rounded" style={{ background: D.card }} />
+              )}
+              <span
+                className="truncate text-[12px] font-medium"
+                style={{ color: isUser ? D.red : D.textPrimary }}
+              >
+                {row.team.name}
+              </span>
+            </div>
+            <span className="text-right text-[12px] font-medium tabular-nums" style={{ color: D.textPrimary }}>
+              {row.wins}
+            </span>
+            <span className="text-right text-[12px] font-medium tabular-nums" style={{ color: D.textMuted }}>
+              {row.losses}
+            </span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+// ── Single-elim playoff row (EWC: QF → SF → GF, no LB) ──
+
+function SingleElimRow({
+  rounds,
+  userTeamId,
+}: {
+  rounds: Array<{ label: string; matches: Array<{ id: string; team1: { id: string; name: string; logoUrl: string | null }; team2: { id: string; name: string; logoUrl: string | null }; winnerId: string | null; score: unknown; isPlayed: boolean }> }>;
+  userTeamId: string;
+}) {
+  return (
+    <div className="grid gap-6" style={{ gridTemplateColumns: `repeat(${rounds.length}, 1fr)` }}>
+      {rounds.map((r) => (
+        <div key={r.label} className="flex flex-col gap-2">
+          <span className="text-[10px] font-medium uppercase tracking-wider" style={{ color: D.textSubtle }}>
+            {r.label}
+          </span>
+          <div className="flex flex-col gap-2">
+            {r.matches.map((m) => {
+              const score = m.score as { team1: number; team2: number } | null;
+              const isUser = m.team1.id === userTeamId || m.team2.id === userTeamId;
+              const t1Won = m.winnerId === m.team1.id;
+              const t2Won = m.winnerId === m.team2.id;
+              return (
+                <div
+                  key={m.id}
+                  className="rounded"
+                  style={{
+                    background: isUser ? "rgba(255,70,85,0.06)" : D.surface,
+                    border: `1px solid ${isUser ? "rgba(255,70,85,0.4)" : D.border}`,
+                  }}
+                >
+                  <SingleElimTeamRow
+                    name={m.team1.name}
+                    logo={m.team1.logoUrl}
+                    score={m.isPlayed && score ? score.team1 : null}
+                    won={t1Won}
+                    lost={t2Won && m.isPlayed}
+                  />
+                  <div style={{ borderTop: `1px solid ${D.borderFaint}` }} />
+                  <SingleElimTeamRow
+                    name={m.team2.name}
+                    logo={m.team2.logoUrl}
+                    score={m.isPlayed && score ? score.team2 : null}
+                    won={t2Won}
+                    lost={t1Won && m.isPlayed}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SingleElimTeamRow({
+  name,
+  logo,
+  score,
+  won,
+  lost,
+}: {
+  name: string;
+  logo: string | null;
+  score: number | null;
+  won: boolean;
+  lost: boolean;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between px-3 py-2"
+      style={{ opacity: lost ? 0.4 : 1 }}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        {logo ? (
+          <img src={logo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+        ) : (
+          <div className="h-4 w-4 shrink-0 rounded" style={{ background: D.card }} />
+        )}
+        <span className="truncate text-[12px] font-medium" style={{ color: D.textPrimary }}>
+          {name}
+        </span>
+      </div>
+      {score !== null && (
+        <span
+          className="ml-2 text-[12px] font-medium tabular-nums"
+          style={{ color: won ? D.textPrimary : D.textSubtle }}
+        >
+          {score}
+        </span>
+      )}
+    </div>
   );
 }
