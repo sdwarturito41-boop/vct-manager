@@ -567,28 +567,35 @@ export default async function LeaguePage({
 
                 {/* Playoffs bracket tree (VLR.gg style) — only if matches exist */}
                 {playoffs.length > 0 && (
-                  <DoubleElimBracket
-                    matches={playoffs.flatMap((p) => p.matches)}
-                    userTeamId={team.id}
-                    upperRounds={[
-                      `${stagePrefix}_PO_UB_QF`,
-                      `${stagePrefix}_PO_UB_SF`,
-                      `${stagePrefix}_PO_UB_FINAL`,
-                    ]}
-                    upperLabels={["UB QF", "UB SF", "UB Final · BO3"]}
-                    lowerRounds={[
-                      `${stagePrefix}_PO_LB_R1`,
-                      `${stagePrefix}_PO_LB_R2`,
-                      `${stagePrefix}_PO_LB_FINAL`,
-                      `${stagePrefix}_PO_LB_GF`,
-                    ]}
-                    lowerLabels={["LB R1", "LB R2", "LB SF", "LB Final · BO5"]}
-                    grandFinalRound={`${stagePrefix}_PO_GF`}
-                    grandFinalLabel="Grand Final · BO5"
-                    title={`${r} Playoffs`}
-                    subtitle="Double Elimination · 8 teams"
-                    isUserContext={r === team.region}
-                  />
+                  <>
+                    <DoubleElimBracket
+                      matches={playoffs.flatMap((p) => p.matches)}
+                      userTeamId={team.id}
+                      upperRounds={[
+                        `${stagePrefix}_PO_UB_QF`,
+                        `${stagePrefix}_PO_UB_SF`,
+                        `${stagePrefix}_PO_UB_FINAL`,
+                      ]}
+                      upperLabels={["UB QF", "UB SF", "UB Final · BO3"]}
+                      lowerRounds={[
+                        `${stagePrefix}_PO_LB_R1`,
+                        `${stagePrefix}_PO_LB_R2`,
+                        `${stagePrefix}_PO_LB_FINAL`,
+                        `${stagePrefix}_PO_LB_GF`,
+                      ]}
+                      lowerLabels={["LB R1", "LB R2", "LB SF", "LB Final · BO5"]}
+                      grandFinalRound={`${stagePrefix}_PO_GF`}
+                      grandFinalLabel="Grand Final · BO5"
+                      title={`${r} Playoffs`}
+                      subtitle="Double Elimination · 8 teams"
+                      isUserContext={r === team.region}
+                    />
+                    <PlacementRewards
+                      matches={playoffs.flatMap((p) => p.matches)}
+                      stagePrefix={stagePrefix}
+                      userTeamId={team.id}
+                    />
+                  </>
                 )}
               </div>
             );
@@ -1109,6 +1116,188 @@ function SingleElimTeamRow({
         >
           {score}
         </span>
+      )}
+    </div>
+  );
+}
+
+// ── Stage 1/2 PO placement rewards panel ──
+// Surfaces what each finishing slot earns so the user can see what's on the
+// line as the bracket plays out: champ pts, Masters slot, EWC slot.
+
+function PlacementRewards({
+  matches,
+  stagePrefix,
+  userTeamId,
+}: {
+  matches: Array<{
+    id: string;
+    stageId: string;
+    isPlayed: boolean;
+    winnerId: string | null;
+    team1: { id: string; name: string; tag: string; logoUrl: string | null };
+    team2: { id: string; name: string; tag: string; logoUrl: string | null };
+  }>;
+  stagePrefix: string;
+  userTeamId: string;
+}) {
+  // Resolve placements from the bracket. Each slot may be TBD until its
+  // decisive match is played.
+  type Placement = {
+    rank: 1 | 2 | 3 | 4;
+    team: { id: string; name: string; logoUrl: string | null } | null;
+    champPts: number;
+    qualifiesFor: string[];
+  };
+
+  const findMatch = (suffix: string) =>
+    matches.find((m) => m.stageId === `${stagePrefix}${suffix}`);
+  const winnerLoser = (
+    suffix: string,
+  ): { winner: typeof matches[0]["team1"] | null; loser: typeof matches[0]["team1"] | null } => {
+    const m = findMatch(suffix);
+    if (!m || !m.isPlayed || !m.winnerId) return { winner: null, loser: null };
+    return m.winnerId === m.team1.id
+      ? { winner: m.team1, loser: m.team2 }
+      : { winner: m.team2, loser: m.team1 };
+  };
+
+  const gf = winnerLoser("_PO_GF");
+  const lbGf = winnerLoser("_PO_LB_GF");
+  const lbSf = winnerLoser("_PO_LB_FINAL"); // semantically LB SF
+
+  // Per-stage reward config. Stage 1 funnels into Masters 2 (London) + EWC;
+  // Stage 2 funnels into Champions Shanghai. Point values match the VCT 2026
+  // championship-points table.
+  const rewards = stagePrefix === "STAGE_2"
+    ? {
+        pts: [8, 6, 5, 4] as const,
+        qualifies: [
+          ["Champions"],
+          ["Champions"],
+          [],
+          [],
+        ] as const,
+      }
+    : {
+        // Stage 1 PO top 3 → Masters London. PO 1er obtient en plus le slot
+        // direct EWC (1 par région).
+        pts: [6, 4, 3, 2] as const,
+        qualifies: [
+          ["Masters London", "EWC slot direct"],
+          ["Masters London"],
+          ["Masters London"],
+          [],
+        ] as const,
+      };
+
+  const placements: Placement[] = [
+    { rank: 1, team: gf.winner, champPts: rewards.pts[0], qualifiesFor: [...rewards.qualifies[0]] },
+    { rank: 2, team: gf.loser, champPts: rewards.pts[1], qualifiesFor: [...rewards.qualifies[1]] },
+    { rank: 3, team: lbGf.loser, champPts: rewards.pts[2], qualifiesFor: [...rewards.qualifies[2]] },
+    { rank: 4, team: lbSf.loser, champPts: rewards.pts[3], qualifiesFor: [...rewards.qualifies[3]] },
+  ];
+
+  return (
+    <div className="px-10 py-6" style={{ borderTop: `1px solid ${D.borderFaint}` }}>
+      <div className="mb-3 flex items-baseline gap-3">
+        <span className="text-[11px] font-medium uppercase tracking-wider" style={{ color: D.textPrimary }}>
+          Placement rewards
+        </span>
+        <span className="text-[10px]" style={{ color: D.textSubtle }}>
+          Champ pts · Tournament qualification
+        </span>
+      </div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
+        {placements.map((p) => {
+          const isUser = p.team?.id === userTeamId;
+          const rankColor =
+            p.rank === 1 ? D.gold : p.rank === 2 ? "#C0C0C0" : p.rank === 3 ? "#CD7F32" : D.textMuted;
+          return (
+            <div
+              key={p.rank}
+              className="flex flex-col gap-2 rounded p-3"
+              style={{
+                background: isUser ? "rgba(255,70,85,0.06)" : D.surface,
+                border: `1px solid ${isUser ? "rgba(255,70,85,0.4)" : D.borderFaint}`,
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[16px] font-medium" style={{ color: rankColor }}>
+                  {p.rank === 1 ? "1st" : p.rank === 2 ? "2nd" : p.rank === 3 ? "3rd" : "4th"}
+                </span>
+                <span
+                  className="rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums"
+                  style={{
+                    background: "rgba(198,155,58,0.12)",
+                    color: D.gold,
+                  }}
+                >
+                  +{p.champPts} pts
+                </span>
+              </div>
+              <div className="flex min-h-[24px] items-center gap-2">
+                {p.team ? (
+                  <>
+                    {p.team.logoUrl ? (
+                      <img src={p.team.logoUrl} alt="" className="h-5 w-5 shrink-0 object-contain" />
+                    ) : (
+                      <div className="h-5 w-5 shrink-0 rounded" style={{ background: D.card }} />
+                    )}
+                    <span
+                      className="truncate text-[12px] font-medium"
+                      style={{ color: isUser ? D.red : D.textPrimary }}
+                    >
+                      {p.team.name}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-[11px] italic" style={{ color: D.textSubtle }}>
+                    TBD
+                  </span>
+                )}
+              </div>
+              {p.qualifiesFor.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {p.qualifiesFor.map((q) => {
+                    // Color-code by tournament tier so the user grasps at a glance
+                    // which slot is at stake.
+                    const styling = q.includes("EWC")
+                      ? { bg: "rgba(255,70,85,0.12)", fg: D.red }
+                      : q.includes("Champions")
+                        ? { bg: "rgba(198,155,58,0.15)", fg: D.gold }
+                        : { bg: "rgba(76,175,125,0.12)", fg: D.green };
+                    return (
+                      <span
+                        key={q}
+                        className="rounded px-1.5 py-0.5 text-[9px] font-medium"
+                        style={{ background: styling.bg, color: styling.fg }}
+                      >
+                        {q}
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <span className="text-[9px]" style={{ color: D.textSubtle }}>
+                  Pas de qualification directe
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {stagePrefix === "STAGE_1" && (
+        <p className="mt-3 text-[10px]" style={{ color: D.textMuted }}>
+          + Le <span style={{ color: D.red, fontWeight: 500 }}>PO 1er</span>{" "}
+          (vainqueur de la Grand Final) prend aussi le slot direct EWC en plus de Masters London.
+        </p>
+      )}
+      {stagePrefix === "STAGE_2" && (
+        <p className="mt-3 text-[10px]" style={{ color: D.textMuted }}>
+          + 2 slots Champions supplémentaires par région via le classement champ points
+          (top 2 hors qualifiés directs).
+        </p>
       )}
     </div>
   );

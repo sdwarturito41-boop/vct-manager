@@ -396,14 +396,14 @@ export const seasonRouter = router({
       "MASTERS_2_GRAND_FINAL": { winner: 4, loser: 3 },
       "MASTERS_2_LB_FINAL":    { winner: 0, loser: 2 },
       "MASTERS_2_LB_SF":       { winner: 0, loser: 1 },
-      "STAGE_1_PO_GF":         { winner: 4, loser: 3 },
-      // Bracket gained an extra step: LB SF (existing _PO_LB_FINAL stageId) +
-      // LB GF (new _PO_LB_GF). Placement shifts down accordingly.
-      "STAGE_1_PO_LB_GF":      { winner: 0, loser: 2 }, // 3rd place
-      "STAGE_1_PO_LB_FINAL":   { winner: 0, loser: 1 }, // 4th place (LB SF loser)
-      "STAGE_2_PO_GF":         { winner: 4, loser: 3 },
-      "STAGE_2_PO_LB_GF":      { winner: 0, loser: 2 },
-      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 1 },
+      // Stage 1 PO → 6/4/3/2 pts. Top 3 → Masters London. 1st → EWC direct slot.
+      "STAGE_1_PO_GF":         { winner: 6, loser: 4 },
+      "STAGE_1_PO_LB_GF":      { winner: 0, loser: 3 }, // 3rd
+      "STAGE_1_PO_LB_FINAL":   { winner: 0, loser: 2 }, // 4th (LB SF loser)
+      // Stage 2 PO → 8/6/5/4 pts. Top 2 → Champions Shanghai.
+      "STAGE_2_PO_GF":         { winner: 8, loser: 6 },
+      "STAGE_2_PO_LB_GF":      { winner: 0, loser: 5 }, // 3rd
+      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 4 }, // 4th
     };
     const prizePayouts: Record<string, { winner: number; loser: number }> = {
       "STAGE_2_PO_GF":         { winner: 100_000, loser: 65_000 },

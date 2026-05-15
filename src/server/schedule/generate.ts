@@ -1947,6 +1947,36 @@ async function tryRegionalLBR2(
 async function getStageTopTeams(
   prisma: PrismaClient, saveId: string, region: Region, season: number, stageId: string, count: number,
 ): Promise<string[]> {
+  // Champions qualification (4 teams per region from STAGE_2):
+  //   #1 + #2 = STAGE_2 PO Grand Final winner + loser (direct slots)
+  //   #3 + #4 = top by champPts in the region, excluding the 2 already in
+  //
+  // This mirrors real VCT: top 2 of Stage 2 get the direct seeds, then the
+  // remaining slots go to the regional Championship-points race. A team that
+  // would lead the points race AND finish top-2 of Stage 2 only takes one slot
+  // (the direct one) — points leaderboard is recomputed without them.
+  if (stageId === "STAGE_2" && count === 4) {
+    const gf = await prisma.match.findFirst({
+      where: { saveId, stageId: "STAGE_2_PO_GF", season, isPlayed: true, team1: { region } },
+    });
+    const qualified: string[] = [];
+    if (gf?.winnerId) {
+      qualified.push(gf.winnerId);
+      const loser = gf.winnerId === gf.team1Id ? gf.team2Id : gf.team1Id;
+      qualified.push(loser);
+    }
+    if (qualified.length < count) {
+      const byPoints = await prisma.team.findMany({
+        where: { saveId, region, id: { notIn: qualified } },
+        orderBy: [{ champPts: "desc" }, { wins: "desc" }],
+        take: count - qualified.length,
+        select: { id: true },
+      });
+      for (const t of byPoints) qualified.push(t.id);
+    }
+    return qualified.slice(0, count);
+  }
+
   // For STAGE_1/STAGE_2 we qualify via playoffs bracket:
   //   #1 = UB Final winner
   //   #2 = Grand Final winner
