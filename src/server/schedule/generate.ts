@@ -1869,7 +1869,9 @@ export async function progressRegionalPlayoffs(
     await tryRegionalLBR2(prisma, saveId, prefix, R, S, currentDay);
   }
 
-  // ── LB R2 done → LB Final (winners of 2 LB R2 matches) ──
+  // ── LB R2 done → LB SF (winners of 2 LB R2 matches play each other) ──
+  // Note: stageId is `_PO_LB_FINAL` for historical/data reasons but represents
+  // the LB Semi-Final semantically (the round that crowns the LB side).
   if (completedStageId === `${prefix}_PO_LB_R2`) {
     const lbR2 = await results(`${prefix}_PO_LB_R2`);
     if (lbR2.length >= 2 && !await exists(`${prefix}_PO_LB_FINAL`)) {
@@ -1877,12 +1879,26 @@ export async function progressRegionalPlayoffs(
     }
   }
 
-  // ── UB Final or LB Final done → Grand Final ──
-  if (completedStageId === `${prefix}_PO_UB_FINAL` || completedStageId === `${prefix}_PO_LB_FINAL`) {
+  // ── LB "Final" (semantically LB SF) done OR UB Final done → LB GF (the
+  // actual LB Final match: LB-SF winner vs UB-Final loser). UB-Final loser
+  // gets a second life here, which is the missing piece of standard 8-team DE.
+  if (
+    completedStageId === `${prefix}_PO_LB_FINAL` ||
+    completedStageId === `${prefix}_PO_UB_FINAL`
+  ) {
+    const lbSf = await results(`${prefix}_PO_LB_FINAL`);
     const ubF = await results(`${prefix}_PO_UB_FINAL`);
-    const lbF = await results(`${prefix}_PO_LB_FINAL`);
-    if (ubF.length >= 1 && lbF.length >= 1 && !await exists(`${prefix}_PO_GF`)) {
-      await cm([[ubF[0].winner, lbF[0].winner]], `${prefix}_PO_GF`, "BO5");
+    if (lbSf.length >= 1 && ubF.length >= 1 && !await exists(`${prefix}_PO_LB_GF`)) {
+      await cm([[lbSf[0].winner, ubF[0].loser]], `${prefix}_PO_LB_GF`, "BO5");
+    }
+  }
+
+  // ── LB GF or UB Final done → Grand Final ──
+  if (completedStageId === `${prefix}_PO_UB_FINAL` || completedStageId === `${prefix}_PO_LB_GF`) {
+    const ubF = await results(`${prefix}_PO_UB_FINAL`);
+    const lbGf = await results(`${prefix}_PO_LB_GF`);
+    if (ubF.length >= 1 && lbGf.length >= 1 && !await exists(`${prefix}_PO_GF`)) {
+      await cm([[ubF[0].winner, lbGf[0].winner]], `${prefix}_PO_GF`, "BO5");
     }
   }
 }

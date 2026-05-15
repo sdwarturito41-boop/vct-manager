@@ -194,7 +194,7 @@ export default async function LeaguePage({
 
   // ─── Playoffs bracket rounds for Stage 1/2 (per region) ───
   type PlayoffRound = { label: string; suffix: string; matches: typeof allStageMatches };
-  const playoffRoundOrder = ["_PO_UB_QF", "_PO_UB_SF", "_PO_UB_FINAL", "_PO_LB_R1", "_PO_LB_R2", "_PO_LB_FINAL", "_PO_GF"];
+  const playoffRoundOrder = ["_PO_UB_QF", "_PO_UB_SF", "_PO_UB_FINAL", "_PO_LB_R1", "_PO_LB_R2", "_PO_LB_FINAL", "_PO_LB_GF", "_PO_GF"];
   const regionalPlayoffs = new Map<string, PlayoffRound[]>();
   if (isStage) {
     for (const r of regions) {
@@ -575,14 +575,16 @@ export default async function LeaguePage({
                       `${stagePrefix}_PO_UB_SF`,
                       `${stagePrefix}_PO_UB_FINAL`,
                     ]}
-                    upperLabels={["UB QF", "UB SF", "UB Final · BO5"]}
+                    upperLabels={["UB QF", "UB SF", "UB Final · BO3"]}
                     lowerRounds={[
                       `${stagePrefix}_PO_LB_R1`,
                       `${stagePrefix}_PO_LB_R2`,
                       `${stagePrefix}_PO_LB_FINAL`,
+                      `${stagePrefix}_PO_LB_GF`,
                     ]}
-                    lowerLabels={["LB R1", "LB R2", "LB Final · BO5"]}
+                    lowerLabels={["LB R1", "LB R2", "LB SF", "LB Final · BO5"]}
                     grandFinalRound={`${stagePrefix}_PO_GF`}
+                    grandFinalLabel="Grand Final · BO5"
                     title={`${r} Playoffs`}
                     subtitle="Double Elimination · 8 teams"
                     isUserContext={r === team.region}

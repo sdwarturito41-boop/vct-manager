@@ -584,7 +584,7 @@ export function DoubleElimBracket({
   lowerRounds,
   lowerLabels,
   grandFinalRound,
-  grandFinalLabel = "Grand Final · BO3",
+  grandFinalLabel = "Grand Final · BO5",
   title,
   subtitle,
   isUserContext = false,

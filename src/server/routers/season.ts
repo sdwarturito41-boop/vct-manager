@@ -397,16 +397,18 @@ export const seasonRouter = router({
       "MASTERS_2_LB_FINAL":    { winner: 0, loser: 2 },
       "MASTERS_2_LB_SF":       { winner: 0, loser: 1 },
       "STAGE_1_PO_GF":         { winner: 4, loser: 3 },
-      "STAGE_1_PO_LB_FINAL":   { winner: 0, loser: 2 },
-      "STAGE_1_PO_LB_R2":      { winner: 0, loser: 1 },
+      // Bracket gained an extra step: LB SF (existing _PO_LB_FINAL stageId) +
+      // LB GF (new _PO_LB_GF). Placement shifts down accordingly.
+      "STAGE_1_PO_LB_GF":      { winner: 0, loser: 2 }, // 3rd place
+      "STAGE_1_PO_LB_FINAL":   { winner: 0, loser: 1 }, // 4th place (LB SF loser)
       "STAGE_2_PO_GF":         { winner: 4, loser: 3 },
-      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 2 },
-      "STAGE_2_PO_LB_R2":      { winner: 0, loser: 1 },
+      "STAGE_2_PO_LB_GF":      { winner: 0, loser: 2 },
+      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 1 },
     };
     const prizePayouts: Record<string, { winner: number; loser: number }> = {
       "STAGE_2_PO_GF":         { winner: 100_000, loser: 65_000 },
-      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 40_000 },
-      "STAGE_2_PO_UB_FINAL":   { winner: 0, loser: 25_000 },
+      "STAGE_2_PO_LB_GF":      { winner: 0, loser: 40_000 }, // 3rd place
+      "STAGE_2_PO_LB_FINAL":   { winner: 0, loser: 25_000 }, // 4th place
       "STAGE_2_PO_LB_R2":      { winner: 0, loser: 10_000 },
       "MASTERS_1_GRAND_FINAL": { winner: 175_000, loser: 100_000 },
       "MASTERS_1_LB_FINAL":    { winner: 0, loser: 62_500 },
@@ -1582,12 +1584,18 @@ export const seasonRouter = router({
 
     /** Top 3 d'un Stage régional (PO UB Final winner / GF winner / GF loser). */
     async function stageTop3(stageId: string, region: string): Promise<TeamMini[]> {
-      const ub = await findFinal(`${stageId}_PO_UB_FINAL`, region);
+      // 1st = GF winner, 2nd = GF loser, 3rd = LB-GF loser (the LB-Final
+      // match where the UB-Final loser was dropped down). Falls back to UB
+      // Final winner when the GF hasn't been played yet so the section still
+      // surfaces the leading team mid-stage.
       const gf = await findFinal(`${stageId}_PO_GF`, region);
+      const lbGf = await findFinal(`${stageId}_PO_LB_GF`, region);
+      const ubF = await findFinal(`${stageId}_PO_UB_FINAL`, region);
       const podium: TeamMini[] = [];
-      if (ub?.winner) podium.push(ub.winner);
       if (gf?.winner) podium.push(gf.winner);
+      else if (ubF?.winner) podium.push(ubF.winner);
       if (gf?.loser) podium.push(gf.loser);
+      if (lbGf?.loser) podium.push(lbGf.loser);
       return podium;
     }
 
