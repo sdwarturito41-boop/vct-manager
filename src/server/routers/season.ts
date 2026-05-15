@@ -484,7 +484,15 @@ export const seasonRouter = router({
           }),
         );
       }
-      await ctx.prisma.$transaction(writes);
+      // Same trick as stat rolling batch: $transaction serializes each UPDATE
+      // on the connection. Chunk into parallel groups instead — same writes,
+      // but Prisma's pool fans them out (~10× faster on Neon at 50ms RTT).
+      // Atomicity isn't load-bearing here: a partial failure is recoverable by
+      // re-running advanceDay (the matches stay isPlayed and dedup via id).
+      const CHUNK = 10;
+      for (let i = 0; i < writes.length; i += CHUNK) {
+        await Promise.all(writes.slice(i, i + CHUNK));
+      }
     }
 
     for (const r of aiResults) {
@@ -508,52 +516,63 @@ export const seasonRouter = router({
 
     mark("write match results (phase 2 tx)");
     // Progress bracket/Swiss — check completion PER REGION for Kickoff, globally for international
-    for (const roundId of completedRounds) {
-      const isInternational = roundId.startsWith("MASTERS_") || roundId.startsWith("EWC_") || roundId.startsWith("CHAMPIONS_");
-      const isSwiss = roundId.includes("_SWISS_R");
-      // EWC main uses 4-groups + SE playoffs, pas le format Masters Swiss/DE.
-      const isEwcMain =
-        roundId.startsWith("EWC_GROUP_") ||
-        roundId === "EWC_QF" ||
-        roundId === "EWC_SF" ||
-        roundId === "EWC_GRAND_FINAL";
-      const isMastersBracket = (roundId.startsWith("MASTERS_") || roundId.startsWith("EWC_") || roundId.startsWith("CHAMPIONS_"))
-        && !isSwiss && !isEwcMain;
+    // Each unique stageId in `completedRounds` is independent — progressing
+    // KICKOFF_UB_R1 doesn't touch the same rows as KICKOFF_MID_R1 etc. Fan out
+    // the outer loop so the per-stage queries overlap. Inside, per-region
+    // progression for regional stages also fans out (4 regions, independent
+    // team sets). Each progressXxx still does its own sequential queries, but
+    // overlapping 4 of them roughly quarters the wall-clock cost.
+    await Promise.all(
+      [...completedRounds].map(async (roundId) => {
+        const isSwiss = roundId.includes("_SWISS_R");
+        const isEwcMain =
+          roundId.startsWith("EWC_GROUP_") ||
+          roundId === "EWC_QF" ||
+          roundId === "EWC_SF" ||
+          roundId === "EWC_GRAND_FINAL";
+        const isMastersBracket =
+          (roundId.startsWith("MASTERS_") ||
+            roundId.startsWith("EWC_") ||
+            roundId.startsWith("CHAMPIONS_")) &&
+          !isSwiss &&
+          !isEwcMain;
 
-      if (isSwiss) {
-        // Swiss progression: check if all matches in this round are done
-        const swissRoundMatches = await ctx.prisma.match.findMany({
-          where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
-        });
-        const allPlayed = swissRoundMatches.length > 0 && swissRoundMatches.every((m) => m.isPlayed);
-        if (allPlayed) {
-          await progressSwiss(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
+        if (isSwiss) {
+          const swissRoundMatches = await ctx.prisma.match.findMany({
+            where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
+          });
+          const allPlayed = swissRoundMatches.length > 0 && swissRoundMatches.every((m) => m.isPlayed);
+          if (allPlayed) {
+            await progressSwiss(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
+          }
+          return;
         }
-      } else if (isEwcMain) {
-        // EWC Main = 4 groupes round-robin → top 2 → SE playoffs
-        const ewcMatches = await ctx.prisma.match.findMany({
-          where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
-        });
-        const allPlayed = ewcMatches.length > 0 && ewcMatches.every((m) => m.isPlayed);
-        if (allPlayed) {
-          await progressEwcMain(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
+        if (isEwcMain) {
+          const ewcMatches = await ctx.prisma.match.findMany({
+            where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
+          });
+          const allPlayed = ewcMatches.length > 0 && ewcMatches.every((m) => m.isPlayed);
+          if (allPlayed) {
+            await progressEwcMain(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
+          }
+          return;
         }
-      } else if (isMastersBracket) {
-        // International bracket progression (Masters/Champions)
-        const bracketMatches = await ctx.prisma.match.findMany({
-          where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
-        });
-        const allPlayed = bracketMatches.length > 0 && bracketMatches.every((m) => m.isPlayed);
-        if (allPlayed) {
-          await progressMastersBracket(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
+        if (isMastersBracket) {
+          const bracketMatches = await ctx.prisma.match.findMany({
+            where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
+          });
+          const allPlayed = bracketMatches.length > 0 && bracketMatches.every((m) => m.isPlayed);
+          if (allPlayed) {
+            await progressMastersBracket(ctx.prisma, ctx.save.id, roundId, season.number, newDay);
+          }
+          return;
         }
-      } else {
-        // Kickoff: regional bracket progression — check completion PER REGION
+
+        // Regional (Kickoff / Stage groups / Stage playoffs / EWC quals)
         const allRoundMatches = await ctx.prisma.match.findMany({
           where: { saveId: ctx.save.id, stageId: roundId, season: season.number },
           include: { team1: { select: { region: true } } },
         });
-
         const byRegion = new Map<string, { played: number; total: number }>();
         for (const m of allRoundMatches) {
           const r = m.team1.region;
@@ -563,42 +582,35 @@ export const seasonRouter = router({
           byRegion.set(r, cur);
         }
 
-        for (const [region, counts] of byRegion) {
-          if (counts.played === counts.total && counts.total > 0) {
-            // Kickoff bracket progression
+        await Promise.all(
+          [...byRegion.entries()].map(async ([region, counts]) => {
+            if (counts.played !== counts.total || counts.total === 0) return;
             if (roundId.startsWith("KICKOFF")) {
               await progressBracket(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
             }
-            // Regional stage group phase completion → create playoffs + EWC qualifier
             if (roundId === "STAGE_1_ALPHA" || roundId === "STAGE_1_OMEGA") {
               await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_1", region as Region, season.number, newDay);
-              // EWC Qualifier Stage 1 — bottom 2 de chaque groupe partent
-              // sur le mini-bracket en parallèle des playoffs VCT.
               await initializeEwcQualifierS1(ctx.prisma, ctx.save.id, region as Region, season.number, newDay);
             }
             if (roundId === "STAGE_2_ALPHA" || roundId === "STAGE_2_OMEGA") {
               await progressRegionalStage(ctx.prisma, ctx.save.id, "STAGE_2", region as Region, season.number, newDay);
             }
-            // Regional playoffs round progression
             if (roundId.includes("_PO_")) {
               await progressRegionalPlayoffs(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
             }
-            // EWC Qualifier Stage 1 progression
             if (roundId.startsWith("EWC_QUAL_S1_")) {
               await progressEwcQualifierS1(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
-              // S1 LB Final done → kick off S2 Qualifier
               if (roundId === "EWC_QUAL_S1_LB_FINAL") {
                 await initializeEwcQualifierS2(ctx.prisma, ctx.save.id, region as Region, season.number, newDay);
               }
             }
-            // EWC Qualifier Stage 2 progression
             if (roundId.startsWith("EWC_QUAL_S2_")) {
               await progressEwcQualifierS2(ctx.prisma, ctx.save.id, roundId, region as Region, season.number, newDay);
             }
-          }
-        }
-      }
-    }
+          }),
+        );
+      }),
+    );
 
     // Final-placement champPts + prize money are now applied in the Phase 2
     // mega-transaction above (via teamDeltas). No separate loops needed.

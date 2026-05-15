@@ -1,5 +1,5 @@
 import { serverTrpc } from "@/lib/trpc-server";
-import { BracketView } from "@/components/BracketView";
+import { BracketView, DoubleElimBracket } from "@/components/BracketView";
 import { prisma } from "@/lib/prisma";
 import { VCT_STAGES } from "@/constants/vct-format";
 import type { StageId } from "@/constants/vct-format";
@@ -308,17 +308,24 @@ export default async function LeaguePage() {
           {bracketRounds.length > 0 && (
             <section className="flex flex-col">
               <SectionHeader label="Bracket Stage" sub="Double Elimination" />
-              <div className="flex flex-col gap-0">
-                {bracketRounds.map((r) => (
-                  <BracketRound
-                    key={r.label}
-                    label={r.label}
-                    matches={r.matches}
-                    userTeamId={team.id}
-                    teamNameToLogo={teamNameToLogo}
-                  />
-                ))}
-              </div>
+              <DoubleElimBracket
+                matches={bracketRounds.flatMap((r) => r.matches)}
+                userTeamId={team.id}
+                upperRounds={[
+                  `${stagePrefix}_UB_QF`,
+                  `${stagePrefix}_UB_SF`,
+                  `${stagePrefix}_UB_FINAL`,
+                ]}
+                upperLabels={["UB QF", "UB SF", "UB Final · BO5"]}
+                lowerRounds={[
+                  `${stagePrefix}_LB_R1`,
+                  `${stagePrefix}_LB_R2`,
+                  `${stagePrefix}_LB_SF`,
+                  `${stagePrefix}_LB_FINAL`,
+                ]}
+                lowerLabels={["LB R1", "LB R2", "LB SF", "LB Final · BO5"]}
+                grandFinalRound={`${stagePrefix}_GRAND_FINAL`}
+              />
             </section>
           )}
         </>
@@ -379,33 +386,28 @@ export default async function LeaguePage() {
                   </div>
                 </div>
 
-                {/* Playoffs below groups */}
+                {/* Playoffs bracket tree (VLR.gg style) — only if matches exist */}
                 {playoffs.length > 0 && (
-                  <div className="flex flex-col">
-                    <div
-                      className="flex items-center justify-between px-10 py-3"
-                      style={{ borderBottom: `1px solid ${D.borderFaint}` }}
-                    >
-                      <span
-                        className="text-[10px] font-medium "
-                        style={{ color: D.gold }}
-                      >
-                        {r} Playoffs
-                      </span>
-                      <span className="text-[10px] " style={{ color: D.textSubtle }}>
-                        Double Elimination
-                      </span>
-                    </div>
-                    {playoffs.map((round) => (
-                      <BracketRound
-                        key={round.suffix}
-                        label={round.label}
-                        matches={round.matches}
-                        userTeamId={team.id}
-                        teamNameToLogo={teamNameToLogo}
-                      />
-                    ))}
-                  </div>
+                  <DoubleElimBracket
+                    matches={playoffs.flatMap((p) => p.matches)}
+                    userTeamId={team.id}
+                    upperRounds={[
+                      `${stagePrefix}_PO_UB_QF`,
+                      `${stagePrefix}_PO_UB_SF`,
+                      `${stagePrefix}_PO_UB_FINAL`,
+                    ]}
+                    upperLabels={["UB QF", "UB SF", "UB Final · BO5"]}
+                    lowerRounds={[
+                      `${stagePrefix}_PO_LB_R1`,
+                      `${stagePrefix}_PO_LB_R2`,
+                      `${stagePrefix}_PO_LB_FINAL`,
+                    ]}
+                    lowerLabels={["LB R1", "LB R2", "LB Final · BO5"]}
+                    grandFinalRound={`${stagePrefix}_PO_GF`}
+                    title={`${r} Playoffs`}
+                    subtitle="Double Elimination · 8 teams"
+                    isUserContext={r === team.region}
+                  />
                 )}
               </div>
             );
@@ -558,103 +560,6 @@ function SwissTable({
         );
       })}
     </>
-  );
-}
-
-function BracketRound({
-  label,
-  matches,
-  userTeamId,
-  teamNameToLogo,
-}: {
-  label: string;
-  matches: Array<{ id: string; team1: { id: string; name: string; tag: string; logoUrl: string | null }; team2: { id: string; name: string; tag: string; logoUrl: string | null }; winnerId: string | null; score: unknown; isPlayed: boolean; day: number }>;
-  userTeamId: string;
-  teamNameToLogo: Record<string, string | null>;
-}) {
-  return (
-    <div className="flex flex-col" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
-      <div className="flex items-center justify-between px-10 py-3">
-        <span
-          className="text-[10px] font-medium "
-          style={{ color: D.textPrimary }}
-        >
-          {label}
-        </span>
-        <span className="text-[10px] " style={{ color: D.textSubtle }}>
-          {matches.length} {matches.length === 1 ? "match" : "matches"}
-        </span>
-      </div>
-      <div className="grid gap-0 pb-2">
-        {matches.map((m) => {
-          const score = m.score as { team1: number; team2: number } | null;
-          const isUserMatch = m.team1.id === userTeamId || m.team2.id === userTeamId;
-          const t1Won = m.winnerId === m.team1.id;
-          const t2Won = m.winnerId === m.team2.id;
-          return (
-            <div
-              key={m.id}
-              className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-10 py-2.5"
-              style={{
-                background: isUserMatch ? "rgba(255,70,85,0.04)" : "transparent",
-                borderBottom: `1px solid ${D.borderFaint}`,
-              }}
-            >
-              {/* Team 1 — right aligned */}
-              <div className="flex items-center justify-end gap-2.5">
-                <span
-                  className="truncate text-[13px] font-medium"
-                  style={{
-                    color: m.isPlayed ? (t1Won ? D.textPrimary : D.textMuted) : D.textPrimary,
-                    opacity: m.isPlayed && !t1Won ? 0.5 : 1,
-                  }}
-                >
-                  {m.team1.name}
-                </span>
-                {m.team1.logoUrl ? (
-                  <img src={m.team1.logoUrl} alt="" className="h-6 w-6 shrink-0 object-contain" />
-                ) : (
-                  <div className="h-6 w-6 shrink-0 rounded" style={{ background: D.card }} />
-                )}
-              </div>
-
-              {/* Score */}
-              <div className="flex min-w-[80px] items-center justify-center gap-2 text-[14px] tabular-nums">
-                {m.isPlayed && score ? (
-                  <>
-                    <span style={{ color: t1Won ? D.green : D.textMuted, fontWeight: 500 }}>{score.team1}</span>
-                    <span style={{ color: D.textFaint }}>:</span>
-                    <span style={{ color: t2Won ? D.green : D.textMuted, fontWeight: 500 }}>{score.team2}</span>
-                  </>
-                ) : (
-                  <span className="text-[10px] " style={{ color: D.textSubtle }}>
-                    Upcoming
-                  </span>
-                )}
-              </div>
-
-              {/* Team 2 — left aligned */}
-              <div className="flex items-center gap-2.5">
-                {m.team2.logoUrl ? (
-                  <img src={m.team2.logoUrl} alt="" className="h-6 w-6 shrink-0 object-contain" />
-                ) : (
-                  <div className="h-6 w-6 shrink-0 rounded" style={{ background: D.card }} />
-                )}
-                <span
-                  className="truncate text-[13px] font-medium"
-                  style={{
-                    color: m.isPlayed ? (t2Won ? D.textPrimary : D.textMuted) : D.textPrimary,
-                    opacity: m.isPlayed && !t2Won ? 0.5 : 1,
-                  }}
-                >
-                  {m.team2.name}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 

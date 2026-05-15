@@ -555,3 +555,132 @@ function shortName(name: string): string {
   if (parts.length === 1) return name;
   return parts[parts.length - 1];
 }
+
+// ── Reusable double-elim bracket view (Stage 1/2 playoffs, Masters, EWC, Champions) ──
+
+interface DoubleElimProps {
+  matches: BMatch[];
+  userTeamId: string;
+  /** Upper bracket round stageIds (left → right). */
+  upperRounds: string[];
+  upperLabels: string[];
+  /** Lower bracket round stageIds (left → right). */
+  lowerRounds: string[];
+  lowerLabels: string[];
+  /** Grand Final stageId. */
+  grandFinalRound: string;
+  grandFinalLabel?: string;
+  /** Optional header (e.g. "EMEA Playoffs"). When null no header bar renders. */
+  title?: string;
+  subtitle?: string;
+  isUserContext?: boolean;
+}
+
+export function DoubleElimBracket({
+  matches,
+  userTeamId,
+  upperRounds,
+  upperLabels,
+  lowerRounds,
+  lowerLabels,
+  grandFinalRound,
+  grandFinalLabel = "Grand Final · BO5",
+  title,
+  subtitle,
+  isUserContext = false,
+}: DoubleElimProps) {
+  const byRound = new Map<string, BMatch[]>();
+  for (const m of matches) {
+    if (!byRound.has(m.stageId)) byRound.set(m.stageId, []);
+    byRound.get(m.stageId)!.push(m);
+  }
+
+  const gfDb = (byRound.get(grandFinalRound) ?? [])[0] ?? null;
+  const gfSlot: SlotData = gfDb
+    ? {
+        match: gfDb,
+        t1: { name: gfDb.team1.name, tag: gfDb.team1.tag, logo: gfDb.team1.logoUrl },
+        t2: { name: gfDb.team2.name, tag: gfDb.team2.tag, logo: gfDb.team2.logoUrl },
+        label: "",
+        format: "BO5",
+        isFinal: true,
+      }
+    : { match: null, t1: null, t2: null, label: "", format: "BO5", isFinal: true };
+
+  // Show this bracket only if at least one of UB / LB / GF has data — otherwise
+  // it's a pure-TBD shell that just adds noise to the page.
+  const hasAnyMatch =
+    [...upperRounds, ...lowerRounds, grandFinalRound].some(
+      (r) => (byRound.get(r) ?? []).length > 0,
+    );
+  if (!hasAnyMatch) return null;
+
+  return (
+    <div className="flex flex-col">
+      {title && (
+        <div
+          className="flex items-center justify-between px-10 py-4"
+          style={{
+            background: isUserContext ? "rgba(255,70,85,0.04)" : "transparent",
+            borderBottom: `1px solid ${D.borderFaint}`,
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className="text-[14px] font-medium"
+              style={{ color: isUserContext ? D.red : D.textPrimary }}
+            >
+              {title}
+            </span>
+            {isUserContext && (
+              <span className="text-[10px]" style={{ color: D.red }}>
+                · Your Region
+              </span>
+            )}
+          </div>
+          {subtitle && (
+            <span className="text-[10px] font-medium" style={{ color: D.textMuted }}>
+              {subtitle}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Upper bracket */}
+      <div className="px-10 py-6" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+        <SectionHeader label="Upper Bracket" color={D.green} sub="Winners advance, losers drop" />
+        <div className="mt-4">
+          <GenericBracketGrid
+            rounds={upperRounds}
+            roundLabels={upperLabels}
+            byRound={byRound}
+            userTeamId={userTeamId}
+          />
+        </div>
+      </div>
+
+      {/* Lower bracket */}
+      <div className="px-10 py-6" style={{ borderBottom: `1px solid ${D.borderFaint}` }}>
+        <SectionHeader label="Lower Bracket" color={D.red} sub="One more loss = eliminated" />
+        <div className="mt-4">
+          <GenericBracketGrid
+            rounds={lowerRounds}
+            roundLabels={lowerLabels}
+            byRound={byRound}
+            userTeamId={userTeamId}
+          />
+        </div>
+      </div>
+
+      {/* Grand Final */}
+      <div className="px-10 py-6">
+        <SectionHeader label="Grand Final" color={D.gold} sub="BO5 · Winners take all" />
+        <div className="mt-4 flex justify-center">
+          <div style={{ width: 240 }}>
+            <MatchCard slot={gfSlot} userTeamId={userTeamId} isFinal />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
