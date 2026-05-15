@@ -150,7 +150,7 @@ const KICKOFF_SEEDS: Record<Region, KickoffSeeding> = {
     round1Matchups: [
       ["Natus Vincere", "Karmine Corp"],
       ["FUT Esports", "Gentle Mates"],
-      ["Pcific Esports", "BBL Esports"],
+      ["Pacific Esports", "BBL Esports"],
       ["Eternal Fire", "Team Vitality"],
     ],
     qfPairings: [

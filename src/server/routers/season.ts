@@ -204,6 +204,14 @@ export const seasonRouter = router({
         OR: [
           { stageId: { startsWith: stagePrefix } },
           { stageId: stagePrefix },
+          // EWC qualifier matches run in PARALLEL with regional Stage 1/2:
+          //   S1 Qualifier — during Stage 1 group + PO
+          //   S2 Qualifier — straddles Stage 1 PO end → Masters 2 → Stage 2
+          // The stage-prefix gate above misses them because `EWC_QUAL_*`
+          // doesn't start with `STAGE_1` / `MASTERS_2` etc. Without this
+          // extra branch, qualifier matches stay stuck and the whole chain
+          // freezes.
+          { stageId: { startsWith: "EWC_QUAL_" } },
         ],
       },
       select: {
