@@ -9,7 +9,6 @@ import { D } from "@/constants/design";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/match-prep", label: "Match Prep" },
   { href: "/inbox", label: "Inbox" },
   { href: "/roster", label: "Roster" },
   { href: "/market", label: "Market" },

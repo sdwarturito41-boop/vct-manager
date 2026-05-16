@@ -106,7 +106,7 @@ function PrepBoard({ nextMatch }: { nextMatch: NextMatchData }) {
       <div className="flex items-end justify-between">
         <div>
           <div className="text-[10px] font-bold uppercase tracking-[0.3em] text-[var(--val-white)]/40">
-            Match Prep
+            Plan de match
           </div>
           <div className="mt-1 text-3xl font-black uppercase tracking-[0.05em] text-[var(--val-white)]">
             Prochain match

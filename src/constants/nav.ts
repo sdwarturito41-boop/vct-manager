@@ -14,8 +14,11 @@ export const MAIN_TABS: readonly MainTab[] = [
   {
     label: "Accueil",
     href: "/dashboard",
-    paths: ["/dashboard"],
-    subs: [{ label: "Vue d'ensemble", href: "/dashboard" }],
+    paths: ["/dashboard", "/match-prep"],
+    subs: [
+      { label: "Vue d'ensemble", href: "/dashboard" },
+      { label: "Plan de match", href: "/match-prep" },
+    ],
   },
   {
     label: "Équipe",
