@@ -87,6 +87,9 @@ export interface RoundByRoundScreenProps {
   /** User's side in the 1st half — drives the "Attack"/"Defense" label in the header.
    * Sides flip in 2nd half. Defaults to "attack" (legacy behavior) if not provided. */
   myFirstHalfSide?: "attack" | "defense";
+  /** Called whenever the displayed round changes — lets the parent show a
+   * mid-round TO button targeting the right half. */
+  onRoundChange?: (round: number) => void;
 }
 
 // ── Constants ──
@@ -856,8 +859,12 @@ export default function RoundByRoundScreen({
   getStatsAtRound,
   onMapEnd,
   myFirstHalfSide = "attack",
+  onRoundChange,
 }: RoundByRoundScreenProps) {
   const [currentRound, setCurrentRound] = useState(0);
+  useEffect(() => {
+    onRoundChange?.(currentRound);
+  }, [currentRound, onRoundChange]);
   const [isEnded, setIsEnded] = useState(false);
   const [speed, setSpeed] = useState<1 | 2 | 4>(1);
   const [isPaused, setIsPaused] = useState(false);

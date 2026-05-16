@@ -311,6 +311,7 @@ export default function MatchDayPage() {
   const simulateMapHalf1Mut = trpc.match.simulateMapHalf1.useMutation();
   const simulateMapHalf2Mut = trpc.match.simulateMapHalf2.useMutation();
   const finalizeMatchMut = trpc.match.finalizeMatch.useMutation();
+  const finalizeMapStatsMut = trpc.match.finalizeMapStats.useMutation();
   const executeVetoMut = trpc.veto.executeVeto.useMutation();
 
   // ── Core state ──
@@ -356,6 +357,15 @@ export default function MatchDayPage() {
   } | null>(null);
   const [halftimeBonus, setHalftimeBonus] = useState<TimeoutBonus | null>(null);
   const [halftimeApplied, setHalftimeApplied] = useState(false);
+
+  // ── Mid-round TO state (1 per half, callable during LIVE playback) ──
+  const [midRoundH1TO, setMidRoundH1TO] = useState<TimeoutBonus | null>(null);
+  const [midRoundH2TO, setMidRoundH2TO] = useState<TimeoutBonus | null>(null);
+  const [currentLiveRound, setCurrentLiveRound] = useState(1);
+  const [toModalOpen, setToModalOpen] = useState(false);
+  const [toAnimating, setToAnimating] = useState<null | "tactical" | "motivational" | "medical">(null);
+  const [replaying, setReplaying] = useState(false);
+  const statsFinalizedRef = useRef<Record<number, boolean>>({});
 
   // ── Derived data ──
   const format = vetoState && !vetoState.done ? vetoState.format : "BO3";
@@ -720,6 +730,108 @@ export default function MatchDayPage() {
     }
   }
 
+  // ── Mid-round TO: user pressed TIMEOUT during LIVE playback ──
+  async function handleMidRoundTOPick(type: "tactical" | "motivational" | "medical") {
+    const currentMap = mapLineup[currentMapIndex];
+    if (!currentMap) return;
+    const isH1 = currentLiveRound <= 12;
+    if (isH1 && midRoundH1TO !== null) return;
+    if (!isH1 && midRoundH2TO !== null) return;
+
+    setToModalOpen(false);
+    setToAnimating(type);
+
+    const myStats = mapResults[currentMapIndex]?.playerStats?.filter((p) => {
+      const playerTeamId = isTeam1 ? team1Id : team2Id;
+      return p.teamId === playerTeamId;
+    });
+    const worst = myStats?.reduce<PlayerStat | null>((acc, p) => {
+      const kd = p.deaths > 0 ? p.kills / p.deaths : p.kills;
+      if (kd < 0.5) {
+        if (!acc) return p;
+        const accKd = acc.deaths > 0 ? acc.kills / acc.deaths : acc.kills;
+        return kd < accKd ? p : acc;
+      }
+      return acc;
+    }, null) ?? null;
+    const bonus: TimeoutBonus = {
+      type,
+      ...(type === "tactical" ? { counterBonusDelta: 0.02 } : {}),
+      ...(type === "motivational" ? { teamplayDelta: 0.1 } : {}),
+      ...(type === "medical" && worst ? { resetVariancePlayerId: worst.playerId } : {}),
+    };
+    if (isH1) setMidRoundH1TO(bonus);
+    else setMidRoundH2TO(bonus);
+
+    // Hold the TIMEOUT animation 2.4s, then replay.
+    await new Promise((r) => setTimeout(r, 2400));
+    setToAnimating(null);
+    setReplaying(true);
+
+    const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
+      playerId: p.id,
+      agentName: agentPicks[p.id]!,
+    }));
+
+    try {
+      // Re-sim H1 (with combined preMap + midRoundH1) → fresh halftimeState.
+      // Then re-sim H2 with combined halftime + midRoundH2.
+      const h1 = await simulateMapHalf1Mut.mutateAsync({
+        matchId,
+        mapName: currentMap.mapName,
+        side: currentMap.playerSide,
+        playerAgents: playerAgentArr,
+        timeoutType: timeoutBonus?.type,
+        timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
+        midRoundTOType: isH1 ? bonus.type : midRoundH1TO?.type,
+        midRoundTOPlayerId: isH1 ? bonus.resetVariancePlayerId : midRoundH1TO?.resetVariancePlayerId,
+      });
+      halftimeStateRef.current = h1.halftimeState;
+
+      const h2 = await simulateMapHalf2Mut.mutateAsync({
+        matchId,
+        mapName: currentMap.mapName,
+        side: currentMap.playerSide,
+        playerAgents: playerAgentArr,
+        halftimeState: h1.halftimeState,
+        halftimeTimeoutType: halftimeBonus?.type,
+        halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
+        midRoundTOType: !isH1 ? bonus.type : midRoundH2TO?.type,
+        midRoundTOPlayerId: !isH1 ? bonus.resetVariancePlayerId : midRoundH2TO?.resetVariancePlayerId,
+      });
+
+      const newMapResult: MapResultData = {
+        map: h2.map,
+        score1: h2.score1,
+        score2: h2.score2,
+        playerStats: h2.playerStats,
+        highlights: h2.highlights,
+      };
+      // Replace this map's result with the replayed one.
+      setMapResults((prev) => prev.map((r, i) => (i === currentMapIndex ? newMapResult : r)));
+
+      const team1Won = h2.score1 > h2.score2;
+      // Recompute series score: revert the old result then apply the new.
+      const oldResult = mapResults[currentMapIndex];
+      setSeriesScore((prev) => {
+        const oldT1Won = oldResult ? oldResult.score1 > oldResult.score2 : false;
+        return {
+          team1: prev.team1 - (oldT1Won ? 1 : 0) + (team1Won ? 1 : 0),
+          team2: prev.team2 - (oldT1Won ? 0 : 1) + (team1Won ? 0 : 1),
+        };
+      });
+
+      const rounds = (h2 as { rounds?: RoundEvent[] }).rounds ?? [];
+      setLiveRounds(rounds);
+      setDisplayedRoundCount(0);
+      setLiveOverlay(null);
+    } catch (err) {
+      console.error("[mid-round TO replay] failed:", err);
+    } finally {
+      setReplaying(false);
+    }
+  }
+
   // ── Halftime → resume H2 with the user's mid-map TO choice ──
   async function handleHalftimeContinue() {
     const currentMap = mapLineup[currentMapIndex];
@@ -797,6 +909,10 @@ export default function MatchDayPage() {
       setEnemyRevealed(false);
       setEnemyRevealIndex(-1);
       setLockedIn(false);
+      // Mid-round TOs reset per-map.
+      setMidRoundH1TO(null);
+      setMidRoundH2TO(null);
+      setCurrentLiveRound(1);
       transitionTo("AGENTS");
     }, 1200);
   }
@@ -1947,31 +2063,106 @@ export default function MatchDayPage() {
         };
 
         const handleMapEnd = (_result: "win" | "loss", _finalScore: { my: number; opp: number }) => {
+          // Finalize stats once per map (mastery + EMA) against the LATEST
+          // sim's playerStats — i.e. whatever the cinematic actually showed,
+          // including mid-round TO replays.
+          if (!statsFinalizedRef.current[currentMapIndex]) {
+            statsFinalizedRef.current[currentMapIndex] = true;
+            const lastResult = mapResults[currentMapIndex];
+            if (lastResult) {
+              const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
+                playerId: p.id,
+                agentName: agentPicks[p.id]!,
+              }));
+              const userScore = isTeam1 ? lastResult.score1 : lastResult.score2;
+              const oppScore = isTeam1 ? lastResult.score2 : lastResult.score1;
+              const fullPlayerStats = lastResult.playerStats.map((s) => ({
+                playerId: s.playerId,
+                teamId: s.teamId,
+                ign: s.ign,
+                kills: s.kills,
+                deaths: s.deaths,
+                assists: s.assists,
+                acs: s.acs,
+                fk: (s as { fk?: number }).fk,
+                fd: (s as { fd?: number }).fd,
+              }));
+              finalizeMapStatsMut
+                .mutateAsync({
+                  matchId,
+                  mapName: currentMap.mapName,
+                  playerAgents: playerAgentArr,
+                  finalPlayerStats: fullPlayerStats,
+                  userScore,
+                  oppScore,
+                })
+                .catch((err: unknown) => console.warn("[finalizeMapStats] failed:", err));
+            }
+          }
           transitionTo("RESULT");
         };
 
         return (
-          <RoundByRoundScreen
-            mapName={currentMap.mapName}
-            mapImageUrl={getMapImage(currentMap.mapName)}
-            stage={`${format} · VCT`}
-            myTeam={{
-              name: playerTeamName,
-              color: C.red,
-              logo: playerTeamLogo,
-              players: myPlayersRBR,
-            }}
-            oppTeam={{
-              name: enemyTeamName,
-              color: "#555",
-              logo: enemyTeamLogo,
-              players: oppPlayersRBR,
-            }}
-            rounds={rbrRounds}
-            getStatsAtRound={getStatsAtRound}
-            onMapEnd={handleMapEnd}
-            myFirstHalfSide={currentMap.playerSide}
-          />
+          <>
+            <RoundByRoundScreen
+              mapName={currentMap.mapName}
+              mapImageUrl={getMapImage(currentMap.mapName)}
+              stage={`${format} · VCT`}
+              myTeam={{
+                name: playerTeamName,
+                color: C.red,
+                logo: playerTeamLogo,
+                players: myPlayersRBR,
+              }}
+              oppTeam={{
+                name: enemyTeamName,
+                color: "#555",
+                logo: enemyTeamLogo,
+                players: oppPlayersRBR,
+              }}
+              rounds={rbrRounds}
+              getStatsAtRound={getStatsAtRound}
+              onMapEnd={handleMapEnd}
+              myFirstHalfSide={currentMap.playerSide}
+              onRoundChange={setCurrentLiveRound}
+            />
+            <MidRoundTOButton
+              currentRound={currentLiveRound}
+              h1Used={midRoundH1TO !== null}
+              h2Used={midRoundH2TO !== null}
+              disabled={replaying || toAnimating !== null}
+              onClick={() => setToModalOpen(true)}
+            />
+            {toModalOpen && (
+              <MidRoundTOModal
+                round={currentLiveRound}
+                onClose={() => setToModalOpen(false)}
+                onPick={(type) => handleMidRoundTOPick(type)}
+              />
+            )}
+            {toAnimating && <MidRoundTOOverlay type={toAnimating} />}
+            {replaying && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center"
+                style={{ background: "rgba(10,10,15,0.85)" }}
+              >
+                <div className="text-center">
+                  <div
+                    className="text-5xl font-black uppercase tracking-[0.2em]"
+                    style={{ color: C.gold, textShadow: "0 0 30px rgba(198,155,58,0.4)" }}
+                  >
+                    Replay
+                  </div>
+                  <div
+                    className="mt-3 text-xs font-bold uppercase tracking-[0.3em]"
+                    style={{ color: "rgba(236,232,225,0.5)" }}
+                  >
+                    Mi-temps relancée avec timeout…
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         );
       })()}
 
@@ -2938,6 +3129,198 @@ export default function MatchDayPage() {
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ── Floating mid-round TO button (visible during LIVE phase) ──
+
+function MidRoundTOButton({
+  currentRound,
+  h1Used,
+  h2Used,
+  disabled,
+  onClick,
+}: {
+  currentRound: number;
+  h1Used: boolean;
+  h2Used: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const isH1 = currentRound <= 12;
+  const alreadyUsed = isH1 ? h1Used : h2Used;
+  const otherUsed = isH1 ? h2Used : h1Used;
+  if (alreadyUsed) {
+    return (
+      <div
+        className="fixed top-4 right-4 z-40 flex items-center gap-2 rounded-md px-3 py-2 text-[10px] font-bold uppercase tracking-[0.15em]"
+        style={{
+          background: "rgba(18,18,26,0.6)",
+          border: "1px solid rgba(255,255,255,0.04)",
+          color: "rgba(236,232,225,0.35)",
+        }}
+      >
+        <span>TO {isH1 ? "H1" : "H2"} déjà utilisé</span>
+        {otherUsed && <span>· H{isH1 ? 2 : 1} aussi</span>}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="fixed top-4 right-4 z-40 flex items-center gap-2 rounded-md px-4 py-2.5 text-xs font-black uppercase tracking-[0.15em] text-white transition-all hover:scale-105"
+      style={{
+        background: "#FF4655",
+        boxShadow: "0 0 24px rgba(255,70,85,0.4)",
+        opacity: disabled ? 0.5 : 1,
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >
+      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#fff" }} />
+      Demander un TO · {isH1 ? "H1" : "H2"}
+    </button>
+  );
+}
+
+// ── Mid-round TO modal (3 type options) ──
+
+function MidRoundTOModal({
+  round,
+  onClose,
+  onPick,
+}: {
+  round: number;
+  onClose: () => void;
+  onPick: (type: "tactical" | "motivational" | "medical") => void;
+}) {
+  const options: {
+    id: "tactical" | "motivational" | "medical";
+    title: string;
+    description: string;
+    effect: string;
+    icon: string;
+  }[] = [
+    {
+      id: "tactical",
+      title: "Pause tactique",
+      description: "Reset des reads & lectures adverses",
+      effect: "+2% adaptation pour la suite de la mi-temps",
+      icon: "🧠",
+    },
+    {
+      id: "motivational",
+      title: "Coup de boost",
+      description: "Le coach remonte les troupes",
+      effect: "+10% résistance au tilt",
+      icon: "🔥",
+    },
+    {
+      id: "medical",
+      title: "Pause médicale",
+      description: "Reset hotness du joueur le moins en forme",
+      effect: "Reset variance joueur",
+      icon: "⚕️",
+    },
+  ];
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-6"
+      style={{ background: "rgba(10,10,15,0.92)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl rounded-lg p-6"
+        style={{
+          background: "rgba(22,22,30,0.98)",
+          border: "1px solid rgba(255,255,255,0.06)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-1 text-center text-[10px] font-bold uppercase tracking-[0.3em]" style={{ color: "rgba(236,232,225,0.35)" }}>
+          Round {round} · Mi-temps {round <= 12 ? "1" : "2"}
+        </div>
+        <div className="text-center text-2xl font-black uppercase tracking-[0.15em]" style={{ color: "#ECE8E1" }}>
+          Demander un timeout
+        </div>
+        <div className="mt-1 text-center text-xs" style={{ color: "rgba(236,232,225,0.5)" }}>
+          Choisis ton approche — applique le bonus à la suite de la mi-temps.
+        </div>
+
+        <div className="mt-6 grid grid-cols-3 gap-3">
+          {options.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => onPick(opt.id)}
+              className="rounded-md p-4 text-left transition-all hover:scale-[1.02]"
+              style={{
+                background: "rgba(18,18,26,0.8)",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{opt.icon}</span>
+                <div className="text-xs font-black uppercase tracking-[0.12em]" style={{ color: "#ECE8E1" }}>
+                  {opt.title}
+                </div>
+              </div>
+              <div className="mt-1 text-[11px]" style={{ color: "rgba(236,232,225,0.55)" }}>
+                {opt.description}
+              </div>
+              <div className="mt-2 text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: "#C69B3A" }}>
+                {opt.effect}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-4 w-full rounded-md py-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all"
+          style={{
+            background: "rgba(18,18,26,0.4)",
+            border: "1px solid rgba(255,255,255,0.04)",
+            color: "rgba(236,232,225,0.5)",
+          }}
+        >
+          Annuler
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Full-screen TIMEOUT animation overlay ──
+
+function MidRoundTOOverlay({
+  type,
+}: {
+  type: "tactical" | "motivational" | "medical";
+}) {
+  const label = type === "tactical" ? "TACTICAL TIMEOUT" : type === "motivational" ? "MOTIVATIONAL TIMEOUT" : "MEDICAL TIMEOUT";
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(10,10,15,0.94)", animation: "vct-fade-in 0.3s ease" }}
+    >
+      <div className="text-center">
+        <div
+          className="text-6xl font-black uppercase tracking-[0.2em]"
+          style={{ color: "#FF4655", textShadow: "0 0 40px rgba(255,70,85,0.6)" }}
+        >
+          TIMEOUT
+        </div>
+        <div
+          className="mt-4 text-sm font-bold uppercase tracking-[0.3em]"
+          style={{ color: "#C69B3A" }}
+        >
+          {label}
+        </div>
+      </div>
     </div>
   );
 }

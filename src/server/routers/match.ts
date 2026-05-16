@@ -8,6 +8,21 @@ import {
   simulateMapHalf2 as simulateMapHalf2Engine,
   timeoutTypeToBonus,
 } from "@/server/simulation/engine";
+import type { TimeoutBonus } from "@/server/simulation/engine";
+
+/** Sum two TimeoutBonus deltas. resetHotnessPlayerId takes the latter's id if any. */
+function combineTimeoutBonuses(
+  a: TimeoutBonus | undefined,
+  b: TimeoutBonus | undefined,
+): TimeoutBonus | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    adaptationDelta: (a.adaptationDelta ?? 0) + (b.adaptationDelta ?? 0),
+    mentalDelta: (a.mentalDelta ?? 0) + (b.mentalDelta ?? 0),
+    resetHotnessPlayerId: b.resetHotnessPlayerId ?? a.resetHotnessPlayerId,
+  };
+}
 import { applyMasteryUpdate, applyPassiveDecay } from "@/server/simulation/mastery";
 import { applyStatRollingUpdatesBatch, type MatchStatInput } from "@/server/simulation/statRolling";
 import { loadActivePairMaps } from "@/server/mercato/relationships";
@@ -217,6 +232,45 @@ export const matchRouter = router({
   // TopNav uses this to render a "Play match" CTA whenever the user has
   // something to play — without depending on a transient frontend state from
   // a recent advanceDay call.
+  /**
+   * Returns the user team's next scheduled unplayed match — regardless of
+   * whether the current day has reached it yet. Powers the Match Prep page,
+   * which surfaces tactics/intel anytime the user has an upcoming fixture.
+   */
+  getNextUserMatch: saveProcedure.query(async ({ ctx }) => {
+    const userTeam = await ctx.prisma.team.findFirst({
+      where: { saveId: ctx.save.id, isPlayerTeam: true },
+      select: { id: true },
+    });
+    if (!userTeam) return null;
+
+    const season = await ctx.prisma.season.findFirst({
+      where: { isActive: true, saveId: ctx.save.id },
+      select: { currentDay: true },
+    });
+    const currentDay = season?.currentDay ?? 0;
+
+    const match = await ctx.prisma.match.findFirst({
+      where: {
+        saveId: ctx.save.id,
+        isPlayed: false,
+        day: { gt: 0 },
+        OR: [{ team1Id: userTeam.id }, { team2Id: userTeam.id }],
+      },
+      orderBy: { day: "asc" },
+      select: {
+        id: true,
+        day: true,
+        format: true,
+        stageId: true,
+        team1Id: true,
+        team2Id: true,
+      },
+    });
+    if (!match) return null;
+    return { ...match, daysUntil: Math.max(0, match.day - currentDay) };
+  }),
+
   getPendingUserMatch: saveProcedure.query(async ({ ctx }) => {
     const userTeam = await ctx.prisma.team.findFirst({
       where: { saveId: ctx.save.id, isPlayerTeam: true },
@@ -762,12 +816,18 @@ export const matchRouter = router({
           .length(5),
         timeoutType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
         timeoutPlayerId: z.string().optional(),
+        // Mid-round TO called during H1 playback. Combined with the pre-map TO
+        // before being applied as the user team's TimeoutBonus.
+        midRoundTOType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
+        midRoundTOPlayerId: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const ts = await buildMapSimSetup(ctx, input);
       const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1 } = ts;
-      const userTimeoutBonus = timeoutTypeToBonus(input.timeoutType, input.timeoutPlayerId);
+      const preMap = timeoutTypeToBonus(input.timeoutType, input.timeoutPlayerId);
+      const midRound = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
+      const userTimeoutBonus = combineTimeoutBonuses(preMap, midRound);
 
       let result;
       try {
@@ -825,12 +885,18 @@ export const matchRouter = router({
         // Half-time TO choice (between H1 and H2).
         halftimeTimeoutType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
         halftimeTimeoutPlayerId: z.string().optional(),
+        // Mid-round TO called during H2 playback. Combined with the half-time
+        // TO before being applied as the user team's TimeoutBonus.
+        midRoundTOType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
+        midRoundTOPlayerId: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const ts = await buildMapSimSetup(ctx, input);
-      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, userTeam, isUserTeam1 } = ts;
+      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1 } = ts;
       const halftimeBonus = timeoutTypeToBonus(input.halftimeTimeoutType, input.halftimeTimeoutPlayerId);
+      const midRoundBonus = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
+      const userTimeoutBonus = combineTimeoutBonuses(halftimeBonus, midRoundBonus);
 
       let mapResult;
       try {
@@ -839,8 +905,8 @@ export const matchRouter = router({
           team1Agents: swapped ? t2Agents : t1Agents,
           team2Agents: swapped ? t1Agents : t2Agents,
           team1StartsAttack: true,
-          team1TimeoutBonus: userIsSimTeam1 ? halftimeBonus : undefined,
-          team2TimeoutBonus: userIsSimTeam1 ? undefined : halftimeBonus,
+          team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : undefined,
+          team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
         });
       } catch (err) {
         console.error("[simulateMapHalf2] engine error:", err);
@@ -850,51 +916,9 @@ export const matchRouter = router({
         });
       }
 
-      // ── Apply mastery + rolling stats (end-of-map) ──
-      const realScore1 = swapped ? mapResult.score2 : mapResult.score1;
-      const realScore2 = swapped ? mapResult.score1 : mapResult.score2;
-      const userScore = isUserTeam1 ? realScore1 : realScore2;
-      const oppScore = isUserTeam1 ? realScore2 : realScore1;
-
-      const userPlayers = await ctx.prisma.player.findMany({
-        where: { id: { in: input.playerAgents.map((pa) => pa.playerId) } },
-        select: { id: true, role: true },
-      });
-      const userRoleByPlayerId = new Map(userPlayers.map((p) => [p.id, p.role as string]));
-
-      const playedAgentByPlayerId: Record<string, string> = {};
-      for (const pa of input.playerAgents) playedAgentByPlayerId[pa.playerId] = pa.agentName;
-
-      try {
-        await applyPassiveDecay(ctx.prisma, input.playerAgents.map((pa) => pa.playerId), playedAgentByPlayerId);
-        for (const pa of input.playerAgents) {
-          const stat = mapResult.playerStats.find((s) => s.playerId === pa.playerId);
-          if (!stat) continue;
-          await applyMasteryUpdate(ctx.prisma, {
-            playerId: pa.playerId,
-            agentName: pa.agentName,
-            mapName: input.mapName,
-            myScore: userScore,
-            oppScore,
-            playerACS: stat.acs,
-            naturalRole: userRoleByPlayerId.get(pa.playerId) ?? "Flex",
-            isScrim: false,
-          });
-        }
-        const userWon = userScore > oppScore;
-        const statUpdates: MatchStatInput[] = mapResult.playerStats.map((stat) => ({
-          playerId: stat.playerId,
-          acs: stat.acs,
-          kills: stat.kills,
-          deaths: stat.deaths,
-          assists: stat.assists,
-          won: stat.teamId === userTeam.id ? userWon : !userWon,
-        }));
-        await applyStatRollingUpdatesBatch(ctx.prisma, statUpdates);
-      } catch (err) {
-        console.error("[simulateMapHalf2] mastery error:", err);
-        // Don't fail the request if mastery fails
-      }
+      // Note: mastery + EMA stats are NOT applied here. The match-day UI calls
+      // `match.finalizeMapStats` once at the end of the cinematic LIVE playback
+      // (so a mid-round TO replay can resimulate the half without double-applying).
 
       if (swapped) {
         return {
@@ -912,6 +936,84 @@ export const matchRouter = router({
         };
       }
       return mapResult;
+    }),
+
+  /**
+   * Finalize a map: apply mastery progression + rolling stat EMA against the
+   * LATEST playerStats from the cinematic LIVE playback. Called once per map
+   * after LIVE wraps — splitting this out lets mid-round TO replays re-sim
+   * the half without double-applying stats from the discarded sim runs.
+   */
+  finalizeMapStats: saveProcedure
+    .input(
+      z.object({
+        matchId: z.string(),
+        mapName: z.string(),
+        playerAgents: z
+          .array(z.object({ playerId: z.string(), agentName: z.string() }))
+          .length(5),
+        finalPlayerStats: z.array(
+          z.object({
+            playerId: z.string(),
+            teamId: z.string(),
+            ign: z.string(),
+            kills: z.number(),
+            deaths: z.number(),
+            assists: z.number(),
+            acs: z.number(),
+            fk: z.number().optional(),
+            fd: z.number().optional(),
+          }),
+        ),
+        userScore: z.number(),
+        oppScore: z.number(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userTeam = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+      if (!userTeam) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User team not found." });
+      }
+
+      const userPlayers = await ctx.prisma.player.findMany({
+        where: { id: { in: input.playerAgents.map((pa) => pa.playerId) } },
+        select: { id: true, role: true },
+      });
+      const userRoleByPlayerId = new Map(userPlayers.map((p) => [p.id, p.role as string]));
+
+      const playedAgentByPlayerId: Record<string, string> = {};
+      for (const pa of input.playerAgents) playedAgentByPlayerId[pa.playerId] = pa.agentName;
+
+      try {
+        await applyPassiveDecay(ctx.prisma, input.playerAgents.map((pa) => pa.playerId), playedAgentByPlayerId);
+        for (const pa of input.playerAgents) {
+          const stat = input.finalPlayerStats.find((s) => s.playerId === pa.playerId);
+          if (!stat) continue;
+          await applyMasteryUpdate(ctx.prisma, {
+            playerId: pa.playerId,
+            agentName: pa.agentName,
+            mapName: input.mapName,
+            myScore: input.userScore,
+            oppScore: input.oppScore,
+            playerACS: stat.acs,
+            naturalRole: userRoleByPlayerId.get(pa.playerId) ?? "Flex",
+            isScrim: false,
+          });
+        }
+        const userWon = input.userScore > input.oppScore;
+        const statUpdates: MatchStatInput[] = input.finalPlayerStats.map((stat) => ({
+          playerId: stat.playerId,
+          acs: stat.acs,
+          kills: stat.kills,
+          deaths: stat.deaths,
+          assists: stat.assists,
+          won: stat.teamId === userTeam.id ? userWon : !userWon,
+        }));
+        await applyStatRollingUpdatesBatch(ctx.prisma, statUpdates);
+      } catch (err) {
+        console.error("[finalizeMapStats] mastery error:", err);
+      }
+      return { ok: true };
     }),
 
   finalizeMatch: saveProcedure
