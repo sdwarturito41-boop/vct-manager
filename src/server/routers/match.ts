@@ -8,7 +8,16 @@ import {
   simulateMapHalf2 as simulateMapHalf2Engine,
   timeoutTypeToBonus,
 } from "@/server/simulation/engine";
-import type { TimeoutBonus } from "@/server/simulation/engine";
+import type { TimeoutBonus, TacticalOverrideInput } from "@/server/simulation/engine";
+
+/** Zod schema for the public-facing tactical override input. */
+const tacticalOverrideSchema = z.object({
+  kind: z.enum(["site", "instruction", "playstyle"]),
+  forcedSite: z.string().optional(),
+  playerId: z.string().optional(),
+  instruction: z.enum(["safe", "aggressive"]).optional(),
+  playstyle: z.enum(["Aggressive", "Tactical", "Defensive"]).optional(),
+});
 
 /** Sum two TimeoutBonus deltas. resetHotnessPlayerId takes the latter's id if any. */
 function combineTimeoutBonuses(
@@ -820,6 +829,9 @@ export const matchRouter = router({
         // before being applied as the user team's TimeoutBonus.
         midRoundTOType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
         midRoundTOPlayerId: z.string().optional(),
+        /** Active tactical overrides (site / instruction / playstyle). Applied
+         *  to the user team's runtime; IGL rolls revert each round. */
+        overrides: z.array(tacticalOverrideSchema).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -828,6 +840,7 @@ export const matchRouter = router({
       const preMap = timeoutTypeToBonus(input.timeoutType, input.timeoutPlayerId);
       const midRound = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
       const userTimeoutBonus = combineTimeoutBonuses(preMap, midRound);
+      const userOverrides = (input.overrides ?? []) as TacticalOverrideInput[];
 
       let result;
       try {
@@ -838,6 +851,8 @@ export const matchRouter = router({
           team1StartsAttack: true,
           team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : undefined,
           team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
+          team1Overrides: userIsSimTeam1 ? userOverrides : undefined,
+          team2Overrides: userIsSimTeam1 ? undefined : userOverrides,
         });
       } catch (err) {
         console.error("[simulateMapHalf1] engine error:", err);
@@ -889,6 +904,8 @@ export const matchRouter = router({
         // TO before being applied as the user team's TimeoutBonus.
         midRoundTOType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
         midRoundTOPlayerId: z.string().optional(),
+        /** Active tactical overrides for the H2 sim run. */
+        overrides: z.array(tacticalOverrideSchema).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -897,6 +914,7 @@ export const matchRouter = router({
       const halftimeBonus = timeoutTypeToBonus(input.halftimeTimeoutType, input.halftimeTimeoutPlayerId);
       const midRoundBonus = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
       const userTimeoutBonus = combineTimeoutBonuses(halftimeBonus, midRoundBonus);
+      const userOverrides = (input.overrides ?? []) as TacticalOverrideInput[];
 
       let mapResult;
       try {
@@ -907,6 +925,8 @@ export const matchRouter = router({
           team1StartsAttack: true,
           team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : undefined,
           team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
+          team1Overrides: userIsSimTeam1 ? userOverrides : undefined,
+          team2Overrides: userIsSimTeam1 ? undefined : userOverrides,
         });
       } catch (err) {
         console.error("[simulateMapHalf2] engine error:", err);

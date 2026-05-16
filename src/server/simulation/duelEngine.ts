@@ -170,6 +170,29 @@ interface TeamRuntime {
   ultLockdownEdge: number;
   /** Ability-edge component of zone/lockdown ults (separate from positional). */
   ultAbilityEdge: number;
+  /** Active tactical overrides (site / instruction / playstyle). The IGL
+   * rolls each round to maintain or revert based on success. */
+  overrides: TacticalOverrideRuntime[];
+}
+
+/** Coach/player override active for a TeamRuntime — auto-managed by the IGL. */
+export interface TacticalOverrideRuntime {
+  kind: "site" | "instruction" | "playstyle";
+  /** For "site": the forced site key ("A"/"B"/"M"). */
+  forcedSite?: string;
+  /** For "instruction": target player id + the per-round delta. */
+  playerId?: string;
+  /** "safe" reduces aggression, "aggressive" raises it. */
+  instruction?: "safe" | "aggressive";
+  /** For "playstyle": new playstyle to apply (Aggressive/Tactical/Defensive). */
+  playstyle?: "Aggressive" | "Tactical" | "Defensive";
+  /** Snapshot of the player's natural aggression before the override took effect. */
+  baselineAggression?: number;
+  /** Rounds left until the IGL rolls revert. 0 = always rolled. */
+  appliedAtRound: number;
+  /** Confidence 0-1. Rises on wins, falls on losses. < 0.35 → IGL reverts. */
+  confidence: number;
+  reverted: boolean;
 }
 
 export interface RoundEventDetail {
@@ -267,6 +290,11 @@ export interface DuelMapOptions {
   /** Per-team relation pair maps (V3). Key = "idLo|idHi|TYPE", value = strength. */
   team1Pairs?: Map<string, number>;
   team2Pairs?: Map<string, number>;
+  /** Coach tactical overrides seeded onto the team runtimes at sim start.
+   * Site/instruction overrides apply mid-half; playstyle overrides apply
+   * for the entire map (and remap the team's playstyleMods). */
+  team1Overrides?: TacticalOverrideRuntime[];
+  team2Overrides?: TacticalOverrideRuntime[];
 }
 
 /** End-of-map hotness per player — can be passed to the next map as priorHotness */
@@ -730,6 +758,7 @@ function buildTeamRuntime(
     ultZoneEdge: 0,
     ultLockdownEdge: 0,
     ultAbilityEdge: 0,
+    overrides: [],
   };
 }
 
@@ -1868,6 +1897,11 @@ function chooseSiteSmart(
   const sites = mapProfile.sites;
   if (sites.length === 0) return "A";
 
+  // Coach-forced site (mid-round TO) takes priority — but only if the override
+  // names a valid site for this map. IGL revert is handled at round-end.
+  const forced = activeSiteOverride(attackers);
+  if (forced && sites.includes(forced)) return forced;
+
   const totalPushes = Object.values(attackers.sitePreference).reduce((s, v) => s + v, 0);
 
   // Early round: random weighted by attack site win rates
@@ -2914,6 +2948,70 @@ function updateMomentum(team: TeamRuntime, wonRound: boolean): void {
  * the higher the chance their coaching staff finds something in the H1 vods.
  * On success, +0.025 adaptationEdge propagates into every H2 duel.
  */
+/**
+ * Apply an "instruction" override IN PLACE on the target player. We snapshot
+ * the player's baseline aggression so revert is reversible. Called right
+ * after the user issues a TO; the per-round logic uses `p.aggression` directly.
+ */
+function applyInstructionOverride(team: TeamRuntime, ov: TacticalOverrideRuntime): void {
+  if (ov.kind !== "instruction" || !ov.playerId) return;
+  const p = team.players.find((pl) => pl.input.id === ov.playerId);
+  if (!p) return;
+  ov.baselineAggression = p.aggression;
+  if (ov.instruction === "safe") {
+    p.aggression = Math.max(20, p.aggression - 25);
+  } else if (ov.instruction === "aggressive") {
+    p.aggression = Math.min(95, p.aggression + 25);
+  }
+}
+
+/** Rollback an "instruction" override IN PLACE (called when IGL reverts). */
+function revertInstructionOverride(team: TeamRuntime, ov: TacticalOverrideRuntime): void {
+  if (ov.kind !== "instruction" || !ov.playerId || ov.baselineAggression == null) return;
+  const p = team.players.find((pl) => pl.input.id === ov.playerId);
+  if (!p) return;
+  p.aggression = ov.baselineAggression;
+}
+
+/**
+ * After each round, update each active override's confidence based on the
+ * outcome. Wins lift confidence; losses drop it. Below 0.35, the IGL rolls
+ * a revert (probability proportional to IGL gameIQ + Mental rating).
+ */
+function updateOverridesAfterRound(
+  team: TeamRuntime,
+  wonRound: boolean,
+  ownIglGameIQ: number,
+): void {
+  for (const ov of team.overrides) {
+    if (ov.reverted) continue;
+    // Confidence ±0.15 per round outcome, clamped.
+    ov.confidence = clamp(ov.confidence + (wonRound ? 0.15 : -0.15), 0, 1);
+    if (ov.confidence < 0.35) {
+      // IGL revert probability — high gameIQ IGLs spot dead tactics faster.
+      const revertProb = 0.4 + (ownIglGameIQ - 50) / 200; // ~0.4 at 50 gameIQ, ~0.65 at 100
+      if (Math.random() < revertProb) {
+        if (ov.kind === "instruction") revertInstructionOverride(team, ov);
+        ov.reverted = true;
+      }
+    }
+  }
+}
+
+/** Returns the active site-preference override (not reverted), if any. */
+function activeSiteOverride(team: TeamRuntime): string | null {
+  for (const ov of team.overrides) {
+    if (ov.kind === "site" && !ov.reverted && ov.forcedSite) return ov.forcedSite;
+  }
+  return null;
+}
+
+/** Best-effort IGL gameIQ lookup — falls back to team mental skill. */
+function teamIglGameIQ(team: TeamRuntime): number {
+  const igl = team.players.find((p) => p.input.role === "IGL");
+  return igl?.gameIQ ?? team.coachMental ?? 50;
+}
+
 function tryHalftimeAdapt(team: TeamRuntime, opponent: TeamRuntime): void {
   const deficit = opponent.score - team.score;
   if (deficit < 3) return; // 9-3 minimum to even consider; comfortable lead = no shift
@@ -3033,6 +3131,9 @@ function executeRound(
   updateMomentum(team2, outcome.winner === 2);
   tryMidHalfAdapt(team1);
   tryMidHalfAdapt(team2);
+  // Coach overrides — IGL rolls revert based on per-round outcome.
+  updateOverridesAfterRound(team1, outcome.winner === 1, teamIglGameIQ(team1));
+  updateOverridesAfterRound(team2, outcome.winner === 2, teamIglGameIQ(team2));
   awardCredits(team1, outcome.winner === 1, outcome.spiked && t1Attack);
   awardCredits(team2, outcome.winner === 2, outcome.spiked && !t1Attack);
 
@@ -3101,6 +3202,13 @@ function doHalftimeReset(team1: TeamRuntime, team2: TeamRuntime): {
     t.lossStreak = 0;
     t.lossesBonus = 0;
     t.lossStreakAdaptedThisHalf = false;
+    // Intra-half tactical overrides (site / instruction) reset at halftime —
+    // playstyle overrides are map-level and carry. Revert any pending
+    // instruction effects before clearing so the player goes back to baseline.
+    for (const ov of t.overrides) {
+      if (ov.kind === "instruction" && !ov.reverted) revertInstructionOverride(t, ov);
+    }
+    t.overrides = t.overrides.filter((ov) => ov.kind === "playstyle");
   }
   tryHalftimeAdapt(team1, team2);
   tryHalftimeAdapt(team2, team1);
@@ -3182,6 +3290,8 @@ export function simulateMapDuel(
   };
   applyMentalBoost(team1);
   applyMentalBoost(team2);
+  seedOverridesOnto(team1, options.team1Overrides);
+  seedOverridesOnto(team2, options.team2Overrides);
 
   const team1StartsAttack = options.team1StartsAttack ?? true;
   const ctx: MapRoundCtx = {
@@ -3279,6 +3389,23 @@ export interface MapFirstHalfResultOut {
   halftimeState: HalftimeState;
 }
 
+/**
+ * Apply playstyle override (if any) by remapping playstyleMods, then apply
+ * instruction overrides in-place. Site overrides are read at chooseSiteSmart
+ * time so they don't need setup here.
+ */
+function seedOverridesOnto(team: TeamRuntime, overrides: TacticalOverrideRuntime[] | undefined): void {
+  if (!overrides || overrides.length === 0) return;
+  team.overrides = overrides.map((ov) => ({ ...ov }));
+  for (const ov of team.overrides) {
+    if (ov.kind === "playstyle" && ov.playstyle) {
+      team.playstyleMods = getPlaystyleMods(ov.playstyle);
+    } else if (ov.kind === "instruction") {
+      applyInstructionOverride(team, ov);
+    }
+  }
+}
+
 /** Build a freshly-constructed pair of TeamRuntimes from inputs + options. */
 function buildBothRuntimes(
   team1Input: SimTeamInput,
@@ -3307,6 +3434,11 @@ function buildBothRuntimes(
   };
   applyMentalBoost(team1);
   applyMentalBoost(team2);
+
+  // Seed tactical overrides AFTER coach values are set, so playstyle/aggression
+  // overrides operate on top of the configured baseline.
+  seedOverridesOnto(team1, options.team1Overrides);
+  seedOverridesOnto(team2, options.team2Overrides);
 
   return { team1, team2 };
 }

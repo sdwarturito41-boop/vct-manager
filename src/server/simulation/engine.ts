@@ -170,6 +170,19 @@ export interface SimMapOptions {
    *  the user's side (the caller decides which is team1/team2). */
   team1TimeoutBonus?: TimeoutBonus;
   team2TimeoutBonus?: TimeoutBonus;
+  /** Coach tactical overrides — site preference, individual instructions,
+   * playstyle override. Caller picks which team they apply to. */
+  team1Overrides?: TacticalOverrideInput[];
+  team2Overrides?: TacticalOverrideInput[];
+}
+
+/** Public-facing tactical override (what tRPC + UI manipulate). */
+export interface TacticalOverrideInput {
+  kind: "site" | "instruction" | "playstyle";
+  forcedSite?: string;
+  playerId?: string;
+  instruction?: "safe" | "aggressive";
+  playstyle?: "Aggressive" | "Tactical" | "Defensive";
 }
 
 /** Effective per-map bonus deltas produced by a Tactical Timeout choice. */
@@ -808,6 +821,7 @@ import {
   simulateMapDuelHalf1,
   simulateMapDuelHalf2,
   type HalftimeState,
+  type TacticalOverrideRuntime,
 } from "./duelEngine";
 export type { HalftimeState } from "./duelEngine";
 
@@ -852,6 +866,8 @@ export function simulateMap(
     priorHotness,
     team1Pairs: options?.team1Pairs,
     team2Pairs: options?.team2Pairs,
+    team1Overrides: toRuntimeOverrides(options?.team1Overrides),
+    team2Overrides: toRuntimeOverrides(options?.team2Overrides),
   });
 
   const highlights = generateHighlights(mapName, team1.name, team2.name, result.score1, result.score2, result.playerStats);
@@ -868,6 +884,24 @@ export function simulateMap(
 }
 
 // ── Split-by-half wrappers: cinematic half-time pause UI ──
+
+/** Convert public-facing TacticalOverrideInput → runtime form with default
+ *  confidence + reverted=false. Used by the engine wrappers. */
+function toRuntimeOverrides(
+  inputs: TacticalOverrideInput[] | undefined,
+): TacticalOverrideRuntime[] | undefined {
+  if (!inputs || inputs.length === 0) return undefined;
+  return inputs.map((ov) => ({
+    kind: ov.kind,
+    forcedSite: ov.forcedSite,
+    playerId: ov.playerId,
+    instruction: ov.instruction,
+    playstyle: ov.playstyle,
+    appliedAtRound: 1,
+    confidence: 0.5,
+    reverted: false,
+  }));
+}
 
 /** Folds TimeoutBonus deltas + priorHotness into DuelMapOptions. Shared by H1/H2 wrappers. */
 function buildDuelOptionsForHalf(
@@ -903,6 +937,8 @@ function buildDuelOptionsForHalf(
     priorHotness,
     team1Pairs: options?.team1Pairs,
     team2Pairs: options?.team2Pairs,
+    team1Overrides: toRuntimeOverrides(options?.team1Overrides),
+    team2Overrides: toRuntimeOverrides(options?.team2Overrides),
   };
 }
 

@@ -49,6 +49,13 @@ export function getMapByName(name: string): ValorantMap | undefined {
   return ALL_MAPS.find(m => m.name === name);
 }
 
+/** Sites a map has — drives the UI's site-preference picker. Mirrors the
+ *  authoritative `sites` field on the server's MAP_PROFILES. */
+export function getMapSites(name: string): string[] {
+  if (name === "Haven" || name === "Lotus") return ["A", "B", "C"];
+  return ["A", "B"];
+}
+
 export function getMapImage(name: string): string {
   return ALL_MAPS.find(m => m.name === name)?.imageUrl ?? "";
 }

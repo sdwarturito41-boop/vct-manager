@@ -4,7 +4,17 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { trpc } from "@/lib/trpc-client";
-import { getMapImage } from "@/constants/maps";
+import { getMapImage, getMapSites } from "@/constants/maps";
+
+// Mirror of TacticalOverrideInput in @/server/simulation/engine.
+// Defining locally keeps the client/server type boundary clean.
+interface TacticalOverrideInput {
+  kind: "site" | "instruction" | "playstyle";
+  forcedSite?: string;
+  playerId?: string;
+  instruction?: "safe" | "aggressive";
+  playstyle?: "Aggressive" | "Tactical" | "Defensive";
+}
 import { VALORANT_AGENTS } from "@/constants/agents";
 import type { ValorantAgent } from "@/constants/agents";
 import { formatStat } from "@/lib/format";
@@ -367,6 +377,12 @@ export default function MatchDayPage() {
   const [replaying, setReplaying] = useState(false);
   const statsFinalizedRef = useRef<Record<number, boolean>>({});
 
+  // ── Tactical overrides (Valorant-style: site / instruction / playstyle) ──
+  // Site + instruction live for the half they were called in (reset on next
+  // map). Playstyle is map-level — chosen in the inter-map TIMEOUT phase.
+  const [tacticalOverrides, setTacticalOverrides] = useState<TacticalOverrideInput[]>([]);
+  const [pendingPlaystyle, setPendingPlaystyle] = useState<"Aggressive" | "Tactical" | "Defensive" | null>(null);
+
   // ── Derived data ──
   const format = vetoState && !vetoState.done ? vetoState.format : "BO3";
   const vetoSequence = format === "BO5" ? BO5_VETO : BO3_VETO;
@@ -712,6 +728,7 @@ export default function MatchDayPage() {
         playerAgents: playerAgentArr,
         timeoutType: timeoutBonus?.type,
         timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
+        overrides: tacticalOverrides,
       });
 
       halftimeStateRef.current = h1.halftimeState;
@@ -731,7 +748,10 @@ export default function MatchDayPage() {
   }
 
   // ── Mid-round TO: user pressed TIMEOUT during LIVE playback ──
-  async function handleMidRoundTOPick(type: "tactical" | "motivational" | "medical") {
+  // Unified action type covering bonuses (tactical/motivational/medical) AND
+  // VCT-style tactical overrides (site preference, individual instruction).
+  // All 5 actions consume the same "1 per half" TO slot.
+  async function handleMidRoundTOAction(action: TacticalAction) {
     const currentMap = mapLineup[currentMapIndex];
     if (!currentMap) return;
     const isH1 = currentLiveRound <= 12;
@@ -739,8 +759,29 @@ export default function MatchDayPage() {
     if (!isH1 && midRoundH2TO !== null) return;
 
     setToModalOpen(false);
-    setToAnimating(type);
 
+    // Build the override list addition (if applicable) — applied IN ADDITION to
+    // anything that's already on tacticalOverrides (e.g. a playstyle carry).
+    let appliedOverrides = tacticalOverrides;
+    if (action.kind === "site") {
+      appliedOverrides = [
+        ...tacticalOverrides.filter((ov) => ov.kind !== "site"),
+        { kind: "site", forcedSite: action.site },
+      ];
+      setTacticalOverrides(appliedOverrides);
+    } else if (action.kind === "instruction") {
+      appliedOverrides = [
+        ...tacticalOverrides.filter(
+          (ov) => !(ov.kind === "instruction" && ov.playerId === action.playerId),
+        ),
+        { kind: "instruction", playerId: action.playerId, instruction: action.instruction },
+      ];
+      setTacticalOverrides(appliedOverrides);
+    }
+
+    // For bonuses, build the TimeoutBonus (same as before).
+    const bonusType: "tactical" | "motivational" | "medical" | null =
+      action.kind === "bonus" ? action.type : null;
     const myStats = mapResults[currentMapIndex]?.playerStats?.filter((p) => {
       const playerTeamId = isTeam1 ? team1Id : team2Id;
       return p.teamId === playerTeamId;
@@ -754,14 +795,22 @@ export default function MatchDayPage() {
       }
       return acc;
     }, null) ?? null;
-    const bonus: TimeoutBonus = {
-      type,
-      ...(type === "tactical" ? { counterBonusDelta: 0.02 } : {}),
-      ...(type === "motivational" ? { teamplayDelta: 0.1 } : {}),
-      ...(type === "medical" && worst ? { resetVariancePlayerId: worst.playerId } : {}),
-    };
-    if (isH1) setMidRoundH1TO(bonus);
-    else setMidRoundH2TO(bonus);
+    const bonus: TimeoutBonus | null = bonusType
+      ? {
+          type: bonusType,
+          ...(bonusType === "tactical" ? { counterBonusDelta: 0.02 } : {}),
+          ...(bonusType === "motivational" ? { teamplayDelta: 0.1 } : {}),
+          ...(bonusType === "medical" && worst ? { resetVariancePlayerId: worst.playerId } : {}),
+        }
+      : null;
+    // Mark TO consumed — bonuses use TimeoutBonus shape, overrides use a
+    // sentinel "skip" type just to flag the slot as taken for this half.
+    const slotMarker: TimeoutBonus = bonus ?? { type: "skip" };
+    if (isH1) setMidRoundH1TO(slotMarker);
+    else setMidRoundH2TO(slotMarker);
+
+    // Pick an animation for the overlay.
+    setToAnimating(bonusType ?? "tactical");
 
     // Hold the TIMEOUT animation 2.4s, then replay.
     await new Promise((r) => setTimeout(r, 2400));
@@ -776,6 +825,13 @@ export default function MatchDayPage() {
     try {
       // Re-sim H1 (with combined preMap + midRoundH1) → fresh halftimeState.
       // Then re-sim H2 with combined halftime + midRoundH2.
+      // Only "bonus" actions feed midRoundTOType; site/instruction overrides
+      // travel via the `overrides` field instead.
+      const h1MidRoundType = isH1 ? bonus?.type : midRoundH1TO?.type;
+      const h1MidRoundPid = isH1 ? bonus?.resetVariancePlayerId : midRoundH1TO?.resetVariancePlayerId;
+      const h2MidRoundType = !isH1 ? bonus?.type : midRoundH2TO?.type;
+      const h2MidRoundPid = !isH1 ? bonus?.resetVariancePlayerId : midRoundH2TO?.resetVariancePlayerId;
+
       const h1 = await simulateMapHalf1Mut.mutateAsync({
         matchId,
         mapName: currentMap.mapName,
@@ -783,8 +839,9 @@ export default function MatchDayPage() {
         playerAgents: playerAgentArr,
         timeoutType: timeoutBonus?.type,
         timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
-        midRoundTOType: isH1 ? bonus.type : midRoundH1TO?.type,
-        midRoundTOPlayerId: isH1 ? bonus.resetVariancePlayerId : midRoundH1TO?.resetVariancePlayerId,
+        midRoundTOType: h1MidRoundType,
+        midRoundTOPlayerId: h1MidRoundPid,
+        overrides: appliedOverrides,
       });
       halftimeStateRef.current = h1.halftimeState;
 
@@ -796,8 +853,9 @@ export default function MatchDayPage() {
         halftimeState: h1.halftimeState,
         halftimeTimeoutType: halftimeBonus?.type,
         halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
-        midRoundTOType: !isH1 ? bonus.type : midRoundH2TO?.type,
-        midRoundTOPlayerId: !isH1 ? bonus.resetVariancePlayerId : midRoundH2TO?.resetVariancePlayerId,
+        midRoundTOType: h2MidRoundType,
+        midRoundTOPlayerId: h2MidRoundPid,
+        overrides: appliedOverrides,
       });
 
       const newMapResult: MapResultData = {
@@ -854,6 +912,7 @@ export default function MatchDayPage() {
         halftimeState: halftimeStateRef.current,
         halftimeTimeoutType: halftimeBonus?.type,
         halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
+        overrides: tacticalOverrides,
       });
 
       const mapResult: MapResultData = {
@@ -913,6 +972,13 @@ export default function MatchDayPage() {
       setMidRoundH1TO(null);
       setMidRoundH2TO(null);
       setCurrentLiveRound(1);
+      // Tactical overrides reset per-map. If the user picked a playstyle for
+      // the next map during TIMEOUT, seed it into the next map's overrides.
+      const carry: TacticalOverrideInput[] = pendingPlaystyle
+        ? [{ kind: "playstyle", playstyle: pendingPlaystyle }]
+        : [];
+      setTacticalOverrides(carry);
+      setPendingPlaystyle(null);
       transitionTo("AGENTS");
     }, 1200);
   }
@@ -2136,8 +2202,10 @@ export default function MatchDayPage() {
             {toModalOpen && (
               <MidRoundTOModal
                 round={currentLiveRound}
+                mapName={currentMap.mapName}
+                players={activePlayers}
                 onClose={() => setToModalOpen(false)}
-                onPick={(type) => handleMidRoundTOPick(type)}
+                onPick={(action) => handleMidRoundTOAction(action)}
               />
             )}
             {toAnimating && <MidRoundTOOverlay type={toAnimating} />}
@@ -2814,6 +2882,34 @@ export default function MatchDayPage() {
                 </button>
               </div>
 
+              {/* Tactical overrides — site preference + player instruction for H2 */}
+              <HalftimeOverridesPanel
+                mapName={currentMap.mapName}
+                players={activePlayers}
+                overrides={tacticalOverrides}
+                disabled={halftimeApplied}
+                onSetSite={(site) => {
+                  if (!site) {
+                    setTacticalOverrides((prev) => prev.filter((ov) => ov.kind !== "site"));
+                    return;
+                  }
+                  setTacticalOverrides((prev) => [
+                    ...prev.filter((ov) => ov.kind !== "site"),
+                    { kind: "site", forcedSite: site },
+                  ]);
+                }}
+                onSetInstruction={(playerId, instruction) => {
+                  if (!playerId) {
+                    setTacticalOverrides((prev) => prev.filter((ov) => ov.kind !== "instruction"));
+                    return;
+                  }
+                  setTacticalOverrides((prev) => [
+                    ...prev.filter((ov) => ov.kind !== "instruction"),
+                    { kind: "instruction", playerId, instruction: instruction ?? "safe" },
+                  ]);
+                }}
+              />
+
               {/* Continue CTA */}
               <div className="mt-8 flex justify-center">
                 <button
@@ -2994,6 +3090,13 @@ export default function MatchDayPage() {
                   <div className="text-[11px] leading-relaxed" style={{ color: "rgba(236,232,225,0.2)" }}>Continue without timeout</div>
                 </button>
               </div>
+
+              {/* Playstyle override — applies to the NEXT map only */}
+              <PlaystyleOverridePanel
+                pending={pendingPlaystyle}
+                onPick={setPendingPlaystyle}
+                disabled={timeoutApplied}
+              />
             </div>
           </div>
         );
@@ -3185,46 +3288,33 @@ function MidRoundTOButton({
   );
 }
 
-// ── Mid-round TO modal (3 type options) ──
+// ── Mid-round TO modal: 5 actions (3 bonuses + site preference + instruction) ──
+
+/** Unified tactical action — bonus types trigger a TimeoutBonus, override types
+ *  feed into the tacticalOverrides list. Both consume the 1-per-half TO slot. */
+type TacticalAction =
+  | { kind: "bonus"; type: "tactical" | "motivational" | "medical" }
+  | { kind: "site"; site: string }
+  | { kind: "instruction"; playerId: string; instruction: "safe" | "aggressive" };
 
 function MidRoundTOModal({
   round,
+  mapName,
+  players,
   onClose,
   onPick,
 }: {
   round: number;
+  mapName: string;
+  players: Array<{ id: string; ign: string; role: string }>;
   onClose: () => void;
-  onPick: (type: "tactical" | "motivational" | "medical") => void;
+  onPick: (action: TacticalAction) => void;
 }) {
-  const options: {
-    id: "tactical" | "motivational" | "medical";
-    title: string;
-    description: string;
-    effect: string;
-    icon: string;
-  }[] = [
-    {
-      id: "tactical",
-      title: "Pause tactique",
-      description: "Reset des reads & lectures adverses",
-      effect: "+2% adaptation pour la suite de la mi-temps",
-      icon: "🧠",
-    },
-    {
-      id: "motivational",
-      title: "Coup de boost",
-      description: "Le coach remonte les troupes",
-      effect: "+10% résistance au tilt",
-      icon: "🔥",
-    },
-    {
-      id: "medical",
-      title: "Pause médicale",
-      description: "Reset hotness du joueur le moins en forme",
-      effect: "Reset variance joueur",
-      icon: "⚕️",
-    },
-  ];
+  // Sub-screen state: drill down into site or instruction sub-pickers.
+  type SubScreen = "root" | "site" | "instruction";
+  const [screen, setScreen] = useState<SubScreen>("root");
+  const sites = getMapSites(mapName);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center px-6"
@@ -3232,65 +3322,343 @@ function MidRoundTOModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl rounded-lg p-6"
+        className="w-full max-w-3xl rounded-lg p-6"
         style={{
           background: "rgba(22,22,30,0.98)",
           border: "1px solid rgba(255,255,255,0.06)",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-1 text-center text-[10px] font-bold uppercase tracking-[0.3em]" style={{ color: "rgba(236,232,225,0.35)" }}>
-          Round {round} · Mi-temps {round <= 12 ? "1" : "2"}
-        </div>
-        <div className="text-center text-2xl font-black uppercase tracking-[0.15em]" style={{ color: "#ECE8E1" }}>
-          Demander un timeout
-        </div>
-        <div className="mt-1 text-center text-xs" style={{ color: "rgba(236,232,225,0.5)" }}>
-          Choisis ton approche — applique le bonus à la suite de la mi-temps.
-        </div>
+        {screen === "root" && (
+          <>
+            <div
+              className="mb-1 text-center text-[10px] font-bold uppercase tracking-[0.3em]"
+              style={{ color: "rgba(236,232,225,0.35)" }}
+            >
+              Round {round} · Mi-temps {round <= 12 ? "1" : "2"}
+            </div>
+            <div
+              className="text-center text-2xl font-black uppercase tracking-[0.15em]"
+              style={{ color: "#ECE8E1" }}
+            >
+              Tactical timeout
+            </div>
+            <div className="mt-1 text-center text-xs" style={{ color: "rgba(236,232,225,0.5)" }}>
+              Choisis ton approche — 1 TO max par mi-temps.
+            </div>
 
-        <div className="mt-6 grid grid-cols-3 gap-3">
-          {options.map((opt) => (
+            <div className="mt-6 grid grid-cols-3 gap-3">
+              <TOActionCard
+                icon="🧠"
+                title="Pause tactique"
+                description="Reset des reads & lectures adverses"
+                effect="+2% adaptation"
+                onClick={() => onPick({ kind: "bonus", type: "tactical" })}
+              />
+              <TOActionCard
+                icon="🔥"
+                title="Coup de boost"
+                description="Le coach remonte les troupes"
+                effect="+10% tilt resistance"
+                onClick={() => onPick({ kind: "bonus", type: "motivational" })}
+              />
+              <TOActionCard
+                icon="⚕️"
+                title="Pause médicale"
+                description="Reset hotness du joueur cold"
+                effect="Reset variance"
+                onClick={() => onPick({ kind: "bonus", type: "medical" })}
+              />
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <TOActionCard
+                icon="🎯"
+                title="Forcer un site"
+                description="On joue A, B (ou C) ce round"
+                effect="Override chooseSite"
+                onClick={() => setScreen("site")}
+              />
+              <TOActionCard
+                icon="👤"
+                title="Consigne joueur"
+                description="Demande à un joueur de jouer safe / aggro"
+                effect="Override aggression"
+                onClick={() => setScreen("instruction")}
+              />
+            </div>
+
             <button
-              key={opt.id}
               type="button"
-              onClick={() => onPick(opt.id)}
-              className="rounded-md p-4 text-left transition-all hover:scale-[1.02]"
+              onClick={onClose}
+              className="mt-4 w-full rounded-md py-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all"
+              style={{
+                background: "rgba(18,18,26,0.4)",
+                border: "1px solid rgba(255,255,255,0.04)",
+                color: "rgba(236,232,225,0.5)",
+              }}
+            >
+              Annuler
+            </button>
+          </>
+        )}
+
+        {screen === "site" && (
+          <SubScreenSite
+            sites={sites}
+            onPick={(site) => onPick({ kind: "site", site })}
+            onBack={() => setScreen("root")}
+          />
+        )}
+
+        {screen === "instruction" && (
+          <SubScreenInstruction
+            players={players}
+            onPick={(playerId, instruction) =>
+              onPick({ kind: "instruction", playerId, instruction })
+            }
+            onBack={() => setScreen("root")}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TOActionCard({
+  icon,
+  title,
+  description,
+  effect,
+  onClick,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  effect: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-md p-4 text-left transition-all hover:scale-[1.02]"
+      style={{
+        background: "rgba(18,18,26,0.8)",
+        border: "1px solid rgba(255,255,255,0.06)",
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-xl">{icon}</span>
+        <div
+          className="text-xs font-black uppercase tracking-[0.12em]"
+          style={{ color: "#ECE8E1" }}
+        >
+          {title}
+        </div>
+      </div>
+      <div className="mt-1 text-[11px]" style={{ color: "rgba(236,232,225,0.55)" }}>
+        {description}
+      </div>
+      <div
+        className="mt-2 text-[10px] font-bold uppercase tracking-[0.1em]"
+        style={{ color: "#C69B3A" }}
+      >
+        {effect}
+      </div>
+    </button>
+  );
+}
+
+function SubScreenSite({
+  sites,
+  onPick,
+  onBack,
+}: {
+  sites: string[];
+  onPick: (site: string) => void;
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <div
+        className="text-center text-xs font-bold uppercase tracking-[0.2em]"
+        style={{ color: "rgba(236,232,225,0.5)" }}
+      >
+        Forcer un site
+      </div>
+      <div
+        className="mt-1 text-center text-sm font-bold"
+        style={{ color: "rgba(236,232,225,0.8)" }}
+      >
+        "On joue {sites.join("/")} ce round"
+      </div>
+      <div
+        className="mt-1 text-center text-[10px]"
+        style={{ color: "rgba(236,232,225,0.4)" }}
+      >
+        L'IGL maintient si ça marche, sinon il revert au site rotate naturel.
+      </div>
+
+      <div className="mt-5 grid gap-3" style={{ gridTemplateColumns: `repeat(${sites.length}, 1fr)` }}>
+        {sites.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => onPick(s)}
+            className="rounded-md py-6 text-center transition-all hover:scale-[1.04]"
+            style={{
+              background: "rgba(18,18,26,0.8)",
+              border: "1px solid rgba(255,255,255,0.06)",
+            }}
+          >
+            <div
+              className="text-5xl font-black uppercase tracking-[0.15em]"
+              style={{ color: "#C69B3A" }}
+            >
+              {s}
+            </div>
+            <div
+              className="mt-1 text-[10px] font-bold uppercase tracking-[0.2em]"
+              style={{ color: "rgba(236,232,225,0.45)" }}
+            >
+              Site
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={onBack}
+        className="mt-4 w-full rounded-md py-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all"
+        style={{
+          background: "rgba(18,18,26,0.4)",
+          border: "1px solid rgba(255,255,255,0.04)",
+          color: "rgba(236,232,225,0.5)",
+        }}
+      >
+        ← Retour
+      </button>
+    </>
+  );
+}
+
+function SubScreenInstruction({
+  players,
+  onPick,
+  onBack,
+}: {
+  players: Array<{ id: string; ign: string; role: string }>;
+  onPick: (playerId: string, instruction: "safe" | "aggressive") => void;
+  onBack: () => void;
+}) {
+  const [selectedPid, setSelectedPid] = useState<string | null>(null);
+  return (
+    <>
+      <div
+        className="text-center text-xs font-bold uppercase tracking-[0.2em]"
+        style={{ color: "rgba(236,232,225,0.5)" }}
+      >
+        Consigne individuelle
+      </div>
+      <div
+        className="mt-1 text-center text-sm font-bold"
+        style={{ color: "rgba(236,232,225,0.8)" }}
+      >
+        {selectedPid ? "Quelle consigne ?" : "Quel joueur ?"}
+      </div>
+
+      {selectedPid === null ? (
+        <div className="mt-5 grid grid-cols-5 gap-2">
+          {players.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setSelectedPid(p.id)}
+              className="rounded-md p-3 text-center transition-all hover:scale-[1.04]"
               style={{
                 background: "rgba(18,18,26,0.8)",
                 border: "1px solid rgba(255,255,255,0.06)",
               }}
             >
-              <div className="flex items-center gap-2">
-                <span className="text-xl">{opt.icon}</span>
-                <div className="text-xs font-black uppercase tracking-[0.12em]" style={{ color: "#ECE8E1" }}>
-                  {opt.title}
-                </div>
+              <div
+                className="truncate text-sm font-black uppercase"
+                style={{ color: "#ECE8E1" }}
+              >
+                {p.ign}
               </div>
-              <div className="mt-1 text-[11px]" style={{ color: "rgba(236,232,225,0.55)" }}>
-                {opt.description}
-              </div>
-              <div className="mt-2 text-[10px] font-bold uppercase tracking-[0.1em]" style={{ color: "#C69B3A" }}>
-                {opt.effect}
+              <div
+                className="text-[10px] uppercase tracking-[0.1em]"
+                style={{ color: "rgba(236,232,225,0.45)" }}
+              >
+                {p.role}
               </div>
             </button>
           ))}
         </div>
+      ) : (
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => onPick(selectedPid, "safe")}
+            className="rounded-md p-5 text-left transition-all hover:scale-[1.02]"
+            style={{
+              background: "rgba(18,18,26,0.8)",
+              border: "1px solid rgba(74,230,138,0.25)",
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🛡️</span>
+              <div
+                className="text-sm font-black uppercase tracking-[0.12em]"
+                style={{ color: "#4AE68A" }}
+              >
+                Joue safe
+              </div>
+            </div>
+            <div className="mt-1 text-[11px]" style={{ color: "rgba(236,232,225,0.55)" }}>
+              Réduit son aggression — moins de peeks, plus de jeu en support.
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => onPick(selectedPid, "aggressive")}
+            className="rounded-md p-5 text-left transition-all hover:scale-[1.02]"
+            style={{
+              background: "rgba(18,18,26,0.8)",
+              border: "1px solid rgba(255,70,85,0.25)",
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-xl">⚔️</span>
+              <div
+                className="text-sm font-black uppercase tracking-[0.12em]"
+                style={{ color: "#FF4655" }}
+              >
+                Joue aggressive
+              </div>
+            </div>
+            <div className="mt-1 text-[11px]" style={{ color: "rgba(236,232,225,0.55)" }}>
+              Augmente son aggression — entries, picks rapides, plus de FK.
+            </div>
+          </button>
+        </div>
+      )}
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="mt-4 w-full rounded-md py-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all"
-          style={{
-            background: "rgba(18,18,26,0.4)",
-            border: "1px solid rgba(255,255,255,0.04)",
-            color: "rgba(236,232,225,0.5)",
-          }}
-        >
-          Annuler
-        </button>
-      </div>
-    </div>
+      <button
+        type="button"
+        onClick={() => (selectedPid ? setSelectedPid(null) : onBack())}
+        className="mt-4 w-full rounded-md py-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all"
+        style={{
+          background: "rgba(18,18,26,0.4)",
+          border: "1px solid rgba(255,255,255,0.04)",
+          color: "rgba(236,232,225,0.5)",
+        }}
+      >
+        ← Retour
+      </button>
+    </>
   );
 }
 
@@ -3326,6 +3694,232 @@ function MidRoundTOOverlay({
 }
 
 // ── Helper component: mini-scoreboard for the HALFTIME pause ──
+
+// ── Pre-map playstyle override (inter-map TIMEOUT phase) ──
+
+function PlaystyleOverridePanel({
+  pending,
+  onPick,
+  disabled,
+}: {
+  pending: "Aggressive" | "Tactical" | "Defensive" | null;
+  onPick: (style: "Aggressive" | "Tactical" | "Defensive" | null) => void;
+  disabled: boolean;
+}) {
+  const styles: Array<{
+    id: "Aggressive" | "Tactical" | "Defensive";
+    icon: string;
+    label: string;
+    desc: string;
+  }> = [
+    { id: "Aggressive", icon: "⚔️", label: "Aggressive", desc: "Entries rapides, picks, tempo haut" },
+    { id: "Tactical", icon: "🧠", label: "Tactical", desc: "Default lent, info-driven, util-heavy" },
+    { id: "Defensive", icon: "🛡️", label: "Defensive", desc: "Holds passifs, attendre l'erreur" },
+  ];
+  return (
+    <div className="mt-6 rounded-md p-4" style={{ background: "rgba(18,18,26,0.5)", border: "1px solid rgba(255,255,255,0.04)" }}>
+      <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.25em]" style={{ color: "rgba(236,232,225,0.4)" }}>
+        Playstyle pour la prochaine map · Optionnel
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {styles.map((s) => {
+          const isSel = pending === s.id;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              disabled={disabled}
+              onClick={() => onPick(isSel ? null : s.id)}
+              className="rounded-md p-3 text-left transition-all hover:scale-[1.02]"
+              style={{
+                background: isSel ? "rgba(198,155,58,0.08)" : "rgba(18,18,26,0.7)",
+                border: isSel ? "1px solid rgba(198,155,58,0.4)" : "1px solid rgba(255,255,255,0.04)",
+                opacity: disabled ? 0.6 : 1,
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-lg">{s.icon}</span>
+                <span className="text-xs font-black uppercase tracking-[0.12em]" style={{ color: isSel ? "#C69B3A" : "#ECE8E1" }}>
+                  {s.label}
+                </span>
+              </div>
+              <div className="mt-1 text-[10px]" style={{ color: "rgba(236,232,225,0.45)" }}>
+                {s.desc}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-2 text-[10px]" style={{ color: "rgba(236,232,225,0.35)" }}>
+        L'IGL roll chaque round : si ça marche, il maintient. Sinon, il peut revert au playstyle naturel.
+      </div>
+    </div>
+  );
+}
+
+// ── HALFTIME tactical overrides panel ──
+
+function HalftimeOverridesPanel({
+  mapName,
+  players,
+  overrides,
+  disabled,
+  onSetSite,
+  onSetInstruction,
+}: {
+  mapName: string;
+  players: Array<{ id: string; ign: string; role: string }>;
+  overrides: TacticalOverrideInput[];
+  disabled: boolean;
+  onSetSite: (site: string | null) => void;
+  onSetInstruction: (playerId: string | null, instruction: "safe" | "aggressive" | null) => void;
+}) {
+  const [openSection, setOpenSection] = useState<"none" | "site" | "instruction">("none");
+  const sites = getMapSites(mapName);
+  const activeSite = overrides.find((ov) => ov.kind === "site")?.forcedSite ?? null;
+  const activeInstr = overrides.find((ov) => ov.kind === "instruction");
+
+  return (
+    <div className="mt-6 rounded-md p-4" style={{ background: "rgba(18,18,26,0.5)", border: "1px solid rgba(255,255,255,0.04)" }}>
+      <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.25em]" style={{ color: "rgba(236,232,225,0.4)" }}>
+        Briefing tactique mi-temps · Optionnel
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpenSection(openSection === "site" ? "none" : "site")}
+          className="rounded-md px-3 py-2 text-left text-xs transition-all"
+          style={{
+            background: activeSite ? "rgba(198,155,58,0.08)" : "rgba(18,18,26,0.6)",
+            border: activeSite ? "1px solid rgba(198,155,58,0.3)" : "1px solid rgba(255,255,255,0.04)",
+            opacity: disabled ? 0.6 : 1,
+          }}
+        >
+          <div className="flex items-center gap-1.5">
+            <span>🎯</span>
+            <span className="font-black uppercase tracking-[0.1em]" style={{ color: "#ECE8E1" }}>
+              Site forcé
+            </span>
+          </div>
+          <div className="mt-0.5 text-[10px]" style={{ color: activeSite ? "#C69B3A" : "rgba(236,232,225,0.4)" }}>
+            {activeSite ? `On joue ${activeSite} en H2` : "Choisir un site"}
+          </div>
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpenSection(openSection === "instruction" ? "none" : "instruction")}
+          className="rounded-md px-3 py-2 text-left text-xs transition-all"
+          style={{
+            background: activeInstr ? "rgba(198,155,58,0.08)" : "rgba(18,18,26,0.6)",
+            border: activeInstr ? "1px solid rgba(198,155,58,0.3)" : "1px solid rgba(255,255,255,0.04)",
+            opacity: disabled ? 0.6 : 1,
+          }}
+        >
+          <div className="flex items-center gap-1.5">
+            <span>👤</span>
+            <span className="font-black uppercase tracking-[0.1em]" style={{ color: "#ECE8E1" }}>
+              Consigne joueur
+            </span>
+          </div>
+          <div className="mt-0.5 text-[10px]" style={{ color: activeInstr ? "#C69B3A" : "rgba(236,232,225,0.4)" }}>
+            {activeInstr
+              ? `${players.find((p) => p.id === activeInstr.playerId)?.ign ?? "?"} · ${activeInstr.instruction}`
+              : "Choisir un joueur"}
+          </div>
+        </button>
+      </div>
+
+      {openSection === "site" && (
+        <div className="mt-3 flex gap-2">
+          {sites.map((s) => (
+            <button
+              key={s}
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                onSetSite(activeSite === s ? null : s);
+                setOpenSection("none");
+              }}
+              className="flex-1 rounded-sm py-3 text-center transition-all hover:scale-[1.03]"
+              style={{
+                background: activeSite === s ? "rgba(198,155,58,0.12)" : "rgba(18,18,26,0.8)",
+                border: activeSite === s ? "1px solid rgba(198,155,58,0.4)" : "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <div className="text-2xl font-black" style={{ color: activeSite === s ? "#C69B3A" : "#ECE8E1" }}>
+                {s}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {openSection === "instruction" && (
+        <div className="mt-3">
+          <div className="grid grid-cols-5 gap-1.5">
+            {players.map((p) => {
+              const isSel = activeInstr?.playerId === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() =>
+                    onSetInstruction(isSel ? null : p.id, isSel ? null : activeInstr?.instruction ?? "safe")
+                  }
+                  className="rounded-sm px-1 py-2 text-center transition-all hover:scale-[1.04]"
+                  style={{
+                    background: isSel ? "rgba(198,155,58,0.12)" : "rgba(18,18,26,0.8)",
+                    border: isSel ? "1px solid rgba(198,155,58,0.4)" : "1px solid rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <div className="truncate text-[11px] font-black uppercase" style={{ color: "#ECE8E1" }}>
+                    {p.ign}
+                  </div>
+                  <div className="text-[9px]" style={{ color: "rgba(236,232,225,0.4)" }}>
+                    {p.role}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {activeInstr && (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onSetInstruction(activeInstr.playerId ?? null, "safe")}
+                className="rounded-sm py-2 text-xs font-bold uppercase tracking-[0.15em] transition-all"
+                style={{
+                  background: activeInstr.instruction === "safe" ? "rgba(74,230,138,0.12)" : "rgba(18,18,26,0.6)",
+                  border: activeInstr.instruction === "safe" ? "1px solid rgba(74,230,138,0.4)" : "1px solid rgba(255,255,255,0.04)",
+                  color: activeInstr.instruction === "safe" ? "#4AE68A" : "rgba(236,232,225,0.6)",
+                }}
+              >
+                🛡️ Joue safe
+              </button>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onSetInstruction(activeInstr.playerId ?? null, "aggressive")}
+                className="rounded-sm py-2 text-xs font-bold uppercase tracking-[0.15em] transition-all"
+                style={{
+                  background: activeInstr.instruction === "aggressive" ? "rgba(255,70,85,0.12)" : "rgba(18,18,26,0.6)",
+                  border: activeInstr.instruction === "aggressive" ? "1px solid rgba(255,70,85,0.4)" : "1px solid rgba(255,255,255,0.04)",
+                  color: activeInstr.instruction === "aggressive" ? "#FF4655" : "rgba(236,232,225,0.6)",
+                }}
+              >
+                ⚔️ Joue aggressive
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function HalftimeStatList({
   title,
