@@ -15,6 +15,13 @@ interface IntelData {
   dominantMaps: { mapName: string; count: number }[];
   keyPlayer: { id: string; ign: string; role: string; acs: number; kd: number } | null;
   strategicProfile: { playstyle: string; ecoDiscipline: number; adaptationRating: number } | null;
+  aiPlanIntel: {
+    tempo: "RUSH" | "DEFAULT" | "SLOW" | null;
+    bootcamp: boolean;
+    antiStarTargetId: string | null;
+    playstyleOverride: string | null;
+    forcedSite: string | null;
+  } | null;
 }
 
 interface RosterPlayer {
@@ -361,6 +368,58 @@ function IntelPanel({
             : intel.tier === 1
             ? "Analyste Senior (60+) → joueur clé révélé."
             : "Analyste Elite (80+) → profil stratégique complet."}
+        </div>
+      )}
+
+      {/* AI plan intel — what the opponent is preparing for THIS match */}
+      {intel.tier >= 1 && intel.aiPlanIntel && (
+        <div className="mt-4 rounded-md border border-[var(--val-red)]/20 bg-[var(--val-bg)] p-3">
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--val-red)]">
+            <span>🕵️</span>
+            <span>Plan adverse (préparation détectée)</span>
+          </div>
+          <div className="space-y-1.5 text-[11px]">
+            <div className="flex items-center justify-between">
+              <span className="text-[var(--val-white)]/55">Tempo prévu</span>
+              <span className="font-bold text-[var(--val-white)]">
+                {intel.aiPlanIntel.tempo === "RUSH"
+                  ? "Rush"
+                  : intel.aiPlanIntel.tempo === "SLOW"
+                  ? "Lent"
+                  : "Default"}
+              </span>
+            </div>
+            {intel.aiPlanIntel.bootcamp && (
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--val-white)]/55">Bootcamp</span>
+                <span className="font-bold text-[var(--val-gold)]">✓ Activé</span>
+              </div>
+            )}
+            {intel.tier >= 2 && intel.aiPlanIntel.antiStarTargetId && (
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--val-white)]/55">Anti-star</span>
+                <span className="font-bold text-[var(--val-red)]">
+                  ⚠️ Cible ton top ACS
+                </span>
+              </div>
+            )}
+            {intel.tier >= 3 && intel.aiPlanIntel.playstyleOverride && (
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--val-white)]/55">Playstyle override</span>
+                <span className="font-bold text-[var(--val-white)]">
+                  {intel.aiPlanIntel.playstyleOverride}
+                </span>
+              </div>
+            )}
+            {intel.tier >= 3 && intel.aiPlanIntel.forcedSite && (
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--val-white)]/55">Site forcé prévu</span>
+                <span className="font-bold text-[var(--val-gold)]">
+                  {intel.aiPlanIntel.forcedSite}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </Panel>

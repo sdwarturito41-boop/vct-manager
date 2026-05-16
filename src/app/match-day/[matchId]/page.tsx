@@ -357,6 +357,12 @@ export default function MatchDayPage() {
   const [liveOverlay, setLiveOverlay] = useState<string | null>(null);
   const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [timeoutUsedThisHalf, setTimeoutUsedThisHalf] = useState(false);
+  // Which half the LIVE phase is currently playing. H1 → at onMapEnd we pause
+  // for the HALFTIME phase. H2 → at onMapEnd we finalize stats and go to RESULT.
+  const [liveHalf, setLiveHalf] = useState<1 | 2>(1);
+  // Round index from which RoundByRoundScreen should start playback. 0 for H1,
+  // h1.rounds.length for H2 (skips the H1 rounds we already showed).
+  const [liveStartFromRound, setLiveStartFromRound] = useState(0);
 
   // ── HALFTIME phase state (cinematic mid-map pause between H1 sim and H2 sim) ──
   const halftimeStateRef = useRef<unknown>(null);
@@ -386,13 +392,18 @@ export default function MatchDayPage() {
   // ── AI opponent TO state — detected from streak heuristics during playback ──
   // When fired: pause + reaction modal. User can give override instructions to
   // their players WITHOUT consuming their own TO slot ("you can talk during
-  // their pause too"). Once per AI half.
+  // their pause too"). Once per AI half. The AI's TO type is THEN passed back
+  // to the sim on replay so the AI side actually gets the bonus.
   const [aiTOEvent, setAiTOEvent] = useState<{
     half: 1 | 2;
     type: "tactical" | "motivational" | "medical";
   } | null>(null);
   const aiH1TOUsedRef = useRef(false);
   const aiH2TOUsedRef = useRef(false);
+  // Persistent AI TO types — passed to every subsequent replay so the AI's
+  // bonus stays applied. Reset between maps.
+  const [aiH1TOType, setAiH1TOType] = useState<"tactical" | "motivational" | "medical" | null>(null);
+  const [aiH2TOType, setAiH2TOType] = useState<"tactical" | "motivational" | "medical" | null>(null);
 
   // ── Derived data ──
   const format = vetoState && !vetoState.done ? vetoState.format : "BO3";
@@ -613,8 +624,13 @@ export default function MatchDayPage() {
       ? "tactical"
       : "motivational";
 
-    if (half === 1) aiH1TOUsedRef.current = true;
-    else aiH2TOUsedRef.current = true;
+    if (half === 1) {
+      aiH1TOUsedRef.current = true;
+      setAiH1TOType(aiType);
+    } else {
+      aiH2TOUsedRef.current = true;
+      setAiH2TOType(aiType);
+    }
     setAiTOEvent({ half, type: aiType });
   }, [currentLiveRound, phase, liveRounds, aiTOEvent, replaying, toAnimating, toModalOpen, isTeam1]);
 
@@ -790,6 +806,7 @@ export default function MatchDayPage() {
         timeoutType: timeoutBonus?.type,
         timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
         overrides: tacticalOverrides,
+        aiH1TOType: aiH1TOType ?? undefined,
       });
 
       halftimeStateRef.current = h1.halftimeState;
@@ -801,8 +818,36 @@ export default function MatchDayPage() {
       setHalftimeBonus(null);
       setHalftimeApplied(false);
 
+      // Show the H1 round-by-round playback FIRST. The HALFTIME pause fires
+      // when RoundByRoundScreen reaches the end of H1 (via onMapEnd).
+      const h1Rounds = (h1 as { rounds?: RoundEvent[] }).rounds ?? [];
+      setLiveRounds(h1Rounds);
+      setLiveHalf(1);
+      setLiveStartFromRound(0);
+      setDisplayedRoundCount(0);
+      setLiveOverlay(null);
+      // If H1 already closed the map (13-X sweep), skip halftime and finalize.
+      const mapClosedInH1 = h1.score1 >= 13 || h1.score2 >= 13;
+      if (mapClosedInH1) {
+        // Treat H1 alone as the full map result.
+        const mapResult: MapResultData = {
+          map: h1.map,
+          score1: h1.score1,
+          score2: h1.score2,
+          playerStats: h1.playerStats,
+          highlights: h1.highlights,
+        };
+        setMapResults((prev) => [...prev, mapResult]);
+        const team1Won = h1.score1 > h1.score2;
+        setSeriesScore((prev) => ({
+          team1: prev.team1 + (team1Won ? 1 : 0),
+          team2: prev.team2 + (team1Won ? 0 : 1),
+        }));
+        setLiveHalf(2); // so onMapEnd will finalize
+      }
+
       await new Promise((r) => setTimeout(r, 600));
-      transitionTo("HALFTIME");
+      transitionTo("LIVE");
     } catch {
       transitionTo("AGENTS");
     }
@@ -903,6 +948,7 @@ export default function MatchDayPage() {
         midRoundTOType: h1MidRoundType,
         midRoundTOPlayerId: h1MidRoundPid,
         overrides: appliedOverrides,
+        aiH1TOType: aiH1TOType ?? undefined,
       });
       halftimeStateRef.current = h1.halftimeState;
 
@@ -917,6 +963,8 @@ export default function MatchDayPage() {
         midRoundTOType: h2MidRoundType,
         midRoundTOPlayerId: h2MidRoundPid,
         overrides: appliedOverrides,
+        aiH1TOType: aiH1TOType ?? undefined,
+        aiH2TOType: aiH2TOType ?? undefined,
       });
 
       const newMapResult: MapResultData = {
@@ -940,8 +988,28 @@ export default function MatchDayPage() {
         };
       });
 
-      const rounds = (h2 as { rounds?: RoundEvent[] }).rounds ?? [];
-      setLiveRounds(rounds);
+      // Drop the cinematic flow back into the appropriate half. If the TO was
+      // called in H1, we want the user to re-watch the H1 (now with the bonus),
+      // then HALFTIME, then H2. If called in H2, we resume H2 playback.
+      const fullRounds = (h2 as { rounds?: RoundEvent[] }).rounds ?? [];
+      if (isH1) {
+        // Show new H1 rounds only — H2 will be played after the HALFTIME pause.
+        const newH1Rounds = (h1 as { rounds?: RoundEvent[] }).rounds ?? fullRounds.slice(0, 12);
+        setLiveRounds(newH1Rounds);
+        setLiveHalf(1);
+        setLiveStartFromRound(0);
+        setHalftimePartial({
+          score1: h1.score1,
+          score2: h1.score2,
+          playerStats: h1.playerStats,
+        });
+      } else {
+        // H2 replay — start the cinematic at the first H2 round.
+        const h1Length = fullRounds.findIndex((r) => r.half === 2);
+        setLiveRounds(fullRounds);
+        setLiveHalf(2);
+        setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
+      }
       setDisplayedRoundCount(0);
       setLiveOverlay(null);
     } catch (err) {
@@ -952,8 +1020,9 @@ export default function MatchDayPage() {
   }
 
   // ── AI TO reaction: user gives instructions during opponent's pause ──
-  // Doesn't consume the user's own TO slot. Same replay path as mid-round TO,
-  // but only overrides (no bonus). Skip → just resume playback unchanged.
+  // Doesn't consume the user's own TO slot. ALWAYS triggers a replay (even on
+  // skip) because the AI's TO bonus needs to be applied to the AI side via the
+  // replay's aiH1TOType / aiH2TOType params.
   async function handleAIReactionPick(
     action:
       | { kind: "skip" }
@@ -964,7 +1033,6 @@ export default function MatchDayPage() {
     const currentMap = mapLineup[currentMapIndex];
     if (!currentMap) return;
     setAiTOEvent(null);
-    if (action.kind === "skip") return;
 
     let appliedOverrides = tacticalOverrides;
     if (action.kind === "site") {
@@ -973,7 +1041,7 @@ export default function MatchDayPage() {
         { kind: "site", forcedSite: action.site },
       ];
       setTacticalOverrides(appliedOverrides);
-    } else {
+    } else if (action.kind === "instruction") {
       appliedOverrides = [
         ...tacticalOverrides.filter(
           (ov) => !(ov.kind === "instruction" && ov.playerId === action.playerId),
@@ -982,6 +1050,7 @@ export default function MatchDayPage() {
       ];
       setTacticalOverrides(appliedOverrides);
     }
+    // action.kind === "skip" → no override change, but we still replay below.
 
     setReplaying(true);
     const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
@@ -989,6 +1058,11 @@ export default function MatchDayPage() {
       agentName: agentPicks[p.id]!,
     }));
     try {
+      // Reading the in-flight AI TO type from state (which the detection effect
+      // just set before opening the modal) — AND its sibling-half if any. The
+      // useState setters are async, so we resolve via the event's `half`+`type`.
+      const aiH1ForReplay = aiTOEvent.half === 1 ? aiTOEvent.type : aiH1TOType ?? undefined;
+      const aiH2ForReplay = aiTOEvent.half === 2 ? aiTOEvent.type : aiH2TOType ?? undefined;
       const h1 = await simulateMapHalf1Mut.mutateAsync({
         matchId,
         mapName: currentMap.mapName,
@@ -999,6 +1073,7 @@ export default function MatchDayPage() {
         midRoundTOType: midRoundH1TO?.type,
         midRoundTOPlayerId: midRoundH1TO?.resetVariancePlayerId,
         overrides: appliedOverrides,
+        aiH1TOType: aiH1ForReplay,
       });
       halftimeStateRef.current = h1.halftimeState;
       const h2 = await simulateMapHalf2Mut.mutateAsync({
@@ -1012,6 +1087,8 @@ export default function MatchDayPage() {
         midRoundTOType: midRoundH2TO?.type,
         midRoundTOPlayerId: midRoundH2TO?.resetVariancePlayerId,
         overrides: appliedOverrides,
+        aiH1TOType: aiH1ForReplay,
+        aiH2TOType: aiH2ForReplay,
       });
       const newMapResult: MapResultData = {
         map: h2.map,
@@ -1032,8 +1109,25 @@ export default function MatchDayPage() {
           team2: prev.team2 - (oldT1Won ? 0 : 1) + (team1Won ? 0 : 1),
         };
       });
-      const rounds = (h2 as { rounds?: RoundEvent[] }).rounds ?? [];
-      setLiveRounds(rounds);
+      // Resume in the SAME half the AI TO fired in (mirror mid-round TO logic).
+      const fullRounds = (h2 as { rounds?: RoundEvent[] }).rounds ?? [];
+      const wasH1 = aiTOEvent?.half === 1;
+      if (wasH1) {
+        const newH1Rounds = (h1 as { rounds?: RoundEvent[] }).rounds ?? fullRounds.slice(0, 12);
+        setLiveRounds(newH1Rounds);
+        setLiveHalf(1);
+        setLiveStartFromRound(0);
+        setHalftimePartial({
+          score1: h1.score1,
+          score2: h1.score2,
+          playerStats: h1.playerStats,
+        });
+      } else {
+        const h1Length = fullRounds.findIndex((r) => r.half === 2);
+        setLiveRounds(fullRounds);
+        setLiveHalf(2);
+        setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
+      }
       setDisplayedRoundCount(0);
       setLiveOverlay(null);
     } catch (err) {
@@ -1066,6 +1160,8 @@ export default function MatchDayPage() {
         halftimeTimeoutType: halftimeBonus?.type,
         halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
         overrides: tacticalOverrides,
+        aiH1TOType: aiH1TOType ?? undefined,
+        aiH2TOType: aiH2TOType ?? undefined,
       });
 
       const mapResult: MapResultData = {
@@ -1084,7 +1180,14 @@ export default function MatchDayPage() {
       }));
 
       const rounds = (result as { rounds?: RoundEvent[] }).rounds ?? [];
+      // H2 sim returns FULL map rounds (H1+H2+OT). Resume RBR from where H1
+      // ended so the user doesn't re-watch H1.
+      const h1Length = halftimePartial?.score1 != null
+        ? rounds.findIndex((r) => r.half === 2)
+        : 12;
       setLiveRounds(rounds);
+      setLiveHalf(2);
+      setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
       setDisplayedRoundCount(0);
       setLiveOverlay(null);
 
@@ -1125,10 +1228,15 @@ export default function MatchDayPage() {
       setMidRoundH1TO(null);
       setMidRoundH2TO(null);
       setCurrentLiveRound(1);
+      // Reset the H1/H2 LIVE-phase split so next map starts fresh at H1.
+      setLiveHalf(1);
+      setLiveStartFromRound(0);
       // AI TO trackers reset per-map (1 per half, both halves fresh next map).
       aiH1TOUsedRef.current = false;
       aiH2TOUsedRef.current = false;
       setAiTOEvent(null);
+      setAiH1TOType(null);
+      setAiH2TOType(null);
       // Tactical overrides reset per-map. If the user picked a playstyle for
       // the next map during TIMEOUT, seed it into the next map's overrides.
       const carry: TacticalOverrideInput[] = pendingPlaystyle
@@ -2286,6 +2394,13 @@ export default function MatchDayPage() {
         };
 
         const handleMapEnd = (_result: "win" | "loss", _finalScore: { my: number; opp: number }) => {
+          // H1 just finished → pause for the HALFTIME phase (cinematic score
+          // pause + TO picker). Don't finalize yet — H2 is still to come.
+          if (liveHalf === 1) {
+            transitionTo("HALFTIME");
+            return;
+          }
+          // H2 / OT just finished → finalize stats and go to RESULT.
           // Finalize stats once per map (mastery + EMA) against the LATEST
           // sim's playerStats — i.e. whatever the cinematic actually showed,
           // including mid-round TO replays.
@@ -2348,6 +2463,7 @@ export default function MatchDayPage() {
               onMapEnd={handleMapEnd}
               myFirstHalfSide={currentMap.playerSide}
               onRoundChange={setCurrentLiveRound}
+              startFromRound={liveStartFromRound}
             />
             <MidRoundTOButton
               currentRound={currentLiveRound}

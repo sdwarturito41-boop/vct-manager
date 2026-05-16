@@ -90,6 +90,12 @@ export interface RoundByRoundScreenProps {
   /** Called whenever the displayed round changes — lets the parent show a
    * mid-round TO button targeting the right half. */
   onRoundChange?: (round: number) => void;
+  /** Optional starting round index (0 = beginning). When set > 0, RBR skips
+   * the rounds before it — used for the LIVE_H2 phase to resume cinematic
+   * playback after the half-time pause without replaying H1. Cumulative
+   * scores at this point are derived from the rounds array, so passing the
+   * full H1+H2+OT array still yields the correct half-time score. */
+  startFromRound?: number;
 }
 
 // ── Constants ──
@@ -860,8 +866,9 @@ export default function RoundByRoundScreen({
   onMapEnd,
   myFirstHalfSide = "attack",
   onRoundChange,
+  startFromRound,
 }: RoundByRoundScreenProps) {
-  const [currentRound, setCurrentRound] = useState(0);
+  const [currentRound, setCurrentRound] = useState(startFromRound ?? 0);
   useEffect(() => {
     onRoundChange?.(currentRound);
   }, [currentRound, onRoundChange]);

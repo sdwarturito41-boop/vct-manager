@@ -40,6 +40,85 @@ function mergeOverrides(
   return out;
 }
 
+/**
+ * Deterministic RNG seeded by a string — used to generate stable AI plans
+ * per match. The same matchId always produces the same plan, so replays
+ * stay consistent (mulberry32 over a string-hashed seed).
+ */
+function seededRng(seed: string): () => number {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let s = h >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * AI Match Plan generator — same kind of decisions the user makes on Match
+ * Prep, but rolled deterministically from matchId so the AI's choices are
+ * stable across replays. The AI also pays the costs (anti-star sacrifice,
+ * bootcamp budget) for symmetry.
+ */
+function generateAIPlan(
+  matchId: string,
+  aiTeam: { players: Array<{ id: string; acs: number }>; budget: number },
+  userPlayers: Array<{ id: string; acs: number }>,
+): {
+  overrides: TacticalOverrideInput[];
+  planMods: import("@/server/simulation/engine").MatchPlanMods;
+  bootcampUsed: boolean;
+} {
+  const rng = seededRng(`ai:${matchId}`);
+  const overrides: TacticalOverrideInput[] = [];
+
+  // Playstyle override — 25% chance to swap.
+  if (rng() < 0.25) {
+    const styles = ["Aggressive", "Tactical", "Defensive"] as const;
+    overrides.push({ kind: "playstyle", playstyle: styles[Math.floor(rng() * 3)] });
+  }
+
+  // Site preference — 30% chance to commit to one site (accepts the read-cost trade-off).
+  if (rng() < 0.3) {
+    overrides.push({ kind: "site", forcedSite: rng() < 0.5 ? "A" : "B" });
+  }
+
+  // Tempo — weighted random.
+  const tempoRoll = rng();
+  const tempoMod = tempoRoll < 0.25 ? 0.75 : tempoRoll < 0.75 ? 1.0 : 1.25;
+
+  // Anti-star — 40% chance to target the user's top ACS player.
+  let antiStarTargetId: string | null = null;
+  let antiStarAssignedPlayerId: string | null = null;
+  if (rng() < 0.4 && userPlayers.length > 0 && aiTeam.players.length > 0) {
+    const topUser = [...userPlayers].sort((a, b) => b.acs - a.acs)[0];
+    antiStarTargetId = topUser.id;
+    // AI sacrifices its own lowest-ACS active player.
+    const weakestAi = [...aiTeam.players].sort((a, b) => a.acs - b.acs)[0];
+    antiStarAssignedPlayerId = weakestAi?.id ?? null;
+  }
+
+  // Bootcamp — 25% chance, only if the AI team can afford it.
+  const bootcampUsed = aiTeam.budget > 200_000 && rng() < 0.25;
+
+  return {
+    overrides,
+    planMods: {
+      tempoMod,
+      mapPrepBoost: bootcampUsed ? 10 : 0,
+      antiStarTargetId,
+      antiStarAssignedPlayerId,
+    },
+    bootcampUsed,
+  };
+}
+
 /** Sum two TimeoutBonus deltas. resetHotnessPlayerId takes the latter's id if any. */
 function combineTimeoutBonuses(
   a: TimeoutBonus | undefined,
@@ -219,6 +298,18 @@ async function buildMapSimSetup(
     };
   }
 
+  // ── AI Match Plan — symmetric: the AI team also has tactical decisions. ──
+  // Generated deterministically from matchId so replays reproduce it.
+  const userTeamWithPlayers = isUserTeam1 ? match.team1 : match.team2;
+  const aiPlanResult = generateAIPlan(
+    input.matchId,
+    {
+      players: aiTeam.players.map((p) => ({ id: p.id, acs: p.acs })),
+      budget: aiTeam.budget,
+    },
+    userTeamWithPlayers.players.map((p) => ({ id: p.id, acs: p.acs })),
+  );
+
   return {
     match,
     userTeam,
@@ -231,6 +322,10 @@ async function buildMapSimSetup(
     userIsSimTeam1,
     planOverrides,
     userPlanMods,
+    aiOverrides: aiPlanResult.overrides,
+    aiPlanMods: aiPlanResult.planMods,
+    aiBootcampUsed: aiPlanResult.bootcampUsed,
+    aiTeamId: aiTeam.id,
   };
 }
 
@@ -909,14 +1004,18 @@ export const matchRouter = router({
         /** Active tactical overrides (site / instruction / playstyle). Applied
          *  to the user team's runtime; IGL rolls revert each round. */
         overrides: z.array(tacticalOverrideSchema).optional(),
+        /** AI in-game TO type called during H1 playback (client-detected,
+         *  echoed back so the replay applies its bonus to the AI side). */
+        aiH1TOType: z.enum(["tactical", "motivational", "medical"]).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const ts = await buildMapSimSetup(ctx, input);
-      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, planOverrides, userPlanMods } = ts;
+      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, planOverrides, userPlanMods, aiOverrides, aiPlanMods } = ts;
       const preMap = timeoutTypeToBonus(input.timeoutType, input.timeoutPlayerId);
       const midRound = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
       const userTimeoutBonus = combineTimeoutBonuses(preMap, midRound);
+      const aiTimeoutBonus = timeoutTypeToBonus(input.aiH1TOType);
       const userOverrides = mergeOverrides(
         (input.overrides ?? []) as TacticalOverrideInput[],
         planOverrides,
@@ -929,12 +1028,12 @@ export const matchRouter = router({
           team1Agents: swapped ? t2Agents : t1Agents,
           team2Agents: swapped ? t1Agents : t2Agents,
           team1StartsAttack: true,
-          team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : undefined,
-          team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
-          team1Overrides: userIsSimTeam1 ? userOverrides : undefined,
-          team2Overrides: userIsSimTeam1 ? undefined : userOverrides,
-          team1Plan: userIsSimTeam1 ? userPlanMods : undefined,
-          team2Plan: userIsSimTeam1 ? undefined : userPlanMods,
+          team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : aiTimeoutBonus,
+          team2TimeoutBonus: userIsSimTeam1 ? aiTimeoutBonus : userTimeoutBonus,
+          team1Overrides: userIsSimTeam1 ? userOverrides : aiOverrides,
+          team2Overrides: userIsSimTeam1 ? aiOverrides : userOverrides,
+          team1Plan: userIsSimTeam1 ? userPlanMods : aiPlanMods,
+          team2Plan: userIsSimTeam1 ? aiPlanMods : userPlanMods,
         });
       } catch (err) {
         console.error("[simulateMapHalf1] engine error:", err);
@@ -988,14 +1087,23 @@ export const matchRouter = router({
         midRoundTOPlayerId: z.string().optional(),
         /** Active tactical overrides for the H2 sim run. */
         overrides: z.array(tacticalOverrideSchema).optional(),
+        /** AI's H1 TO carry-over (so the H2 sim sees H1's effects too). */
+        aiH1TOType: z.enum(["tactical", "motivational", "medical"]).optional(),
+        /** AI's H2 in-game TO. */
+        aiH2TOType: z.enum(["tactical", "motivational", "medical"]).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const ts = await buildMapSimSetup(ctx, input);
-      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, planOverrides, userPlanMods } = ts;
+      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, planOverrides, userPlanMods, aiOverrides, aiPlanMods } = ts;
       const halftimeBonus = timeoutTypeToBonus(input.halftimeTimeoutType, input.halftimeTimeoutPlayerId);
       const midRoundBonus = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
       const userTimeoutBonus = combineTimeoutBonuses(halftimeBonus, midRoundBonus);
+      // Combine the AI's H1 carry-over + H2 in-game TO into a single bonus for
+      // the H2 sim (mirrors how user's halftime + mid-H2 are combined).
+      const aiH1Bonus = timeoutTypeToBonus(input.aiH1TOType);
+      const aiH2Bonus = timeoutTypeToBonus(input.aiH2TOType);
+      const aiTimeoutBonus = combineTimeoutBonuses(aiH1Bonus, aiH2Bonus);
       const userOverrides = mergeOverrides(
         (input.overrides ?? []) as TacticalOverrideInput[],
         planOverrides,
@@ -1008,12 +1116,12 @@ export const matchRouter = router({
           team1Agents: swapped ? t2Agents : t1Agents,
           team2Agents: swapped ? t1Agents : t2Agents,
           team1StartsAttack: true,
-          team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : undefined,
-          team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
-          team1Overrides: userIsSimTeam1 ? userOverrides : undefined,
-          team2Overrides: userIsSimTeam1 ? undefined : userOverrides,
-          team1Plan: userIsSimTeam1 ? userPlanMods : undefined,
-          team2Plan: userIsSimTeam1 ? undefined : userPlanMods,
+          team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : aiTimeoutBonus,
+          team2TimeoutBonus: userIsSimTeam1 ? aiTimeoutBonus : userTimeoutBonus,
+          team1Overrides: userIsSimTeam1 ? userOverrides : aiOverrides,
+          team2Overrides: userIsSimTeam1 ? aiOverrides : userOverrides,
+          team1Plan: userIsSimTeam1 ? userPlanMods : aiPlanMods,
+          team2Plan: userIsSimTeam1 ? aiPlanMods : userPlanMods,
         });
       } catch (err) {
         console.error("[simulateMapHalf2] engine error:", err);
@@ -1203,8 +1311,8 @@ export const matchRouter = router({
         where: { matchId: match.id },
         select: { bootcampEnabled: true, bootcampPaid: true },
       });
+      const BOOTCAMP_COST = 80_000;
       if (plan?.bootcampEnabled && !plan.bootcampPaid) {
-        const BOOTCAMP_COST = 80_000;
         await ctx.prisma.$transaction([
           ctx.prisma.team.update({
             where: { id: userTeam.id },
@@ -1215,6 +1323,32 @@ export const matchRouter = router({
             data: { bootcampPaid: true },
           }),
         ]);
+      }
+
+      // AI bootcamp cost — symmetric: if the AI rolled "bootcamp" for this match,
+      // it also pays. Idempotent because finalizeMatch only runs once per match
+      // (isPlayed check above blocks re-entry).
+      const aiTeamId = match.team1Id === userTeam.id ? match.team2Id : match.team1Id;
+      const aiTeamForPlan = await ctx.prisma.team.findUnique({
+        where: { id: aiTeamId },
+        select: { budget: true, players: { where: { isActive: true }, select: { id: true, acs: true } } },
+      });
+      const userPlayers = await ctx.prisma.player.findMany({
+        where: { teamId: userTeam.id, isActive: true },
+        select: { id: true, acs: true },
+      });
+      if (aiTeamForPlan) {
+        const aiRoll = generateAIPlan(
+          match.id,
+          { players: aiTeamForPlan.players, budget: aiTeamForPlan.budget },
+          userPlayers,
+        );
+        if (aiRoll.bootcampUsed) {
+          await ctx.prisma.team.update({
+            where: { id: aiTeamId },
+            data: { budget: { decrement: BOOTCAMP_COST } },
+          });
+        }
       }
 
       // 2. Update team wins/losses
@@ -1498,6 +1632,7 @@ export const matchRouter = router({
             adaptationRating: true,
             wins: true,
             losses: true,
+            budget: true,
           },
         }),
         ctx.prisma.staff.findMany({
@@ -1591,6 +1726,49 @@ export const matchRouter = router({
             }
           : null;
 
+      // AI plan intel — what THIS opponent will probably do, tier-gated.
+      // Junior+ : tempo + bootcamp flag
+      // Senior+ : + anti-star target id (if any)
+      // Elite   : + playstyle override + forced site
+      let aiPlanIntel: {
+        tempo: "RUSH" | "DEFAULT" | "SLOW" | null;
+        bootcamp: boolean;
+        antiStarTargetId: string | null;
+        playstyleOverride: string | null;
+        forcedSite: string | null;
+      } | null = null;
+      if (tier >= 1) {
+        // Fetch full opponent roster (already top-level via opponent) for ACS.
+        const oppRoster = await ctx.prisma.player.findMany({
+          where: { teamId: opponentId, isActive: true, isReserve: false, isRetired: false },
+          select: { id: true, acs: true },
+        });
+        const userRoster = await ctx.prisma.player.findMany({
+          where: { teamId: userTeam.id, isActive: true, isReserve: false, isRetired: false },
+          select: { id: true, acs: true },
+        });
+        const aiPlan = generateAIPlan(
+          input.matchId,
+          { players: oppRoster, budget: opponent.budget },
+          userRoster,
+        );
+        const tempo: "RUSH" | "DEFAULT" | "SLOW" =
+          aiPlan.planMods.tempoMod === 0.75
+            ? "RUSH"
+            : aiPlan.planMods.tempoMod === 1.25
+            ? "SLOW"
+            : "DEFAULT";
+        const playstyleOv = aiPlan.overrides.find((o) => o.kind === "playstyle");
+        const siteOv = aiPlan.overrides.find((o) => o.kind === "site");
+        aiPlanIntel = {
+          tempo: tier >= 1 ? tempo : null,
+          bootcamp: tier >= 1 ? aiPlan.bootcampUsed : false,
+          antiStarTargetId: tier >= 2 ? aiPlan.planMods.antiStarTargetId ?? null : null,
+          playstyleOverride: tier >= 3 ? playstyleOv?.playstyle ?? null : null,
+          forcedSite: tier >= 3 ? siteOv?.forcedSite ?? null : null,
+        };
+      }
+
       return {
         opponent: {
           id: opponent.id,
@@ -1605,6 +1783,7 @@ export const matchRouter = router({
         dominantMaps,
         keyPlayer,
         strategicProfile,
+        aiPlanIntel,
       };
     }),
 
