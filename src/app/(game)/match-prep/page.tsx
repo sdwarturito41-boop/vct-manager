@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { trpc } from "@/lib/trpc-client";
 
@@ -167,11 +168,24 @@ function PrepBoard({ nextMatch }: { nextMatch: NextMatchData }) {
         </div>
       </div>
 
-      {/* Three-column prep board */}
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {/* Top row — intel + roster */}
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <IntelPanel intel={intel} opponentName={theirTeam.name} />
         <RosterPanel team={userTeam} />
-        <GamePlanPanel format={match.format} />
+      </div>
+
+      {/* Plan de jeu — full configurable form */}
+      <div className="mt-4">
+        <MatchPlanEditor
+          matchId={nextMatch.id}
+          format={match.format}
+          myPlayers={(userTeam?.players ?? []).filter((p) => p.isActive && !p.isReserve)}
+          oppPlayers={
+            (isUserTeam1
+              ? (match as { team2: { players?: { id: string; ign: string; role: string }[] } }).team2.players
+              : (match as { team1: { players?: { id: string; ign: string; role: string }[] } }).team1.players) ?? []
+          }
+        />
       </div>
     </Shell>
   );
@@ -414,38 +428,432 @@ function RosterPanel({ team }: { team: { id: string; players: RosterPlayer[] } |
   );
 }
 
-// ── Game plan panel ──
+// ── Match Plan editor (full configurable form) ──
 
-function GamePlanPanel({ format }: { format: string }) {
-  const steps = [
-    "Veto des maps",
-    "Choix des agents",
-    "Side picks (atk/def)",
-    "Timeout tactique",
-  ];
+type Playstyle = "Aggressive" | "Tactical" | "Defensive";
+type SitePref = "A" | "B" | "C" | "VARIED";
+type Tempo = "RUSH" | "DEFAULT" | "SLOW";
+type DefenseStyle = "AGGRESSIVE" | "HOLD" | "REACTIVE";
+type PlayerRole = "entry" | "lurk" | "support" | "awper" | "safe";
+
+interface PlanState {
+  playstyle: Playstyle | null;
+  sitePref: SitePref | null;
+  tempo: Tempo | null;
+  defenseStyle: DefenseStyle | null;
+  antiStarPlayerId: string | null;
+  antiStarAssignedPlayerId: string | null;
+  bootcampEnabled: boolean;
+  playerRoles: Record<string, string> | null;
+}
+
+interface PlanOpponent {
+  id: string;
+  ign: string;
+  role: string;
+  acs?: number;
+}
+
+function MatchPlanEditor({
+  matchId,
+  format,
+  myPlayers,
+  oppPlayers,
+}: {
+  matchId: string;
+  format: string;
+  myPlayers: Array<{ id: string; ign: string; role: string }>;
+  oppPlayers: PlanOpponent[];
+}) {
+  const planQ = trpc.match.getPlan.useQuery({ matchId });
+  const saveMut = trpc.match.savePlan.useMutation();
+
+  const [plan, setPlan] = useState<PlanState | null>(null);
+  const initializedRef = useRef(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Seed local state from server once.
+  useEffect(() => {
+    if (initializedRef.current || !planQ.data) return;
+    initializedRef.current = true;
+    const d = planQ.data as unknown as Partial<PlanState>;
+    setPlan({
+      playstyle: (d.playstyle as Playstyle | null) ?? null,
+      sitePref: (d.sitePref as SitePref | null) ?? null,
+      tempo: (d.tempo as Tempo | null) ?? null,
+      defenseStyle: (d.defenseStyle as DefenseStyle | null) ?? null,
+      antiStarPlayerId: d.antiStarPlayerId ?? null,
+      antiStarAssignedPlayerId: d.antiStarAssignedPlayerId ?? null,
+      bootcampEnabled: d.bootcampEnabled ?? false,
+      playerRoles: (d.playerRoles as Record<string, string> | null) ?? null,
+    });
+  }, [planQ.data]);
+
+  // Debounced auto-save.
+  function updatePlan(patch: Partial<PlanState>) {
+    setPlan((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        saveMut.mutate({ matchId, ...next });
+      }, 400);
+      return next;
+    });
+  }
+
+  if (!plan) {
+    return (
+      <Panel title="Plan de jeu" accent="var(--val-green)">
+        <div className="h-40 animate-pulse rounded bg-[var(--val-bg)]" />
+      </Panel>
+    );
+  }
+
   return (
     <Panel title="Plan de jeu" accent="var(--val-green)">
-      <div className="mb-2 text-[10px] uppercase tracking-[0.1em] text-[var(--val-white)]/50">
-        Format · {format}
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-[0.15em] text-[var(--val-white)]/50">
+          Format · {format}
+        </span>
+        <span
+          className="text-[10px] font-bold uppercase tracking-[0.15em]"
+          style={{
+            color: saveMut.isPending
+              ? "var(--val-gold)"
+              : saveMut.isSuccess
+              ? "var(--val-green)"
+              : "rgba(236,232,225,0.3)",
+          }}
+        >
+          {saveMut.isPending ? "Saving…" : saveMut.isSuccess ? "Saved" : "Auto-save"}
+        </span>
       </div>
-      <div className="space-y-1.5">
-        {steps.map((s, i) => (
-          <div
-            key={s}
-            className="flex items-center gap-2 rounded-sm border border-[var(--val-gray)] bg-[var(--val-bg)] px-3 py-2"
-          >
-            <span className="text-[10px] font-mono text-[var(--val-white)]/40">
-              {String(i + 1).padStart(2, "0")}
-            </span>
-            <span className="flex-1 text-sm text-[var(--val-white)]">{s}</span>
-            <span
-              className="h-1.5 w-1.5 rounded-full"
-              style={{ background: "var(--val-green)" }}
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {/* Stratégie offensive */}
+        <Section title="Stratégie offensive">
+          <FieldRow label="Site prioritaire">
+            <SegmentGroup
+              value={plan.sitePref}
+              options={[
+                { id: "A", label: "A" },
+                { id: "B", label: "B" },
+                { id: "C", label: "C" },
+                { id: "VARIED", label: "Varié" },
+              ]}
+              onChange={(v) => updatePlan({ sitePref: v as SitePref | null })}
             />
+          </FieldRow>
+          {plan.sitePref && plan.sitePref !== "VARIED" && (
+            <div className="-mt-1 mb-2 ml-32 text-[10px] italic text-[var(--val-red)]/70">
+              ⚠️ Plus tu insistes sur ce site, plus la défense te lit (+0.02 → +0.07 par round consécutif).
+            </div>
+          )}
+          <FieldRow label="Tempo">
+            <SegmentGroup
+              value={plan.tempo}
+              options={[
+                { id: "RUSH", label: "Rush" },
+                { id: "DEFAULT", label: "Default" },
+                { id: "SLOW", label: "Lent" },
+              ]}
+              onChange={(v) => updatePlan({ tempo: v as Tempo | null })}
+            />
+          </FieldRow>
+          <div className="-mt-1 ml-32 text-[10px] italic text-[var(--val-white)]/45">
+            Rush : +entry, -coordination utility · Lent : +utility, -entry
           </div>
-        ))}
+        </Section>
+
+        {/* Stratégie défensive */}
+        <Section title="Stratégie défensive">
+          <FieldRow label="Style">
+            <SegmentGroup
+              value={plan.defenseStyle}
+              options={[
+                { id: "AGGRESSIVE", label: "Agressif" },
+                { id: "HOLD", label: "Hold angles" },
+                { id: "REACTIVE", label: "Réactif" },
+              ]}
+              onChange={(v) => updatePlan({ defenseStyle: v as DefenseStyle | null })}
+            />
+          </FieldRow>
+          <FieldRow label="Playstyle global">
+            <SegmentGroup
+              value={plan.playstyle}
+              options={[
+                { id: "Aggressive", label: "Aggressive" },
+                { id: "Tactical", label: "Tactical" },
+                { id: "Defensive", label: "Defensive" },
+              ]}
+              onChange={(v) => updatePlan({ playstyle: v as Playstyle | null })}
+            />
+          </FieldRow>
+        </Section>
       </div>
+
+      {/* Consignes joueurs */}
+      <Section title="Consignes joueurs">
+        <div className="space-y-1.5">
+          {myPlayers.map((p) => {
+            const currentRole = plan.playerRoles?.[p.id] ?? null;
+            return (
+              <div
+                key={p.id}
+                className="flex items-center gap-2 rounded-sm border border-[var(--val-gray)] bg-[var(--val-bg)] px-3 py-1.5"
+              >
+                <span className="w-28 truncate text-sm font-bold text-[var(--val-white)]">
+                  {p.ign}
+                </span>
+                <span className="w-20 text-[10px] uppercase tracking-[0.1em] text-[var(--val-white)]/40">
+                  {p.role}
+                </span>
+                <div className="flex-1">
+                  <RoleSegmentGroup
+                    value={currentRole as PlayerRole | null}
+                    onChange={(role) => {
+                      const next = { ...(plan.playerRoles ?? {}) };
+                      if (!role) delete next[p.id];
+                      else next[p.id] = role;
+                      updatePlan({
+                        playerRoles: Object.keys(next).length === 0 ? null : next,
+                      });
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+
+      {/* Anti-star */}
+      <Section title="Anti-star">
+        <div className="text-[11px] text-[var(--val-white)]/55 mb-2">
+          Double-team un joueur adverse — <span style={{ color: "var(--val-green)" }}>-0.06 sur ses duels</span>, mais{" "}
+          <span style={{ color: "var(--val-red)" }}>-0.06 sur le joueur que tu sacrifies</span> (attention divisée).
+        </div>
+
+        {/* Target picker (opponent) */}
+        <div className="mb-1 text-[10px] uppercase tracking-[0.15em] text-[var(--val-white)]/40">
+          Cible adverse
+        </div>
+        <div className="grid grid-cols-5 gap-1.5">
+          {oppPlayers.slice(0, 5).map((p) => {
+            const isSel = plan.antiStarPlayerId === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  // Toggling target off also clears the assigned sacrifice.
+                  if (isSel) {
+                    updatePlan({ antiStarPlayerId: null, antiStarAssignedPlayerId: null });
+                  } else {
+                    updatePlan({ antiStarPlayerId: p.id });
+                  }
+                }}
+                className="rounded-sm border px-2 py-2 text-center transition-all hover:scale-[1.03]"
+                style={{
+                  background: isSel ? "rgba(255,70,85,0.1)" : "var(--val-bg)",
+                  borderColor: isSel ? "rgba(255,70,85,0.4)" : "var(--val-gray)",
+                }}
+              >
+                <div
+                  className="truncate text-xs font-black uppercase"
+                  style={{ color: isSel ? "var(--val-red)" : "var(--val-white)" }}
+                >
+                  {p.ign}
+                </div>
+                <div className="text-[9px] uppercase tracking-[0.1em] text-[var(--val-white)]/40">
+                  {p.role}
+                </div>
+                {p.acs !== undefined && (
+                  <div className="mt-0.5 text-[10px] font-bold text-[var(--val-gold)]">
+                    {p.acs.toFixed(0)} ACS
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Sacrifice picker (my team) — only visible once a target is set */}
+        {plan.antiStarPlayerId && (
+          <>
+            <div className="mt-3 mb-1 text-[10px] uppercase tracking-[0.15em] text-[var(--val-white)]/40">
+              Qui sacrifies-tu pour ce double-team ?
+            </div>
+            <div className="grid grid-cols-5 gap-1.5">
+              {myPlayers.map((p) => {
+                const isSel = plan.antiStarAssignedPlayerId === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() =>
+                      updatePlan({ antiStarAssignedPlayerId: isSel ? null : p.id })
+                    }
+                    className="rounded-sm border px-2 py-2 text-center transition-all hover:scale-[1.03]"
+                    style={{
+                      background: isSel ? "rgba(198,155,58,0.1)" : "var(--val-bg)",
+                      borderColor: isSel ? "rgba(198,155,58,0.4)" : "var(--val-gray)",
+                    }}
+                  >
+                    <div
+                      className="truncate text-xs font-black uppercase"
+                      style={{ color: isSel ? "var(--val-gold)" : "var(--val-white)" }}
+                    >
+                      {p.ign}
+                    </div>
+                    <div className="text-[9px] uppercase tracking-[0.1em] text-[var(--val-white)]/40">
+                      {p.role}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {!plan.antiStarAssignedPlayerId && (
+              <div className="mt-2 text-[10px] italic text-[var(--val-red)]/70">
+                ⚠️ Le double-team n'est pas actif tant qu'aucun joueur n'est assigné.
+              </div>
+            )}
+          </>
+        )}
+      </Section>
+
+      {/* Bootcamp */}
+      <Section title="Préparation">
+        <button
+          type="button"
+          onClick={() => updatePlan({ bootcampEnabled: !plan.bootcampEnabled })}
+          className="flex w-full items-center gap-3 rounded-sm border px-3 py-2.5 text-left transition-all"
+          style={{
+            background: plan.bootcampEnabled ? "rgba(74,230,138,0.08)" : "var(--val-bg)",
+            borderColor: plan.bootcampEnabled ? "rgba(74,230,138,0.3)" : "var(--val-gray)",
+          }}
+        >
+          <span
+            className="flex h-5 w-5 items-center justify-center rounded-sm border-2"
+            style={{
+              borderColor: plan.bootcampEnabled ? "var(--val-green)" : "rgba(236,232,225,0.3)",
+              background: plan.bootcampEnabled ? "var(--val-green)" : "transparent",
+            }}
+          >
+            {plan.bootcampEnabled && (
+              <span className="text-[10px] font-black" style={{ color: "var(--val-bg)" }}>
+                ✓
+              </span>
+            )}
+          </span>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-[var(--val-white)]">Bootcamp activé</span>
+              <span className="rounded-sm px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.1em]" style={{ background: "rgba(255,70,85,0.12)", color: "var(--val-red)" }}>
+                -$80K
+              </span>
+            </div>
+            <div className="text-[10px] text-[var(--val-white)]/50">
+              +10 mapPrep / coordination utility — débité du budget au match.
+            </div>
+          </div>
+        </button>
+      </Section>
     </Panel>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-4 first:mt-0">
+      <div className="mb-2 text-[10px] font-black uppercase tracking-[0.2em] text-[var(--val-white)]/40">
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="mb-2 flex items-center gap-3">
+      <span className="w-32 text-[10px] uppercase tracking-[0.15em] text-[var(--val-white)]/50">
+        {label}
+      </span>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+}
+
+function SegmentGroup({
+  value,
+  options,
+  onChange,
+}: {
+  value: string | null;
+  options: Array<{ id: string; label: string }>;
+  onChange: (v: string | null) => void;
+}) {
+  return (
+    <div className="flex gap-1">
+      {options.map((opt) => {
+        const isSel = value === opt.id;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => onChange(isSel ? null : opt.id)}
+            className="flex-1 rounded-sm border px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] transition-all"
+            style={{
+              background: isSel ? "rgba(198,155,58,0.1)" : "var(--val-bg)",
+              borderColor: isSel ? "rgba(198,155,58,0.4)" : "var(--val-gray)",
+              color: isSel ? "var(--val-gold)" : "rgba(236,232,225,0.6)",
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function RoleSegmentGroup({
+  value,
+  onChange,
+}: {
+  value: PlayerRole | null;
+  onChange: (v: PlayerRole | null) => void;
+}) {
+  const roles: { id: PlayerRole; label: string }[] = [
+    { id: "entry", label: "Entry" },
+    { id: "lurk", label: "Lurk" },
+    { id: "support", label: "Support" },
+    { id: "awper", label: "AWP" },
+    { id: "safe", label: "Safe" },
+  ];
+  return (
+    <div className="flex gap-1">
+      {roles.map((r) => {
+        const isSel = value === r.id;
+        return (
+          <button
+            key={r.id}
+            type="button"
+            onClick={() => onChange(isSel ? null : r.id)}
+            className="flex-1 rounded-sm border px-1 py-1 text-[9px] font-bold uppercase tracking-[0.08em] transition-all"
+            style={{
+              background: isSel ? "rgba(198,155,58,0.1)" : "transparent",
+              borderColor: isSel ? "rgba(198,155,58,0.4)" : "var(--val-gray)",
+              color: isSel ? "var(--val-gold)" : "rgba(236,232,225,0.55)",
+            }}
+          >
+            {r.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

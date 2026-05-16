@@ -46,6 +46,7 @@ model Save {
   shortlists      Shortlist[]
   staff           Staff[]
   recruitmentRequirements RecruitmentRequirement[]
+  matchPlans      MatchPlan[]
 }
 
 model Team {
@@ -527,6 +528,33 @@ model Match {
   @@index([saveId])
   @@index([saveId, stageId])
   @@index([saveId, isPlayed])
+}
+
+// User-authored match preparation plan — applied at sim time. One per match.
+model MatchPlan {
+  id              String   @id @default(cuid())
+  saveId          String
+  save            Save     @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  matchId         String   @unique
+  // Team-level levers
+  playstyle       String?  // "Aggressive" | "Tactical" | "Defensive" | null (= team default)
+  sitePref        String?  // "A" | "B" | "C" | "VARIED" | null — starting bias
+  tempo           String?  // "RUSH" | "DEFAULT" | "SLOW"
+  defenseStyle    String?  // "AGGRESSIVE" | "HOLD" | "REACTIVE"
+  // Anti-star: opponent player gets a small duel penalty all map ("we double-team")
+  antiStarPlayerId String?
+  // Anti-star COST: which of MY players is sacrificed to focus the target.
+  // That player gets -0.06 on all their duels (their attention is elsewhere).
+  antiStarAssignedPlayerId String?
+  // Bootcamp before the match: +mapPrep / +coach utility for this match only
+  bootcampEnabled Boolean  @default(false)
+  // Idempotency: $80K already deducted from team budget for this match's bootcamp?
+  bootcampPaid    Boolean  @default(false)
+  // Per-player tactical role: { playerId: "entry"|"lurk"|"support"|"awper"|"safe" }
+  playerRoles     Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([saveId])
 }
 
 model Season {

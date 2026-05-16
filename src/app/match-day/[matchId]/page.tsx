@@ -383,6 +383,17 @@ export default function MatchDayPage() {
   const [tacticalOverrides, setTacticalOverrides] = useState<TacticalOverrideInput[]>([]);
   const [pendingPlaystyle, setPendingPlaystyle] = useState<"Aggressive" | "Tactical" | "Defensive" | null>(null);
 
+  // ── AI opponent TO state — detected from streak heuristics during playback ──
+  // When fired: pause + reaction modal. User can give override instructions to
+  // their players WITHOUT consuming their own TO slot ("you can talk during
+  // their pause too"). Once per AI half.
+  const [aiTOEvent, setAiTOEvent] = useState<{
+    half: 1 | 2;
+    type: "tactical" | "motivational" | "medical";
+  } | null>(null);
+  const aiH1TOUsedRef = useRef(false);
+  const aiH2TOUsedRef = useRef(false);
+
   // ── Derived data ──
   const format = vetoState && !vetoState.done ? vetoState.format : "BO3";
   const vetoSequence = format === "BO5" ? BO5_VETO : BO3_VETO;
@@ -556,6 +567,56 @@ export default function MatchDayPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, pendingSideForMap?.mapName]);
+
+  // ── AI opponent TO detection during LIVE playback ──
+  // Fires at most once per half. Triggers when AI is on a 3+ round streak
+  // (win or loss). On fire: pauses the playback via the AIReactionModal —
+  // the user can give override instructions to their team without consuming
+  // their own TO slot.
+  useEffect(() => {
+    if (phase !== "LIVE") return;
+    if (aiTOEvent || replaying || toAnimating || toModalOpen) return;
+    if (currentLiveRound < 3 || liveRounds.length === 0) return;
+
+    const half: 1 | 2 = currentLiveRound <= 12 ? 1 : 2;
+    const alreadyUsed = half === 1 ? aiH1TOUsedRef.current : aiH2TOUsedRef.current;
+    if (alreadyUsed) return;
+
+    // AI is the OPPOSITE of the user's sim-space side. winner=1 means simTeam1
+    // won; the user is simTeam1 iff isTeam1.
+    const aiWinnerCode: 1 | 2 = isTeam1 ? 2 : 1;
+    const halfStart = half === 1 ? 1 : 13;
+    const recent = liveRounds.filter(
+      (r) => r.round >= halfStart && r.round <= currentLiveRound,
+    );
+    if (recent.length < 3) return;
+    const last3 = recent.slice(-3);
+    const aiWonAll = last3.every((r) => r.winner === aiWinnerCode);
+    const aiLostAll = last3.every((r) => r.winner !== aiWinnerCode);
+    if (!aiWonAll && !aiLostAll) return;
+
+    // Probability roll — AI calls TO more often when trailing (~60%) than when
+    // on a winstreak (~35%). Deterministic-ish: re-running the same round
+    // wouldn't re-fire because we set the ref BEFORE the modal closes.
+    const prob = aiLostAll ? 0.6 : 0.35;
+    if (Math.random() >= prob) return;
+
+    // Auto-pick AI's TO type: weighted toward medical when losing.
+    const roll = Math.random();
+    const aiType: "tactical" | "motivational" | "medical" = aiLostAll
+      ? roll < 0.4
+        ? "medical"
+        : roll < 0.75
+        ? "motivational"
+        : "tactical"
+      : roll < 0.5
+      ? "tactical"
+      : "motivational";
+
+    if (half === 1) aiH1TOUsedRef.current = true;
+    else aiH2TOUsedRef.current = true;
+    setAiTOEvent({ half, type: aiType });
+  }, [currentLiveRound, phase, liveRounds, aiTOEvent, replaying, toAnimating, toModalOpen, isTeam1]);
 
   // ── AI auto-veto ──
   useEffect(() => {
@@ -890,6 +951,98 @@ export default function MatchDayPage() {
     }
   }
 
+  // ── AI TO reaction: user gives instructions during opponent's pause ──
+  // Doesn't consume the user's own TO slot. Same replay path as mid-round TO,
+  // but only overrides (no bonus). Skip → just resume playback unchanged.
+  async function handleAIReactionPick(
+    action:
+      | { kind: "skip" }
+      | { kind: "site"; site: string }
+      | { kind: "instruction"; playerId: string; instruction: "safe" | "aggressive" },
+  ) {
+    if (!aiTOEvent) return;
+    const currentMap = mapLineup[currentMapIndex];
+    if (!currentMap) return;
+    setAiTOEvent(null);
+    if (action.kind === "skip") return;
+
+    let appliedOverrides = tacticalOverrides;
+    if (action.kind === "site") {
+      appliedOverrides = [
+        ...tacticalOverrides.filter((ov) => ov.kind !== "site"),
+        { kind: "site", forcedSite: action.site },
+      ];
+      setTacticalOverrides(appliedOverrides);
+    } else {
+      appliedOverrides = [
+        ...tacticalOverrides.filter(
+          (ov) => !(ov.kind === "instruction" && ov.playerId === action.playerId),
+        ),
+        { kind: "instruction", playerId: action.playerId, instruction: action.instruction },
+      ];
+      setTacticalOverrides(appliedOverrides);
+    }
+
+    setReplaying(true);
+    const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
+      playerId: p.id,
+      agentName: agentPicks[p.id]!,
+    }));
+    try {
+      const h1 = await simulateMapHalf1Mut.mutateAsync({
+        matchId,
+        mapName: currentMap.mapName,
+        side: currentMap.playerSide,
+        playerAgents: playerAgentArr,
+        timeoutType: timeoutBonus?.type,
+        timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
+        midRoundTOType: midRoundH1TO?.type,
+        midRoundTOPlayerId: midRoundH1TO?.resetVariancePlayerId,
+        overrides: appliedOverrides,
+      });
+      halftimeStateRef.current = h1.halftimeState;
+      const h2 = await simulateMapHalf2Mut.mutateAsync({
+        matchId,
+        mapName: currentMap.mapName,
+        side: currentMap.playerSide,
+        playerAgents: playerAgentArr,
+        halftimeState: h1.halftimeState,
+        halftimeTimeoutType: halftimeBonus?.type,
+        halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
+        midRoundTOType: midRoundH2TO?.type,
+        midRoundTOPlayerId: midRoundH2TO?.resetVariancePlayerId,
+        overrides: appliedOverrides,
+      });
+      const newMapResult: MapResultData = {
+        map: h2.map,
+        score1: h2.score1,
+        score2: h2.score2,
+        playerStats: h2.playerStats,
+        highlights: h2.highlights,
+      };
+      setMapResults((prev) =>
+        prev.map((r, i) => (i === currentMapIndex ? newMapResult : r)),
+      );
+      const team1Won = h2.score1 > h2.score2;
+      const oldResult = mapResults[currentMapIndex];
+      setSeriesScore((prev) => {
+        const oldT1Won = oldResult ? oldResult.score1 > oldResult.score2 : false;
+        return {
+          team1: prev.team1 - (oldT1Won ? 1 : 0) + (team1Won ? 1 : 0),
+          team2: prev.team2 - (oldT1Won ? 0 : 1) + (team1Won ? 0 : 1),
+        };
+      });
+      const rounds = (h2 as { rounds?: RoundEvent[] }).rounds ?? [];
+      setLiveRounds(rounds);
+      setDisplayedRoundCount(0);
+      setLiveOverlay(null);
+    } catch (err) {
+      console.error("[AI TO reaction] replay failed:", err);
+    } finally {
+      setReplaying(false);
+    }
+  }
+
   // ── Halftime → resume H2 with the user's mid-map TO choice ──
   async function handleHalftimeContinue() {
     const currentMap = mapLineup[currentMapIndex];
@@ -972,6 +1125,10 @@ export default function MatchDayPage() {
       setMidRoundH1TO(null);
       setMidRoundH2TO(null);
       setCurrentLiveRound(1);
+      // AI TO trackers reset per-map (1 per half, both halves fresh next map).
+      aiH1TOUsedRef.current = false;
+      aiH2TOUsedRef.current = false;
+      setAiTOEvent(null);
       // Tactical overrides reset per-map. If the user picked a playstyle for
       // the next map during TIMEOUT, seed it into the next map's overrides.
       const carry: TacticalOverrideInput[] = pendingPlaystyle
@@ -2209,6 +2366,16 @@ export default function MatchDayPage() {
               />
             )}
             {toAnimating && <MidRoundTOOverlay type={toAnimating} />}
+            {aiTOEvent && (
+              <AIReactionModal
+                aiType={aiTOEvent.type}
+                round={currentLiveRound}
+                mapName={currentMap.mapName}
+                players={activePlayers}
+                opponentName={enemyTeamName}
+                onPick={(action) => handleAIReactionPick(action)}
+              />
+            )}
             {replaying && (
               <div
                 className="fixed inset-0 z-50 flex items-center justify-center"
@@ -2713,7 +2880,7 @@ export default function MatchDayPage() {
             id: "tactical",
             title: "Pause tactique",
             description: "Briefing tactique pour la 2e mi-temps",
-            effect: "+2% adaptation pour H2",
+            effect: "+2% adaptation · -1% mental",
             icon: <span className="text-xl">🧠</span>,
             bonus: { type: "tactical", counterBonusDelta: 0.02 },
           },
@@ -2721,7 +2888,7 @@ export default function MatchDayPage() {
             id: "motivational",
             title: "Discours motivation",
             description: "Le coach remonte le moral du roster",
-            effect: "+10% résistance au tilt H2",
+            effect: "+10% mental · -1% adaptation",
             icon: <span className="text-xl">🔥</span>,
             bonus: { type: "motivational", teamplayDelta: 0.1 },
           },
@@ -2729,7 +2896,7 @@ export default function MatchDayPage() {
             id: "medical",
             title: "Pause médicale",
             description: "Reset hotness du joueur le moins en forme",
-            effect: "Reset variance joueur",
+            effect: "Reset cible · -2% hotness des 4 autres",
             icon: <span className="text-xl">⚕️</span>,
             bonus: {
               type: "medical",
@@ -3352,21 +3519,21 @@ function MidRoundTOModal({
                 icon="🧠"
                 title="Pause tactique"
                 description="Reset des reads & lectures adverses"
-                effect="+2% adaptation"
+                effect="+2% adapt · -1% mental"
                 onClick={() => onPick({ kind: "bonus", type: "tactical" })}
               />
               <TOActionCard
                 icon="🔥"
                 title="Coup de boost"
                 description="Le coach remonte les troupes"
-                effect="+10% tilt resistance"
+                effect="+10% mental · -1% adapt"
                 onClick={() => onPick({ kind: "bonus", type: "motivational" })}
               />
               <TOActionCard
                 icon="⚕️"
                 title="Pause médicale"
                 description="Reset hotness du joueur cold"
-                effect="Reset variance"
+                effect="Reset cible · -2% hotness 4 autres"
                 onClick={() => onPick({ kind: "bonus", type: "medical" })}
               />
             </div>
@@ -3659,6 +3826,179 @@ function SubScreenInstruction({
         ← Retour
       </button>
     </>
+  );
+}
+
+// ── AI Reaction Modal — opponent called a TO, user can talk to players ──
+
+function AIReactionModal({
+  aiType,
+  round,
+  mapName,
+  players,
+  opponentName,
+  onPick,
+}: {
+  aiType: "tactical" | "motivational" | "medical";
+  round: number;
+  mapName: string;
+  players: Array<{ id: string; ign: string; role: string }>;
+  opponentName: string;
+  onPick: (
+    action:
+      | { kind: "skip" }
+      | { kind: "site"; site: string }
+      | { kind: "instruction"; playerId: string; instruction: "safe" | "aggressive" },
+  ) => void;
+}) {
+  type Sub = "root" | "site" | "instruction";
+  const [screen, setScreen] = useState<Sub>("root");
+  const sites = getMapSites(mapName);
+  const aiLabel =
+    aiType === "tactical"
+      ? "Pause tactique"
+      : aiType === "motivational"
+      ? "Discours motivation"
+      : "Pause médicale";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-6"
+      style={{ background: "rgba(10,10,15,0.95)" }}
+    >
+      <div
+        className="w-full max-w-3xl rounded-lg p-6"
+        style={{
+          background: "rgba(22,22,30,0.98)",
+          border: "1px solid rgba(255,70,85,0.2)",
+          boxShadow: "0 0 60px rgba(255,70,85,0.15)",
+        }}
+      >
+        {/* Banner: AI called TO */}
+        <div className="text-center">
+          <div
+            className="text-[10px] font-bold uppercase tracking-[0.35em]"
+            style={{ color: "rgba(255,70,85,0.7)" }}
+          >
+            Round {round} · Mi-temps {round <= 12 ? "1" : "2"}
+          </div>
+          <div
+            className="mt-2 text-3xl font-black uppercase tracking-[0.15em]"
+            style={{ color: "#FF4655", textShadow: "0 0 25px rgba(255,70,85,0.4)" }}
+          >
+            {opponentName} appelle un TO
+          </div>
+          <div
+            className="mt-1 text-xs font-bold uppercase tracking-[0.25em]"
+            style={{ color: "#C69B3A" }}
+          >
+            {aiLabel}
+          </div>
+        </div>
+
+        <div
+          className="mt-6 rounded-md p-3 text-center text-xs"
+          style={{
+            background: "rgba(198,155,58,0.05)",
+            border: "1px solid rgba(198,155,58,0.15)",
+            color: "rgba(236,232,225,0.7)",
+          }}
+        >
+          Pendant leur pause, tu peux aussi parler à tes joueurs. <br />
+          <span style={{ color: "rgba(236,232,225,0.45)" }}>
+            Ça ne consomme PAS ton timeout de la mi-temps.
+          </span>
+        </div>
+
+        {screen === "root" && (
+          <>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setScreen("site")}
+                className="rounded-md p-4 text-left transition-all hover:scale-[1.02]"
+                style={{
+                  background: "rgba(18,18,26,0.8)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🎯</span>
+                  <div
+                    className="text-xs font-black uppercase tracking-[0.12em]"
+                    style={{ color: "#ECE8E1" }}
+                  >
+                    Forcer un site
+                  </div>
+                </div>
+                <div
+                  className="mt-1 text-[11px]"
+                  style={{ color: "rgba(236,232,225,0.55)" }}
+                >
+                  "On joue A / B / C maintenant"
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setScreen("instruction")}
+                className="rounded-md p-4 text-left transition-all hover:scale-[1.02]"
+                style={{
+                  background: "rgba(18,18,26,0.8)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">👤</span>
+                  <div
+                    className="text-xs font-black uppercase tracking-[0.12em]"
+                    style={{ color: "#ECE8E1" }}
+                  >
+                    Consigne joueur
+                  </div>
+                </div>
+                <div
+                  className="mt-1 text-[11px]"
+                  style={{ color: "rgba(236,232,225,0.55)" }}
+                >
+                  Demande à un joueur de jouer safe / aggro
+                </div>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onPick({ kind: "skip" })}
+              className="mt-3 w-full rounded-md py-3 text-xs font-bold uppercase tracking-[0.2em] transition-all"
+              style={{
+                background: "rgba(18,18,26,0.4)",
+                border: "1px solid rgba(255,255,255,0.04)",
+                color: "rgba(236,232,225,0.5)",
+              }}
+            >
+              Laisser les joueurs réfléchir
+            </button>
+          </>
+        )}
+
+        {screen === "site" && (
+          <SubScreenSite
+            sites={sites}
+            onPick={(site) => onPick({ kind: "site", site })}
+            onBack={() => setScreen("root")}
+          />
+        )}
+
+        {screen === "instruction" && (
+          <SubScreenInstruction
+            players={players}
+            onPick={(playerId, instruction) =>
+              onPick({ kind: "instruction", playerId, instruction })
+            }
+            onBack={() => setScreen("root")}
+          />
+        )}
+      </div>
+    </div>
   );
 }
 

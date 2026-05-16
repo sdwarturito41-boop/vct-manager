@@ -19,6 +19,27 @@ const tacticalOverrideSchema = z.object({
   playstyle: z.enum(["Aggressive", "Tactical", "Defensive"]).optional(),
 });
 
+/**
+ * Merge two override lists: live (user-triggered during match) takes priority,
+ * plan (set ahead of time on Match Prep) fills the gaps. Conflicts resolved by
+ * (kind, playerId/site) tuple — live wins.
+ */
+function mergeOverrides(
+  live: TacticalOverrideInput[],
+  plan: TacticalOverrideInput[] | undefined,
+): TacticalOverrideInput[] {
+  if (!plan || plan.length === 0) return live;
+  const out: TacticalOverrideInput[] = [...live];
+  for (const p of plan) {
+    const conflict = live.find((l) =>
+      l.kind === p.kind &&
+      (l.kind !== "instruction" || l.playerId === p.playerId),
+    );
+    if (!conflict) out.push(p);
+  }
+  return out;
+}
+
 /** Sum two TimeoutBonus deltas. resetHotnessPlayerId takes the latter's id if any. */
 function combineTimeoutBonuses(
   a: TimeoutBonus | undefined,
@@ -160,6 +181,44 @@ async function buildMapSimSetup(
   // User is simTeam1 iff they picked attack (they always pick their own side).
   const userIsSimTeam1 = input.side === "attack";
 
+  // Load the user-authored MatchPlan, if any — derives overrides + plan mods.
+  const plan = await ctx.prisma.matchPlan.findUnique({
+    where: { matchId: input.matchId },
+  });
+  const planOverrides: TacticalOverrideInput[] = [];
+  let userPlanMods: import("@/server/simulation/engine").MatchPlanMods | undefined;
+  if (plan) {
+    if (plan.playstyle) {
+      planOverrides.push({
+        kind: "playstyle",
+        playstyle: plan.playstyle as "Aggressive" | "Tactical" | "Defensive",
+      });
+    }
+    // Site preference becomes a soft override — heavy starting bias toward one site.
+    if (plan.sitePref && plan.sitePref !== "VARIED") {
+      planOverrides.push({ kind: "site", forcedSite: plan.sitePref });
+    }
+    // Per-player roles → aggression overrides (entry/aggro → +25, lurk → 0, safe → -25).
+    const roles = (plan.playerRoles ?? null) as Record<string, string> | null;
+    if (roles) {
+      for (const [playerId, role] of Object.entries(roles)) {
+        if (role === "entry") {
+          planOverrides.push({ kind: "instruction", playerId, instruction: "aggressive" });
+        } else if (role === "safe" || role === "support") {
+          planOverrides.push({ kind: "instruction", playerId, instruction: "safe" });
+        }
+        // "lurk" / "awper" → no aggression delta for now
+      }
+    }
+    userPlanMods = {
+      tempoMod:
+        plan.tempo === "RUSH" ? 0.75 : plan.tempo === "SLOW" ? 1.25 : 1,
+      mapPrepBoost: plan.bootcampEnabled ? 10 : 0,
+      antiStarTargetId: plan.antiStarPlayerId,
+      antiStarAssignedPlayerId: plan.antiStarAssignedPlayerId,
+    };
+  }
+
   return {
     match,
     userTeam,
@@ -170,6 +229,8 @@ async function buildMapSimSetup(
     t2Agents,
     swapped,
     userIsSimTeam1,
+    planOverrides,
+    userPlanMods,
   };
 }
 
@@ -525,8 +586,24 @@ export const matchRouter = router({
       const match = await ctx.prisma.match.findUnique({
         where: { id: input.matchId },
         include: {
-          team1: true,
-          team2: true,
+          team1: {
+            include: {
+              players: {
+                where: { isActive: true, isReserve: false },
+                select: { id: true, ign: true, role: true, overall: true, acs: true, kd: true },
+                orderBy: { acs: "desc" },
+              },
+            },
+          },
+          team2: {
+            include: {
+              players: {
+                where: { isActive: true, isReserve: false },
+                select: { id: true, ign: true, role: true, overall: true, acs: true, kd: true },
+                orderBy: { acs: "desc" },
+              },
+            },
+          },
         },
       });
 
@@ -836,11 +913,14 @@ export const matchRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const ts = await buildMapSimSetup(ctx, input);
-      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1 } = ts;
+      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, planOverrides, userPlanMods } = ts;
       const preMap = timeoutTypeToBonus(input.timeoutType, input.timeoutPlayerId);
       const midRound = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
       const userTimeoutBonus = combineTimeoutBonuses(preMap, midRound);
-      const userOverrides = (input.overrides ?? []) as TacticalOverrideInput[];
+      const userOverrides = mergeOverrides(
+        (input.overrides ?? []) as TacticalOverrideInput[],
+        planOverrides,
+      );
 
       let result;
       try {
@@ -853,6 +933,8 @@ export const matchRouter = router({
           team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
           team1Overrides: userIsSimTeam1 ? userOverrides : undefined,
           team2Overrides: userIsSimTeam1 ? undefined : userOverrides,
+          team1Plan: userIsSimTeam1 ? userPlanMods : undefined,
+          team2Plan: userIsSimTeam1 ? undefined : userPlanMods,
         });
       } catch (err) {
         console.error("[simulateMapHalf1] engine error:", err);
@@ -910,11 +992,14 @@ export const matchRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const ts = await buildMapSimSetup(ctx, input);
-      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1 } = ts;
+      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, planOverrides, userPlanMods } = ts;
       const halftimeBonus = timeoutTypeToBonus(input.halftimeTimeoutType, input.halftimeTimeoutPlayerId);
       const midRoundBonus = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
       const userTimeoutBonus = combineTimeoutBonuses(halftimeBonus, midRoundBonus);
-      const userOverrides = (input.overrides ?? []) as TacticalOverrideInput[];
+      const userOverrides = mergeOverrides(
+        (input.overrides ?? []) as TacticalOverrideInput[],
+        planOverrides,
+      );
 
       let mapResult;
       try {
@@ -927,6 +1012,8 @@ export const matchRouter = router({
           team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
           team1Overrides: userIsSimTeam1 ? userOverrides : undefined,
           team2Overrides: userIsSimTeam1 ? undefined : userOverrides,
+          team1Plan: userIsSimTeam1 ? userPlanMods : undefined,
+          team2Plan: userIsSimTeam1 ? undefined : userPlanMods,
         });
       } catch (err) {
         console.error("[simulateMapHalf2] engine error:", err);
@@ -1109,6 +1196,26 @@ export const matchRouter = router({
           maps: input.maps.map((m) => ({ ...m })) as unknown as import("@/generated/prisma/client").Prisma.InputJsonValue,
         },
       });
+
+      // Bootcamp cost — deduct $80K from team budget if plan had bootcamp on
+      // and we haven't already paid. Idempotent via MatchPlan.bootcampPaid.
+      const plan = await ctx.prisma.matchPlan.findUnique({
+        where: { matchId: match.id },
+        select: { bootcampEnabled: true, bootcampPaid: true },
+      });
+      if (plan?.bootcampEnabled && !plan.bootcampPaid) {
+        const BOOTCAMP_COST = 80_000;
+        await ctx.prisma.$transaction([
+          ctx.prisma.team.update({
+            where: { id: userTeam.id },
+            data: { budget: { decrement: BOOTCAMP_COST } },
+          }),
+          ctx.prisma.matchPlan.update({
+            where: { matchId: match.id },
+            data: { bootcampPaid: true },
+          }),
+        ]);
+      }
 
       // 2. Update team wins/losses
       const loserId = input.winnerId === match.team1Id ? match.team2Id : match.team1Id;
@@ -1499,5 +1606,73 @@ export const matchRouter = router({
         keyPlayer,
         strategicProfile,
       };
+    }),
+
+  // ── Match Plan (user-authored prep, applied at sim time) ──
+
+  getPlan: saveProcedure
+    .input(z.object({ matchId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const plan = await ctx.prisma.matchPlan.findUnique({
+        where: { matchId: input.matchId },
+      });
+      // Default empty plan if none yet — UI binds against this.
+      return (
+        plan ?? {
+          matchId: input.matchId,
+          playstyle: null,
+          sitePref: null,
+          tempo: null,
+          defenseStyle: null,
+          antiStarPlayerId: null,
+          antiStarAssignedPlayerId: null,
+          bootcampEnabled: false,
+          bootcampPaid: false,
+          playerRoles: null as Record<string, string> | null,
+        }
+      );
+    }),
+
+  savePlan: saveProcedure
+    .input(
+      z.object({
+        matchId: z.string(),
+        playstyle: z.enum(["Aggressive", "Tactical", "Defensive"]).nullable().optional(),
+        sitePref: z.enum(["A", "B", "C", "VARIED"]).nullable().optional(),
+        tempo: z.enum(["RUSH", "DEFAULT", "SLOW"]).nullable().optional(),
+        defenseStyle: z.enum(["AGGRESSIVE", "HOLD", "REACTIVE"]).nullable().optional(),
+        antiStarPlayerId: z.string().nullable().optional(),
+        antiStarAssignedPlayerId: z.string().nullable().optional(),
+        bootcampEnabled: z.boolean().optional(),
+        playerRoles: z.record(z.string(), z.string()).nullable().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Sanity: the match must exist + belong to the user's save.
+      const match = await ctx.prisma.match.findUnique({
+        where: { id: input.matchId },
+        select: { saveId: true },
+      });
+      if (!match || match.saveId !== ctx.save.id) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Match not found." });
+      }
+      // Prisma needs the sentinel `Prisma.DbNull` to clear a nullable Json column.
+      const { Prisma: P } = await import("@/generated/prisma/client");
+      const data = {
+        playstyle: input.playstyle ?? null,
+        sitePref: input.sitePref ?? null,
+        tempo: input.tempo ?? null,
+        defenseStyle: input.defenseStyle ?? null,
+        antiStarPlayerId: input.antiStarPlayerId ?? null,
+        antiStarAssignedPlayerId: input.antiStarAssignedPlayerId ?? null,
+        bootcampEnabled: input.bootcampEnabled ?? false,
+        playerRoles: input.playerRoles ? input.playerRoles : P.DbNull,
+      };
+      await ctx.prisma.matchPlan.upsert({
+        where: { matchId: input.matchId },
+        create: { saveId: ctx.save.id, matchId: input.matchId, ...data },
+        update: data,
+      });
+      return { ok: true };
     }),
 });

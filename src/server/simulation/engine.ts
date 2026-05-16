@@ -174,6 +174,17 @@ export interface SimMapOptions {
    * playstyle override. Caller picks which team they apply to. */
   team1Overrides?: TacticalOverrideInput[];
   team2Overrides?: TacticalOverrideInput[];
+  /** Match-plan derived knobs (tempo, bootcamp, anti-star) per team. */
+  team1Plan?: MatchPlanMods;
+  team2Plan?: MatchPlanMods;
+}
+
+/** Plan knobs applied at team build time. Mirrors TeamPlanMods in duelEngine. */
+export interface MatchPlanMods {
+  tempoMod?: number;
+  mapPrepBoost?: number;
+  antiStarTargetId?: string | null;
+  antiStarAssignedPlayerId?: string | null;
 }
 
 /** Public-facing tactical override (what tRPC + UI manipulate). */
@@ -185,7 +196,9 @@ export interface TacticalOverrideInput {
   playstyle?: "Aggressive" | "Tactical" | "Defensive";
 }
 
-/** Effective per-map bonus deltas produced by a Tactical Timeout choice. */
+/** Effective per-map bonus deltas produced by a Tactical Timeout choice.
+ *  Every TO type also carries a COST (a negative delta on a different axis) —
+ *  the user trades one capacity for another, not pure upside. */
 export interface TimeoutBonus {
   /** Adds to coachAdaptation (mid-round adaptations stronger). 0-1 scale. */
   adaptationDelta?: number;
@@ -193,17 +206,25 @@ export interface TimeoutBonus {
   mentalDelta?: number;
   /** Reset hotness/momentum for one specific player (medical timeout). */
   resetHotnessPlayerId?: string;
+  /** Medical TO cost: multiply all OTHER players' priorHotness by (1 - this).
+   *  Models "the team's attention is on the cold player, others go slightly cold". */
+  otherPlayersHotnessDampen?: number;
 }
 
-/** Maps the user-facing timeout choice to the sim's delta knobs. */
+/** Maps the user-facing timeout choice to the sim's delta knobs.
+ *  Each TO has both a benefit AND a cost (no pure upside).  */
 export function timeoutTypeToBonus(
   type: "tactical" | "motivational" | "medical" | "skip" | undefined,
   resetHotnessPlayerId?: string,
 ): TimeoutBonus | undefined {
   if (!type || type === "skip") return undefined;
-  if (type === "tactical") return { adaptationDelta: 0.02 };
-  if (type === "motivational") return { mentalDelta: 0.10 };
-  if (type === "medical") return { resetHotnessPlayerId };
+  // Tactical: focusing on X-and-O drains emotional energy.
+  if (type === "tactical") return { adaptationDelta: 0.02, mentalDelta: -0.01 };
+  // Motivational: pumped up = less tactical clarity.
+  if (type === "motivational") return { mentalDelta: 0.10, adaptationDelta: -0.01 };
+  // Medical: the cold player gets reset, but the team's attention is on them
+  // — the other 4 lose a touch of hotness.
+  if (type === "medical") return { resetHotnessPlayerId, otherPlayersHotnessDampen: 0.02 };
   return undefined;
 }
 
@@ -845,9 +866,19 @@ export function simulateMap(
   // start the map at 1.0 (resets a cold streak from previous map).
   let priorHotness = options?.priorHotness;
   for (const b of [t1Bonus, t2Bonus]) {
-    if (b?.resetHotnessPlayerId && priorHotness) {
+    if (!b) continue;
+    // Reset target's hotness (medical TO: target starts at 1.0)
+    if (b.resetHotnessPlayerId && priorHotness) {
       priorHotness = { ...priorHotness };
       delete priorHotness[b.resetHotnessPlayerId];
+    }
+    // Cost: dampen the OTHER players' hotness by the configured strength.
+    if (b.otherPlayersHotnessDampen && b.otherPlayersHotnessDampen > 0 && priorHotness) {
+      priorHotness = { ...priorHotness };
+      for (const pid of Object.keys(priorHotness)) {
+        if (pid === b.resetHotnessPlayerId) continue;
+        priorHotness[pid] = priorHotness[pid] * (1 - b.otherPlayersHotnessDampen);
+      }
     }
   }
 
@@ -868,6 +899,9 @@ export function simulateMap(
     team2Pairs: options?.team2Pairs,
     team1Overrides: toRuntimeOverrides(options?.team1Overrides),
     team2Overrides: toRuntimeOverrides(options?.team2Overrides),
+    bothTeamsStreakDampener: computeStreakDampener(options),
+    team1Plan: options?.team1Plan,
+    team2Plan: options?.team2Plan,
   });
 
   const highlights = generateHighlights(mapName, team1.name, team2.name, result.score1, result.score2, result.playerStats);
@@ -916,9 +950,17 @@ function buildDuelOptionsForHalf(
 
   let priorHotness = options?.priorHotness;
   for (const b of [t1Bonus, t2Bonus]) {
-    if (b?.resetHotnessPlayerId && priorHotness) {
+    if (!b) continue;
+    if (b.resetHotnessPlayerId && priorHotness) {
       priorHotness = { ...priorHotness };
       delete priorHotness[b.resetHotnessPlayerId];
+    }
+    if (b.otherPlayersHotnessDampen && b.otherPlayersHotnessDampen > 0 && priorHotness) {
+      priorHotness = { ...priorHotness };
+      for (const pid of Object.keys(priorHotness)) {
+        if (pid === b.resetHotnessPlayerId) continue;
+        priorHotness[pid] = priorHotness[pid] * (1 - b.otherPlayersHotnessDampen);
+      }
     }
   }
 
@@ -939,7 +981,26 @@ function buildDuelOptionsForHalf(
     team2Pairs: options?.team2Pairs,
     team1Overrides: toRuntimeOverrides(options?.team1Overrides),
     team2Overrides: toRuntimeOverrides(options?.team2Overrides),
+    bothTeamsStreakDampener: computeStreakDampener(options),
+    team1Plan: options?.team1Plan,
+    team2Plan: options?.team2Plan,
   };
+}
+
+/**
+ * Derive the symmetric streak dampener: when EITHER side called a TO this
+ * half (TimeoutBonus or any tactical override on user side), both teams get
+ * a 50% reduction in streak-driven tilt for the rest of the sim. Models the
+ * "TO breaks the flow" effect — affects dominator and loser alike.
+ */
+function computeStreakDampener(
+  options: (SimMapOptions & { priorHotness?: Record<string, number> }) | undefined,
+): number | undefined {
+  const hasBonus = !!options?.team1TimeoutBonus || !!options?.team2TimeoutBonus;
+  const hasOverride =
+    (options?.team1Overrides?.some((o) => o.kind !== "playstyle") ?? false) ||
+    (options?.team2Overrides?.some((o) => o.kind !== "playstyle") ?? false);
+  return hasBonus || hasOverride ? 0.5 : undefined;
 }
 
 export interface MapHalf1Result {

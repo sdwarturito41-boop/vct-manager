@@ -173,6 +173,22 @@ interface TeamRuntime {
   /** Active tactical overrides (site / instruction / playstyle). The IGL
    * rolls each round to maintain or revert based on success. */
   overrides: TacticalOverrideRuntime[];
+  /** Multiplier applied to BOTH winStreak and lossStreak tilt effects. 0 = no
+   * effect, 1 = streaks fully neutralized. Set when a TO is in flight to model
+   * the "TO breaks the flow" narrative — affects both teams symmetrically. */
+  streakDampener: number;
+  /** Anti-star: the OPPOSING player id this team has decided to double-team.
+   * Applies a small per-duel penalty to that player whenever they engage
+   * with anyone on this team. */
+  antiStarTargetId: string | null;
+  /** Anti-star COST: this team's player who is "sacrificed" to focus on the
+   * opponent target. That player gets -0.06 on all their duels. */
+  antiStarAssignedPlayerId: string | null;
+  /** Site override read tracker — counts consecutive rounds the attacker has
+   * forced the same site. Escalates the defender read penalty 0.02 → 0.04 → 0.07. */
+  consecutiveForcedRounds: number;
+  /** The site last forced — used to detect "same site again" for escalation. */
+  lastForcedSite: string | null;
 }
 
 /** Coach/player override active for a TeamRuntime — auto-managed by the IGL. */
@@ -295,6 +311,24 @@ export interface DuelMapOptions {
    * for the entire map (and remap the team's playstyleMods). */
   team1Overrides?: TacticalOverrideRuntime[];
   team2Overrides?: TacticalOverrideRuntime[];
+  /** Momentum dampener (0-1) seeded on both teams — set to >0 when ANY TO is
+   * called this half. Models the "TO breaks the flow" narrative. */
+  bothTeamsStreakDampener?: number;
+  /** Match-plan derived per-team adjustments. */
+  team1Plan?: TeamPlanMods;
+  team2Plan?: TeamPlanMods;
+}
+
+/** Knobs derived from a user-authored MatchPlan. Applied at team build time. */
+export interface TeamPlanMods {
+  /** Multiplier on midRoundUtility — RUSH < 1 (faster), SLOW > 1 (slower). */
+  tempoMod?: number;
+  /** Added to coach utility boost — bootcamp prep. */
+  mapPrepBoost?: number;
+  /** Opposing player id that this team double-teams. Penalty in duelWinProb. */
+  antiStarTargetId?: string | null;
+  /** This team's player sacrificed to focus the anti-star target. */
+  antiStarAssignedPlayerId?: string | null;
 }
 
 /** End-of-map hotness per player — can be passed to the next map as priorHotness */
@@ -759,6 +793,11 @@ function buildTeamRuntime(
     ultLockdownEdge: 0,
     ultAbilityEdge: 0,
     overrides: [],
+    streakDampener: 0,
+    antiStarTargetId: null,
+    antiStarAssignedPlayerId: null,
+    consecutiveForcedRounds: 0,
+    lastForcedSite: null,
   };
 }
 
@@ -1453,18 +1492,50 @@ function duelWinProb(
   // negative drag from losing rounds (mid-match reads + tactical reset).
   const attAdaptScale = attackerTeam ? 1 - (attackerTeam.coachAdaptation - 50) / 100 : 1;
   const defAdaptScale = defenderTeam ? 1 - (defenderTeam.coachAdaptation - 50) / 100 : 1;
+  // streakDampener (0-1): when a TO is in flight, both teams have their
+  // streak-driven tilt reduced — this is the "TO breaks momentum" effect.
+  const attDamp = attackerTeam ? 1 - attackerTeam.streakDampener : 1;
+  const defDamp = defenderTeam ? 1 - defenderTeam.streakDampener : 1;
   const attTilt = attackerTeam
-    ? Math.max(-0.05, -0.012 * attackerTeam.lossStreak) * attAdaptScale +
-      Math.min(0.03, 0.008 * attackerTeam.winStreak)
+    ? (Math.max(-0.05, -0.012 * attackerTeam.lossStreak) * attAdaptScale +
+        Math.min(0.03, 0.008 * attackerTeam.winStreak)) * attDamp
     : 0;
   const defTilt = defenderTeam
-    ? Math.max(-0.05, -0.012 * defenderTeam.lossStreak) * defAdaptScale +
-      Math.min(0.03, 0.008 * defenderTeam.winStreak)
+    ? (Math.max(-0.05, -0.012 * defenderTeam.lossStreak) * defAdaptScale +
+        Math.min(0.03, 0.008 * defenderTeam.winStreak)) * defDamp
     : 0;
   // Moderated by individual tiltResistance
   const attTiltScaled = attTilt * (1.2 - attacker.tiltResistance);
   const defTiltScaled = defTilt * (1.2 - defender.tiltResistance);
   const tiltEdge = attTiltScaled - defTiltScaled;
+
+  // Anti-star — if the defender's team is targeting the attacker, the attacker
+  // gets a duel penalty (the focus player is being pressured by 2+ defenders).
+  // Symmetric: if the attacker's team is targeting the defender, the defender
+  // gets the penalty. -0.06 per duel = noticeable but not crippling.
+  let antiStarEdge = 0;
+  if (defenderTeam?.antiStarTargetId && attacker.input.id === defenderTeam.antiStarTargetId) {
+    antiStarEdge -= 0.06;
+  }
+  if (attackerTeam?.antiStarTargetId && defender.input.id === attackerTeam.antiStarTargetId) {
+    antiStarEdge += 0.06; // attacker side has the focus → defender (the targeted player) loses edge
+  }
+  // Anti-star COST — the sacrificed player on the focusing team gets -0.06
+  // on their own duels (their attention is elsewhere).
+  if (attackerTeam?.antiStarAssignedPlayerId === attacker.input.id) {
+    antiStarEdge -= 0.06;
+  }
+  if (defenderTeam?.antiStarAssignedPlayerId === defender.input.id) {
+    antiStarEdge += 0.06; // their assigned player is weaker, so attacker benefits
+  }
+
+  // Site-force read penalty — if the attacker is on a forced-site streak, the
+  // defenders are reading the play. Escalates with consecutive same-site rounds.
+  let siteReadEdge = 0;
+  if (attackerTeam?.consecutiveForcedRounds && attackerTeam.consecutiveForcedRounds > 0) {
+    const cf = attackerTeam.consecutiveForcedRounds;
+    siteReadEdge = -(cf === 1 ? 0.02 : cf === 2 ? 0.04 : 0.07);
+  }
 
   // Positional edge
   const positionalEdge = ctx.defenderHasAngle ? -0.10 : 0;
@@ -1553,7 +1624,7 @@ function duelWinProb(
   // tryHalftimeAdapt + tryMidHalfAdapt). Max ±0.06.
   const adaptEdge = (attackerTeam?.adaptationEdge ?? 0) - (defenderTeam?.adaptationEdge ?? 0);
 
-  const raw = 0.5 + mechanicalEdge + tiltEdge + positionalEdge + infoEdge + agentInDuelEdge + agentInfoEdge + agentPhaseBonus + agentDefBonus + weaponEdge + armorEdge + abilityEdge + relationEdge + mapBiasEdge + clutchEdge + ultEdge + gameIQEdge + adaptEdge + luck;
+  const raw = 0.5 + mechanicalEdge + tiltEdge + positionalEdge + infoEdge + agentInDuelEdge + agentInfoEdge + agentPhaseBonus + agentDefBonus + weaponEdge + armorEdge + abilityEdge + relationEdge + mapBiasEdge + clutchEdge + ultEdge + gameIQEdge + adaptEdge + antiStarEdge + siteReadEdge + luck;
   // Tighter clamp — no duel is ever a guaranteed win
   return clamp(raw, 0.15, 0.85);
 }
@@ -1900,7 +1971,20 @@ function chooseSiteSmart(
   // Coach-forced site (mid-round TO) takes priority — but only if the override
   // names a valid site for this map. IGL revert is handled at round-end.
   const forced = activeSiteOverride(attackers);
-  if (forced && sites.includes(forced)) return forced;
+  if (forced && sites.includes(forced)) {
+    // Track consecutive forces so duelWinProb can apply the escalating read
+    // penalty (defenders adapt faster the more we lean on one site).
+    if (attackers.lastForcedSite === forced) {
+      attackers.consecutiveForcedRounds += 1;
+    } else {
+      attackers.consecutiveForcedRounds = 1;
+      attackers.lastForcedSite = forced;
+    }
+    return forced;
+  }
+  // No force this round — reset the read tracker.
+  attackers.consecutiveForcedRounds = 0;
+  attackers.lastForcedSite = null;
 
   const totalPushes = Object.values(attackers.sitePreference).reduce((s, v) => s + v, 0);
 
@@ -3292,6 +3376,12 @@ export function simulateMapDuel(
   applyMentalBoost(team2);
   seedOverridesOnto(team1, options.team1Overrides);
   seedOverridesOnto(team2, options.team2Overrides);
+  if (options.bothTeamsStreakDampener) {
+    team1.streakDampener = options.bothTeamsStreakDampener;
+    team2.streakDampener = options.bothTeamsStreakDampener;
+  }
+  applyTeamPlanMods(team1, options.team1Plan);
+  applyTeamPlanMods(team2, options.team2Plan);
 
   const team1StartsAttack = options.team1StartsAttack ?? true;
   const ctx: MapRoundCtx = {
@@ -3440,7 +3530,40 @@ function buildBothRuntimes(
   seedOverridesOnto(team1, options.team1Overrides);
   seedOverridesOnto(team2, options.team2Overrides);
 
+  // Momentum dampener — when ANY TO was called, both teams' streak tilt is
+  // partially neutralized for the whole sim (the replay model means we apply
+  // it from round 1; the user perceives it as "the leader's snowball got broken").
+  if (options.bothTeamsStreakDampener) {
+    team1.streakDampener = options.bothTeamsStreakDampener;
+    team2.streakDampener = options.bothTeamsStreakDampener;
+  }
+
+  // Per-team plan mods (tempo, bootcamp, anti-star).
+  applyTeamPlanMods(team1, options.team1Plan);
+  applyTeamPlanMods(team2, options.team2Plan);
+
   return { team1, team2 };
+}
+
+/** Apply MatchPlan-derived adjustments to a built TeamRuntime. */
+function applyTeamPlanMods(team: TeamRuntime, plan: TeamPlanMods | undefined): void {
+  if (!plan) return;
+  if (plan.tempoMod && plan.tempoMod !== 1) {
+    team.playstyleMods = {
+      ...team.playstyleMods,
+      midRoundUtility: clamp(team.playstyleMods.midRoundUtility * plan.tempoMod, 0.4, 1.6),
+      setupDuelChance: clamp(team.playstyleMods.setupDuelChance * (2 - plan.tempoMod), 0.4, 1.6),
+    };
+  }
+  if (plan.mapPrepBoost) {
+    team.input.skillUtility += plan.mapPrepBoost * 0.05;
+  }
+  if (plan.antiStarTargetId) {
+    team.antiStarTargetId = plan.antiStarTargetId;
+  }
+  if (plan.antiStarAssignedPlayerId) {
+    team.antiStarAssignedPlayerId = plan.antiStarAssignedPlayerId;
+  }
 }
 
 /** Snapshot the carryover state for ONE team at halftime. */
