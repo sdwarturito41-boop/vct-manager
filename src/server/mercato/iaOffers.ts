@@ -5,47 +5,68 @@ import { isRosterLocked, isTransferWindowOpen } from "./locks";
 import { countRoster, canSign } from "./rosterCap";
 
 const MIN_INTEREST = 35;
-const MAX_OFFERS_PER_TEAM_PER_WEEK = 2;
+/** Max offers a single AI team can create in a week. Real orgs don't fire 2
+ *  parallel buyouts in the same week — 1 is enough. */
+const MAX_OFFERS_PER_TEAM_PER_WEEK = 1;
+/** Global ceiling across ALL AI teams in a save per week. Prevents the
+ *  "every healthy roster suddenly shopping" stampede that made the mercato
+ *  feel like a churn factory. ~2-4 transfers/week is the target. */
+const MAX_TOTAL_OFFERS_PER_WEEK = 8;
 const OFFER_DEADLINE_HOURS = 72;
+/** No new signing for X weeks after a roster move — orgs stabilise before
+ *  shopping again. */
+const ROSTER_STABILITY_WEEKS = 4;
+/** Active regional split: regulars run, rosters are visible, panic-shop only
+ *  for real distress. International events have their own roster lock so we
+ *  don't enumerate them. Off-season → reconstruction is open. */
+function isActiveRegionalSplit(stage: string): boolean {
+  return stage === "KICKOFF" || stage === "STAGE_1" || stage === "STAGE_2";
+}
 
 /**
  * Healthy teams shouldn't be churning their roster every week. Real org
- * mercato is need-driven: gaps, weak links, or losing records prompt moves.
- * A team that's winning with a full balanced roster sits the week out.
+ * mercato is need-driven AND time-aware: gaps, weak links, or losing records
+ * prompt moves; recent signings sit out; mid-split is conservative.
  *
  * Returns true ONLY when the team has a concrete reason to add a player.
  */
 function teamNeedsRecruitment(
   team: Team & {
-    players: Pick<Player, "role" | "acs" | "kd" | "adr" | "isReserve">[];
+    players: Pick<Player, "role" | "acs" | "kd" | "adr" | "isReserve" | "joinedWeek">[];
   },
+  currentWeek: number,
+  inActiveSplit: boolean,
 ): boolean {
-  // Starters only — reserves don't fill a tournament slot. A team with 4
-  // starters + 5 reserves still needs a 5th starter.
   const starters = team.players.filter((p) => !p.isReserve);
 
-  // 1. Roster gap — must recruit to fill the 5-active-roster slot
+  // 1. Roster gap — must recruit no matter what. Hard rule.
   if (starters.length < 5) return true;
 
-  // 2. Role gap — comp is unbalanced, recruit to cover a missing role
+  // 2. Role gap — comp is unbalanced, recruit to cover a missing role.
   const rolesPresent = new Set(starters.map((p) => p.role));
-  // 4 distinct roles is the minimum for a sensible Valorant comp
-  // (Duelist/Initiator/Sentinel/Controller; IGL is often a flex of one of these).
   if (rolesPresent.size < 4) return true;
 
-  // 3. Weak link — there's a player notably below the rest of the squad,
-  //    so the team would shop for an upgrade
+  // 3. Stability gate — recent signing → freeze for ROSTER_STABILITY_WEEKS.
+  //    Real orgs let new players settle before shopping again. Computed from
+  //    the latest `joinedWeek` in the squad (treated as same-season week).
+  const lastJoin = Math.max(0, ...starters.map((p) => p.joinedWeek));
+  if (lastJoin > 0 && currentWeek - lastJoin < ROSTER_STABILITY_WEEKS) return false;
+
+  const games = team.wins + team.losses;
+
+  // 4. During an ACTIVE regional split, only real distress triggers a move.
+  //    Mid-Stage 1 trading happens IRL but it's rare — gate hard on results.
+  if (inActiveSplit) {
+    return games >= 6 && team.wins / games < 0.30;
+  }
+
+  // 5. Off-season / international break — broader gates. Orgs rebuild now.
   const ratings = starters.map((p) => playerRating(p));
   const avg = ratings.reduce((s, r) => s + r, 0) / ratings.length;
   const min = Math.min(...ratings);
-  if (avg > 0 && min < avg * 0.80) return true;
+  if (games >= 5 && avg > 0 && min < avg * 0.72) return true;
+  if (games >= 6 && team.wins / games < 0.35) return true;
 
-  // 4. Losing record — once enough games are in the books, struggling teams
-  //    shake things up
-  const games = team.wins + team.losses;
-  if (games >= 3 && team.wins / games < 0.4) return true;
-
-  // Otherwise the squad is healthy — sit the week out
   return false;
 }
 
@@ -178,10 +199,13 @@ export async function runAiTransferActivity(
     include: {
       players: {
         where: { isActive: true, isRetired: false },
-        select: { role: true, acs: true, kd: true, adr: true, isActive: true, isRetired: true, isReserve: true },
+        select: { role: true, acs: true, kd: true, adr: true, isActive: true, isRetired: true, isReserve: true, joinedWeek: true },
       },
     },
   });
+
+  // Stage context: drives the "in active split" branch in teamNeedsRecruitment.
+  const inActiveSplit = season != null && isActiveRegionalSplit(season.currentStage);
 
   // Pool of potential targets: free agents + contracted non-user players.
   // Only select the fields the scoring + offer-generation pipeline actually
@@ -269,11 +293,15 @@ export async function runAiTransferActivity(
   });
   const lockedTeamIds = new Set(teamLocks.map((t) => t.id));
 
-  for (const team of aiTeams) {
-    // Skip healthy teams entirely — they don't shop the market when nothing
-    // is broken. Cuts the typical week's transfer churn from ~15 moves to a
-    // handful tied to actual roster needs.
-    if (!teamNeedsRecruitment(team)) continue;
+  // Shuffle AI teams so the global cap doesn't always cut off the same
+  // alphabetically-late teams. Mercato randomness ≠ league standings.
+  const shuffledTeams = [...aiTeams].sort(() => Math.random() - 0.5);
+
+  for (const team of shuffledTeams) {
+    // Global cap — hard ceiling on mercato churn per week across the save.
+    if (offersCreated >= MAX_TOTAL_OFFERS_PER_WEEK) break;
+
+    if (!teamNeedsRecruitment(team, currentWeek, inActiveSplit)) continue;
 
     // Roster Lock — qualified-for-tournament teams are frozen as buyers.
     if (isRosterLocked(team, currentDay)) continue;

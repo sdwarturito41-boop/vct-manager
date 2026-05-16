@@ -57,9 +57,19 @@ export const scoutingRouter = router({
       if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
       const season = await ctx.prisma.season.findFirst({
         where: { saveId: ctx.save.id, isActive: true },
-        select: { number: true, currentWeek: true },
+        select: { number: true, currentWeek: true, currentDay: true },
       });
       const absWeek = season ? season.number * 52 + season.currentWeek : 0;
+      const currentDay = season?.currentDay ?? 0;
+
+      // Snapshot the BEST analyst skill on the team at scout-start. If the
+      // analyst is later replaced/fired, the report remains tied to the
+      // skill that produced it — so the tier doesn't regress.
+      const analysts = await ctx.prisma.staff.findMany({
+        where: { teamId: team.id, role: "ANALYST" },
+        select: { skill1: true },
+      });
+      const bestSkill = analysts.reduce((max, a) => Math.max(max, a.skill1), 0);
 
       try {
         await ctx.prisma.shortlist.create({
@@ -68,10 +78,12 @@ export const scoutingRouter = router({
             teamId: team.id,
             playerId: input.playerId,
             addedWeek: absWeek,
+            addedDay: currentDay,
+            scoutingAnalystSkill: bestSkill,
           },
         });
       } catch {
-        // Already shortlisted — idempotent no-op.
+        // Already shortlisted — idempotent no-op (existing report keeps its progress).
       }
       return { ok: true };
     }),
@@ -102,6 +114,66 @@ export const scoutingRouter = router({
         where: { teamId_playerId: { teamId: team.id, playerId: input.playerId } },
       });
       return r !== null;
+    }),
+
+  /**
+   * Scouting V2 — returns the tier + visible fields for a given player.
+   *   - Own roster → tier 99 (sentinel for "everything"), no masking.
+   *   - Not on shortlist → tier 0, only basic fields visible.
+   *   - On shortlist → tier depends on snapshotted analyst skill + elapsed days.
+   */
+  report: saveProcedure
+    .input(z.object({ playerId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findFirst({
+        where: { saveId: ctx.save.id, isPlayerTeam: true },
+        select: { id: true },
+      });
+      if (!team) {
+        return { tier: 0, revealedFields: [], daysUntilNext: -1, analystTier: null, onRoster: false, shortlisted: false };
+      }
+
+      // Own roster? Full visibility.
+      const onRoster = await ctx.prisma.player.findFirst({
+        where: { id: input.playerId, teamId: team.id },
+        select: { id: true },
+      });
+      if (onRoster) {
+        return {
+          tier: 99 as const,
+          revealedFields: ["*"],
+          daysUntilNext: -1,
+          analystTier: "Roster" as const,
+          onRoster: true,
+          shortlisted: false,
+        };
+      }
+
+      const sl = await ctx.prisma.shortlist.findUnique({
+        where: { teamId_playerId: { teamId: team.id, playerId: input.playerId } },
+        select: { addedDay: true, scoutingAnalystSkill: true },
+      });
+      if (!sl) {
+        const { SCOUTING_BASIC_FIELDS } = await import("@/server/mercato/scoutingReveal");
+        return {
+          tier: 0 as const,
+          revealedFields: [...SCOUTING_BASIC_FIELDS],
+          daysUntilNext: -1,
+          analystTier: null,
+          onRoster: false,
+          shortlisted: false,
+        };
+      }
+
+      const season = await ctx.prisma.season.findFirst({
+        where: { saveId: ctx.save.id, isActive: true },
+        select: { currentDay: true },
+      });
+      const currentDay = season?.currentDay ?? 0;
+
+      const { getScoutingReveal } = await import("@/server/mercato/scoutingReveal");
+      const reveal = getScoutingReveal(sl.addedDay, sl.scoutingAnalystSkill, currentDay);
+      return { ...reveal, onRoster: false, shortlisted: true };
     }),
 
   /**

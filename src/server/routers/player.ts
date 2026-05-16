@@ -449,8 +449,47 @@ export const playerRouter = router({
         ? { ...computed, ...stored }
         : computed;
       const overall = p.overall && p.overall > 1 ? p.overall : computeOverall(attrs, role);
+
+      // Season-start attrs — re-run computeAttributes against the earliest
+      // PlayerStatSnapshot of the active season. Drives the ▲/▼ arrows in the
+      // UI so the user sees which attributes improved. Sheet-sourced overrides
+      // stay identical (they don't move with EMA stats) so their delta is 0.
+      const activeSeason = await ctx.prisma.season.findFirst({
+        where: { isActive: true, saveId: ctx.save.id },
+        select: { number: true },
+      });
+      let startAttrs: Record<string, number> | null = null;
+      if (activeSeason) {
+        const startSnap = await ctx.prisma.playerStatSnapshot.findFirst({
+          where: { playerId: input.playerId, season: activeSeason.number },
+          orderBy: { week: "asc" },
+          select: { acs: true, kd: true, kast: true, adr: true, rating: true, clPct: true },
+        });
+        if (startSnap) {
+          // Reuse the same PlayerRaw template, swap in snapshot values for the
+          // fields the snapshot covers (acs/kd/kast/adr/rating/clPct). The
+          // others (kpr/apr/fkpr/fdpr/hs/etc.) keep their current values since
+          // we don't snapshot them — drift on those won't show in the arrows.
+          const startRaw: PlayerRaw = {
+            ...raw,
+            acs: startSnap.acs,
+            kd: startSnap.kd,
+            adr: startSnap.adr,
+            kast: startSnap.kast,
+            rating: startSnap.rating,
+            clPct: startSnap.clPct,
+          };
+          const startSynthesized = synthesizeMissingStats(startRaw);
+          const startComputed = computeAttributes(startSynthesized, cache);
+          startAttrs = Object.keys(stored).length > 0
+            ? { ...startComputed, ...stored }
+            : startComputed;
+        }
+      }
+
       return {
         attrs,
+        startAttrs, // null if no snapshot yet (first week of season)
         overall,
         playstyleRole: role,
         wasAutoAssigned: !p.playstyleRole,

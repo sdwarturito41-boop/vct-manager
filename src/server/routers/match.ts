@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure, saveProcedure } from "../trpc";
-import { simulateMatch, simulateMap as simulateMapEngine } from "@/server/simulation/engine";
+import {
+  simulateMatch,
+  simulateMap as simulateMapEngine,
+  simulateMapHalf1 as simulateMapHalf1Engine,
+  simulateMapHalf2 as simulateMapHalf2Engine,
+  timeoutTypeToBonus,
+} from "@/server/simulation/engine";
 import { applyMasteryUpdate, applyPassiveDecay } from "@/server/simulation/mastery";
 import { applyStatRollingUpdatesBatch, type MatchStatInput } from "@/server/simulation/statRolling";
 import { loadActivePairMaps } from "@/server/mercato/relationships";
@@ -59,6 +65,88 @@ async function applyActivePatch(
   } else {
     applyPatchToMeta([], []);
   }
+}
+
+/**
+ * Shared map-sim setup — fetches the match, validates ownership, builds the
+ * SimTeams in the orientation the user picked (attack side = simTeam1), and
+ * computes both teams' agent picks. Used by simulateMap, simulateMapHalf1,
+ * and simulateMapHalf2 to avoid drift in the orientation logic.
+ */
+async function buildMapSimSetup(
+  ctx: { prisma: typeof import("@/lib/prisma").prisma; userId: string; save: { id: string } },
+  input: {
+    matchId: string;
+    side: "attack" | "defense";
+    playerAgents: Array<{ playerId: string; agentName: string }>;
+  },
+) {
+  const match = await ctx.prisma.match.findUnique({
+    where: { id: input.matchId },
+    include: {
+      team1: { include: { players: { where: { isActive: true } } } },
+      team2: { include: { players: { where: { isActive: true } } } },
+    },
+  });
+  if (!match) throw new TRPCError({ code: "NOT_FOUND", message: "Match not found." });
+  if (match.isPlayed) throw new TRPCError({ code: "BAD_REQUEST", message: "Match already played." });
+
+  const userTeam = await ctx.prisma.team.findUnique({ where: { userId: ctx.userId } });
+  if (!userTeam || (match.team1Id !== userTeam.id && match.team2Id !== userTeam.id)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "This is not your team's match." });
+  }
+  if (match.team1.players.length === 0 || match.team2.players.length === 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Both teams must have active players to simulate a map.",
+    });
+  }
+
+  const isUserTeam1 = match.team1Id === userTeam.id;
+
+  let simTeam1: SimTeam;
+  let simTeam2: SimTeam;
+  if ((isUserTeam1 && input.side === "attack") || (!isUserTeam1 && input.side === "defense")) {
+    simTeam1 = buildSimTeam(match.team1);
+    simTeam2 = buildSimTeam(match.team2);
+  } else {
+    simTeam1 = buildSimTeam(match.team2);
+    simTeam2 = buildSimTeam(match.team1);
+  }
+
+  const userAgentPicks: AgentPick[] = input.playerAgents.map((pa) => {
+    const agent = VALORANT_AGENTS.find((a) => a.name === pa.agentName);
+    return { playerId: pa.playerId, agentName: pa.agentName, agentRole: agent?.role };
+  });
+
+  const aiTeam = isUserTeam1 ? match.team2 : match.team1;
+  const aiAgentPicks: AgentPick[] = aiTeam.players.slice(0, 5).map((p) => {
+    const roleAgents = VALORANT_AGENTS.filter(
+      (a) => a.role === p.role || (p.role === "IGL" && ["Controller", "Initiator"].includes(a.role)),
+    );
+    const picked = roleAgents[Math.floor(Math.random() * roleAgents.length)] ?? VALORANT_AGENTS[0];
+    return { playerId: p.id, agentName: picked.name, agentRole: picked.role };
+  });
+
+  const t1Agents = isUserTeam1 ? userAgentPicks : aiAgentPicks;
+  const t2Agents = isUserTeam1 ? aiAgentPicks : userAgentPicks;
+
+  const swapped =
+    (isUserTeam1 && input.side === "defense") || (!isUserTeam1 && input.side === "attack");
+  // User is simTeam1 iff they picked attack (they always pick their own side).
+  const userIsSimTeam1 = input.side === "attack";
+
+  return {
+    match,
+    userTeam,
+    isUserTeam1,
+    simTeam1,
+    simTeam2,
+    t1Agents,
+    t2Agents,
+    swapped,
+    userIsSimTeam1,
+  };
 }
 
 export const matchRouter = router({
@@ -477,6 +565,11 @@ export const matchRouter = router({
         playerAgents: z
           .array(z.object({ playerId: z.string(), agentName: z.string() }))
           .length(5),
+        // Pre-map tactical timeout choice (TIMEOUT phase between maps). Drives
+        // a small per-map bonus baked into the user team's runtime.
+        timeoutType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
+        // For "medical": which player gets their hotness reset.
+        timeoutPlayerId: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -551,6 +644,11 @@ export const matchRouter = router({
         (isUserTeam1 && input.side === "defense") ||
         (!isUserTeam1 && input.side === "attack");
 
+      // User's timeout bonus goes on whichever sim side the user occupies.
+      // The user is simTeam1 iff they picked "attack" (they always pick their own side).
+      const userIsSimTeam1 = input.side === "attack";
+      const userTimeoutBonus = timeoutTypeToBonus(input.timeoutType, input.timeoutPlayerId);
+
       let mapResult;
       try {
         await applyActivePatch(ctx.prisma, ctx.save.id);
@@ -558,6 +656,8 @@ export const matchRouter = router({
           team1Agents: swapped ? t2Agents : t1Agents,
           team2Agents: swapped ? t1Agents : t2Agents,
           team1StartsAttack: true,
+          team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : undefined,
+          team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
         });
       } catch (err) {
         console.error("[simulateMap] engine error:", err);
@@ -640,6 +740,177 @@ export const matchRouter = router({
         };
       }
 
+      return mapResult;
+    }),
+
+  /**
+   * Simulate the first half of a map only. Returns the partial result oriented
+   * to the user's side + an opaque `halftimeState` blob the client must echo
+   * back when calling simulateMapHalf2.
+   *
+   * Stats / mastery updates are NOT applied here — they wait until H2 closes
+   * out the map, since stats are computed off final scores.
+   */
+  simulateMapHalf1: saveProcedure
+    .input(
+      z.object({
+        matchId: z.string(),
+        mapName: z.string(),
+        side: z.enum(["attack", "defense"]),
+        playerAgents: z
+          .array(z.object({ playerId: z.string(), agentName: z.string() }))
+          .length(5),
+        timeoutType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
+        timeoutPlayerId: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const ts = await buildMapSimSetup(ctx, input);
+      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1 } = ts;
+      const userTimeoutBonus = timeoutTypeToBonus(input.timeoutType, input.timeoutPlayerId);
+
+      let result;
+      try {
+        await applyActivePatch(ctx.prisma, ctx.save.id);
+        result = simulateMapHalf1Engine(simTeam1, simTeam2, input.mapName, {
+          team1Agents: swapped ? t2Agents : t1Agents,
+          team2Agents: swapped ? t1Agents : t2Agents,
+          team1StartsAttack: true,
+          team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : undefined,
+          team2TimeoutBonus: userIsSimTeam1 ? undefined : userTimeoutBonus,
+        });
+      } catch (err) {
+        console.error("[simulateMapHalf1] engine error:", err);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: err instanceof Error ? `Engine: ${err.message}` : "Engine error",
+        });
+      }
+
+      const oriented = swapped
+        ? {
+            ...result,
+            score1: result.score2,
+            score2: result.score1,
+            rounds: result.rounds.map((r) => ({
+              ...r,
+              winner: (r.winner === 1 ? 2 : 1) as 1 | 2,
+              score1: r.score2,
+              score2: r.score1,
+            })),
+          }
+        : result;
+
+      return oriented;
+    }),
+
+  /**
+   * Resume from the H1 halftimeState and play out H2 + OT. Mastery + stat
+   * rolling updates are applied here (the map is now complete).
+   *
+   * NEW timeout fields here represent the HALF-TIME choice — they layer on
+   * top of the rebuilt H2 runtimes via the same coachAdaptation/Mental knobs.
+   */
+  simulateMapHalf2: saveProcedure
+    .input(
+      z.object({
+        matchId: z.string(),
+        mapName: z.string(),
+        side: z.enum(["attack", "defense"]),
+        playerAgents: z
+          .array(z.object({ playerId: z.string(), agentName: z.string() }))
+          .length(5),
+        // The opaque H1 handoff. Echoed back from simulateMapHalf1 result.
+        halftimeState: z.any(),
+        // Half-time TO choice (between H1 and H2).
+        halftimeTimeoutType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
+        halftimeTimeoutPlayerId: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const ts = await buildMapSimSetup(ctx, input);
+      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, userTeam, isUserTeam1 } = ts;
+      const halftimeBonus = timeoutTypeToBonus(input.halftimeTimeoutType, input.halftimeTimeoutPlayerId);
+
+      let mapResult;
+      try {
+        await applyActivePatch(ctx.prisma, ctx.save.id);
+        mapResult = simulateMapHalf2Engine(input.halftimeState, simTeam1, simTeam2, {
+          team1Agents: swapped ? t2Agents : t1Agents,
+          team2Agents: swapped ? t1Agents : t2Agents,
+          team1StartsAttack: true,
+          team1TimeoutBonus: userIsSimTeam1 ? halftimeBonus : undefined,
+          team2TimeoutBonus: userIsSimTeam1 ? undefined : halftimeBonus,
+        });
+      } catch (err) {
+        console.error("[simulateMapHalf2] engine error:", err);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: err instanceof Error ? `Engine: ${err.message}` : "Engine error",
+        });
+      }
+
+      // ── Apply mastery + rolling stats (end-of-map) ──
+      const realScore1 = swapped ? mapResult.score2 : mapResult.score1;
+      const realScore2 = swapped ? mapResult.score1 : mapResult.score2;
+      const userScore = isUserTeam1 ? realScore1 : realScore2;
+      const oppScore = isUserTeam1 ? realScore2 : realScore1;
+
+      const userPlayers = await ctx.prisma.player.findMany({
+        where: { id: { in: input.playerAgents.map((pa) => pa.playerId) } },
+        select: { id: true, role: true },
+      });
+      const userRoleByPlayerId = new Map(userPlayers.map((p) => [p.id, p.role as string]));
+
+      const playedAgentByPlayerId: Record<string, string> = {};
+      for (const pa of input.playerAgents) playedAgentByPlayerId[pa.playerId] = pa.agentName;
+
+      try {
+        await applyPassiveDecay(ctx.prisma, input.playerAgents.map((pa) => pa.playerId), playedAgentByPlayerId);
+        for (const pa of input.playerAgents) {
+          const stat = mapResult.playerStats.find((s) => s.playerId === pa.playerId);
+          if (!stat) continue;
+          await applyMasteryUpdate(ctx.prisma, {
+            playerId: pa.playerId,
+            agentName: pa.agentName,
+            mapName: input.mapName,
+            myScore: userScore,
+            oppScore,
+            playerACS: stat.acs,
+            naturalRole: userRoleByPlayerId.get(pa.playerId) ?? "Flex",
+            isScrim: false,
+          });
+        }
+        const userWon = userScore > oppScore;
+        const statUpdates: MatchStatInput[] = mapResult.playerStats.map((stat) => ({
+          playerId: stat.playerId,
+          acs: stat.acs,
+          kills: stat.kills,
+          deaths: stat.deaths,
+          assists: stat.assists,
+          won: stat.teamId === userTeam.id ? userWon : !userWon,
+        }));
+        await applyStatRollingUpdatesBatch(ctx.prisma, statUpdates);
+      } catch (err) {
+        console.error("[simulateMapHalf2] mastery error:", err);
+        // Don't fail the request if mastery fails
+      }
+
+      if (swapped) {
+        return {
+          map: mapResult.map,
+          score1: mapResult.score2,
+          score2: mapResult.score1,
+          playerStats: mapResult.playerStats,
+          highlights: mapResult.highlights,
+          rounds: mapResult.rounds.map((r) => ({
+            ...r,
+            winner: (r.winner === 1 ? 2 : 1) as 1 | 2,
+            score1: r.score2,
+            score2: r.score1,
+          })),
+        };
+      }
       return mapResult;
     }),
 
@@ -950,5 +1221,161 @@ export const matchRouter = router({
       }
 
       return updatedMatch;
+    }),
+
+  /**
+   * Match Prep — analyst-tier-gated intel about the opponent of a specific
+   * match. The tier is determined by the user team's best analyst skill
+   * (Junior 40-59 → tier 1, Senior 60-79 → tier 2, Elite 80+ → tier 3).
+   *
+   * Always-visible fields: team name, region, recent form (W-L last 10).
+   * Tier 1+ : dominant map (top 2 most-picked maps in past played matches).
+   * Tier 2+ : key player (highest ACS on active roster).
+   * Tier 3  : playstyle, ecoDiscipline, adaptationRating.
+   */
+  scoutNextOpponent: saveProcedure
+    .input(z.object({ matchId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const userTeam = await ctx.prisma.team.findFirst({
+        where: { saveId: ctx.save.id, isPlayerTeam: true },
+        select: { id: true },
+      });
+      if (!userTeam) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User team not found." });
+      }
+
+      const match = await ctx.prisma.match.findUnique({
+        where: { id: input.matchId },
+        select: { team1Id: true, team2Id: true },
+      });
+      if (!match) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Match not found." });
+      }
+      if (match.team1Id !== userTeam.id && match.team2Id !== userTeam.id) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Not your match." });
+      }
+      const opponentId = match.team1Id === userTeam.id ? match.team2Id : match.team1Id;
+
+      const [opponent, analysts] = await Promise.all([
+        ctx.prisma.team.findUnique({
+          where: { id: opponentId },
+          select: {
+            id: true,
+            name: true,
+            tag: true,
+            region: true,
+            playstyle: true,
+            ecoDiscipline: true,
+            adaptationRating: true,
+            wins: true,
+            losses: true,
+          },
+        }),
+        ctx.prisma.staff.findMany({
+          where: { teamId: userTeam.id, role: "ANALYST" },
+          select: { skill1: true },
+        }),
+      ]);
+      if (!opponent) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Opponent not found." });
+      }
+
+      const bestSkill = analysts.reduce((max, a) => Math.max(max, a.skill1), 0);
+      const tier: 0 | 1 | 2 | 3 =
+        bestSkill >= 80 ? 3 : bestSkill >= 60 ? 2 : bestSkill >= 40 ? 1 : 0;
+      const analystTier: "Junior" | "Senior" | "Elite" | null =
+        tier === 3 ? "Elite" : tier === 2 ? "Senior" : tier === 1 ? "Junior" : null;
+
+      // Recent form: last 10 played matches involving opponent.
+      const recentMatches = await ctx.prisma.match.findMany({
+        where: {
+          saveId: ctx.save.id,
+          isPlayed: true,
+          OR: [{ team1Id: opponentId }, { team2Id: opponentId }],
+        },
+        orderBy: [{ day: "desc" }, { id: "desc" }],
+        take: 10,
+        select: {
+          team1Id: true,
+          team2Id: true,
+          score: true,
+          maps: true,
+        },
+      });
+      let wins = 0;
+      let losses = 0;
+      const formSequence: ("W" | "L")[] = [];
+      for (const m of recentMatches) {
+        const sc = m.score as { team1?: number; team2?: number } | null;
+        const oppIsTeam1 = m.team1Id === opponentId;
+        const oppScore = oppIsTeam1 ? sc?.team1 ?? 0 : sc?.team2 ?? 0;
+        const otherScore = oppIsTeam1 ? sc?.team2 ?? 0 : sc?.team1 ?? 0;
+        if (oppScore > otherScore) {
+          wins++;
+          formSequence.push("W");
+        } else {
+          losses++;
+          formSequence.push("L");
+        }
+      }
+
+      // Tier 1+ : dominant maps.
+      let dominantMaps: { mapName: string; count: number }[] = [];
+      if (tier >= 1) {
+        const tally = new Map<string, number>();
+        for (const m of recentMatches) {
+          const maps = Array.isArray(m.maps) ? (m.maps as { map?: string }[]) : [];
+          for (const mp of maps) {
+            if (mp?.map) tally.set(mp.map, (tally.get(mp.map) ?? 0) + 1);
+          }
+        }
+        dominantMaps = [...tally.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 2)
+          .map(([mapName, count]) => ({ mapName, count }));
+      }
+
+      // Tier 2+ : key player (highest ACS on active roster).
+      let keyPlayer: {
+        id: string;
+        ign: string;
+        role: string;
+        acs: number;
+        kd: number;
+      } | null = null;
+      if (tier >= 2) {
+        const top = await ctx.prisma.player.findFirst({
+          where: { teamId: opponentId, isActive: true, isReserve: false, isRetired: false },
+          orderBy: { acs: "desc" },
+          select: { id: true, ign: true, role: true, acs: true, kd: true },
+        });
+        keyPlayer = top;
+      }
+
+      // Tier 3 : full strategic profile.
+      const strategicProfile =
+        tier >= 3
+          ? {
+              playstyle: opponent.playstyle,
+              ecoDiscipline: opponent.ecoDiscipline,
+              adaptationRating: opponent.adaptationRating,
+            }
+          : null;
+
+      return {
+        opponent: {
+          id: opponent.id,
+          name: opponent.name,
+          tag: opponent.tag,
+          region: opponent.region,
+        },
+        tier,
+        analystTier,
+        seasonRecord: { wins: opponent.wins, losses: opponent.losses },
+        recentForm: { wins, losses, sequence: formSequence },
+        dominantMaps,
+        keyPlayer,
+        strategicProfile,
+      };
     }),
 });

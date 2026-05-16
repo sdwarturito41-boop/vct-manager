@@ -164,14 +164,14 @@ export function AdvanceDayButton({ pendingMatchId, pendingOpponent }: Props) {
     <>
       {matchToPlay ? (
         <Link
-          href={`/match-day/${matchToPlay}`}
+          href={`/match-prep/${matchToPlay}`}
           className="flex h-9 w-full items-center justify-center gap-2 rounded text-[12px] font-medium transition-colors"
           style={{
             background: D.coral,
             color: "#ffffff",
           }}
         >
-          ▶ Jouer le match
+          ▶ Préparer le match
           {buttonOpponent && (
             <span style={{ opacity: 0.7, fontWeight: 400 }}>· {buttonOpponent}</span>
           )}

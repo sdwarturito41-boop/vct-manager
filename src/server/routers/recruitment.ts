@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, saveProcedure } from "../trpc";
 import type { Region, Role } from "@/generated/prisma/client";
+import { getScoutingReveal } from "@/server/mercato/scoutingReveal";
 
 /**
  * Recruitment Hub — FM26-inspired unified entry point for everything mercato:
@@ -17,7 +18,123 @@ import type { Region, Role } from "@/generated/prisma/client";
 
 const ROLES_PRIMARY = ["Duelist", "Initiator", "Sentinel", "Controller"] as const;
 
+const RoleEnum = z.enum(["IGL", "Duelist", "Initiator", "Sentinel", "Controller", "Flex"]);
+const RegionEnum = z.enum(["EMEA", "Americas", "Pacific", "China"]);
+
 export const recruitmentRouter = router({
+  // ── Requirements — FM-style "want list" ────────────────────────────
+  /** List all requirements for the user team. */
+  listRequirements: saveProcedure.query(async ({ ctx }) => {
+    const team = await ctx.prisma.team.findFirst({
+      where: { saveId: ctx.save.id, isPlayerTeam: true },
+      select: { id: true },
+    });
+    if (!team) return [];
+    return ctx.prisma.recruitmentRequirement.findMany({
+      where: { teamId: team.id, status: "OPEN" },
+      orderBy: { createdAt: "desc" },
+    });
+  }),
+
+  /** Create a new requirement. Free-form label + optional filters. */
+  createRequirement: saveProcedure
+    .input(
+      z.object({
+        label: z.string().min(2).max(80),
+        role: RoleEnum.optional(),
+        region: RegionEnum.optional(),
+        minOverall: z.number().int().min(0).max(20).optional(),
+        maxSalary: z.number().int().min(0).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findFirst({
+        where: { saveId: ctx.save.id, isPlayerTeam: true },
+        select: { id: true },
+      });
+      if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+      return ctx.prisma.recruitmentRequirement.create({
+        data: {
+          saveId: ctx.save.id,
+          teamId: team.id,
+          label: input.label,
+          role: input.role,
+          region: input.region,
+          minOverall: input.minOverall,
+          maxSalary: input.maxSalary,
+        },
+      });
+    }),
+
+  /** Close a requirement (manager dismisses or marks fulfilled). */
+  deleteRequirement: saveProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findFirst({
+        where: { saveId: ctx.save.id, isPlayerTeam: true },
+        select: { id: true },
+      });
+      if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
+      await ctx.prisma.recruitmentRequirement.updateMany({
+        where: { id: input.id, teamId: team.id },
+        data: { status: "CANCELLED" },
+      });
+      return { ok: true };
+    }),
+
+  /**
+   * Returns up to 30 candidates matching a requirement's filters. Same
+   * scouting masking applies — externals not yet scouted only expose basic
+   * info. The UI calls this on-demand when the user opens a requirement's
+   * "matches" panel.
+   */
+  requirementMatches: saveProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const team = await ctx.prisma.team.findFirst({
+        where: { saveId: ctx.save.id, isPlayerTeam: true },
+        select: { id: true },
+      });
+      if (!team) return [];
+      const req = await ctx.prisma.recruitmentRequirement.findFirst({
+        where: { id: input.id, teamId: team.id },
+      });
+      if (!req) return [];
+
+      const where: import("@/generated/prisma/client").Prisma.PlayerWhereInput = {
+        isRetired: false,
+        isActive: true,
+        // Externals only — own roster is irrelevant in a recruitment search.
+        NOT: { teamId: team.id },
+        ...(req.role ? { role: req.role } : {}),
+        ...(req.region ? { region: req.region } : {}),
+        ...(req.minOverall != null ? { overall: { gte: req.minOverall } } : {}),
+        ...(req.maxSalary != null ? { salary: { lte: req.maxSalary } } : {}),
+      };
+      const candidates = await ctx.prisma.player.findMany({
+        where,
+        select: {
+          id: true, ign: true, role: true, region: true, age: true,
+          salary: true, buyoutClause: true, overall: true,
+          teamId: true, currentTeam: true, imageUrl: true,
+          team: { select: { name: true, tag: true, logoUrl: true } },
+        },
+        orderBy: { overall: "desc" },
+        take: 30,
+      });
+
+      // Cross-reference the user's shortlist for the masking flag.
+      const shortlistedIds = new Set(
+        (
+          await ctx.prisma.shortlist.findMany({
+            where: { teamId: team.id, playerId: { in: candidates.map((c) => c.id) } },
+            select: { playerId: true },
+          })
+        ).map((s) => s.playerId),
+      );
+      return candidates.map((c) => ({ ...c, isShortlisted: shortlistedIds.has(c.id) }));
+    }),
+
   /** Single payload the Recruitment Hub page hydrates from. */
   hub: saveProcedure
     .input(
@@ -54,15 +171,17 @@ export const recruitmentRouter = router({
       });
       if (!team) throw new TRPCError({ code: "NOT_FOUND", message: "Team not found." });
 
-      // Best analyst → determines reveal window (4 → 1 weeks).
+      // Best analyst on the team — kept for display only; V2 scouting now
+      // snapshots the skill on the Shortlist row at scout-start so future
+      // analyst changes don't perturb already-in-progress reports.
       const bestAnalystSkill = team.staff.reduce((m, s) => Math.max(m, s.skill1), 0);
-      const revealWeeks = Math.max(1, Math.round(5 - (bestAnalystSkill / 100) * 4));
 
       const season = await ctx.prisma.season.findFirst({
         where: { saveId: ctx.save.id, isActive: true },
-        select: { number: true, currentWeek: true },
+        select: { number: true, currentWeek: true, currentDay: true },
       });
       const absWeek = season ? season.number * 52 + season.currentWeek : 0;
+      const currentDay = season?.currentDay ?? 0;
 
       // ── 1. Board objectives ──
       // Static-for-now derivation: missing primary roles + win-rate health.
@@ -154,6 +273,8 @@ export const recruitmentRouter = router({
         select: {
           id: true,
           addedWeek: true,
+          addedDay: true,
+          scoutingAnalystSkill: true,
           player: {
             select: {
               id: true,
@@ -181,6 +302,15 @@ export const recruitmentRouter = router({
         },
       });
       const shortlistedPlayerIds = new Set(shortlist.map((s) => s.player.id));
+      // Per-player reveal info (V2). Keyed by playerId for O(1) lookup in the
+      // withScoutingFlag helper below.
+      const revealByPlayer = new Map<string, ReturnType<typeof getScoutingReveal>>();
+      for (const s of shortlist) {
+        revealByPlayer.set(
+          s.player.id,
+          getScoutingReveal(s.addedDay, s.scoutingAnalystSkill, currentDay),
+        );
+      }
 
       // ── 5. Free agents pool (region-aware, capped) ──
       const targetRegion = input?.region && input.region !== "ALL" ? input.region : null;
@@ -256,17 +386,28 @@ export const recruitmentRouter = router({
         isScoutedByMe: boolean;
         scoutingProgressWeeks: number;
         scoutingTotalWeeks: number;
+        /** V2: revealed fields for this player given the current analyst tier
+         *  snapshot + days elapsed. UI masks any non-revealed field. */
+        revealedFields: string[];
+        scoutingTier: 0 | 1 | 2 | 3;
+        analystTier: "Junior" | "Senior" | "Elite" | null;
+        daysUntilNext: number;
       } {
         const onShortlist = shortlistedPlayerIds.has(p.id);
+        const reveal = revealByPlayer.get(p.id);
         const elapsed = addedWeek != null ? Math.max(0, absWeek - addedWeek) : 0;
-        // Fully scouted only when revealed AND on shortlist; UI shows
-        // intermediate "scouting in progress" otherwise.
-        const isScoutedByMe = onShortlist && p.potentialRevealed;
+        const isScoutedByMe = onShortlist && (reveal?.tier ?? 0) >= 1;
         return {
           ...p,
           isScoutedByMe,
           scoutingProgressWeeks: onShortlist ? elapsed : 0,
-          scoutingTotalWeeks: revealWeeks,
+          // Display-only: rough equivalent of the legacy "weeks to scout" gauge.
+          // The real driver now is `daysUntilNext` below.
+          scoutingTotalWeeks: 2,
+          revealedFields: reveal?.revealedFields ?? [],
+          scoutingTier: reveal?.tier ?? 0,
+          analystTier: reveal?.analystTier ?? null,
+          daysUntilNext: reveal?.daysUntilNext ?? -1,
         };
       }
 
@@ -280,7 +421,12 @@ export const recruitmentRouter = router({
           region: team.region,
           transferEnvelope: team.transferBudget + team.budget,
           analystSkill: bestAnalystSkill,
-          revealWeeks,
+          // Display label only (Junior/Senior/Elite/none) for the hub header.
+          analystTier:
+            bestAnalystSkill >= 80 ? "Elite"
+            : bestAnalystSkill >= 60 ? "Senior"
+            : bestAnalystSkill >= 40 ? "Junior"
+            : null,
         },
         objectives,
         rosterGaps,

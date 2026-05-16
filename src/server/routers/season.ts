@@ -1276,46 +1276,87 @@ export const seasonRouter = router({
         }
       }
 
-      // ── Scouting V1 — auto-reveal potential for shortlisted players ──
-      // Reveal delay scales with the user team's best Analyst skill1
-      // (scoutingSpeed). Base = 4 weeks. At skill 100 → 1 week. At skill 0 →
-      // 5 weeks. Each team's shortlist uses its OWN analyst, not a global.
-      const absWeek = season.number * 52 + newWeek;
+      // ── Scouting V2 — tier-based reveal w/ inbox notification on tier-up.
+      // Note: this used to live under isNewWeekTick (V1 was weekly-granular).
+      // The V2 helper resolves down to days (3-day Elite tier needs daily
+      // resolution), so the V2 scan moved out to the DAILY block below.
+    }
+
+    // ── Scouting V2 daily scan ─────────────────────────────────────────
+    // For each Shortlist whose current tier > lastRevealedTier, emit an
+    // inbox message + update the row. Cheap on most days (no transitions).
+    {
       const allShortlists = await ctx.prisma.shortlist.findMany({
-        where: {
-          saveId: ctx.save.id,
-          player: { potentialRevealed: false },
+        where: { saveId: ctx.save.id },
+        select: {
+          id: true,
+          teamId: true,
+          addedDay: true,
+          scoutingAnalystSkill: true,
+          lastRevealedTier: true,
+          player: { select: { id: true, ign: true } },
         },
-        select: { playerId: true, teamId: true, addedWeek: true },
       });
-      if (allShortlists.length > 0) {
-        // Pre-compute per-team reveal threshold via best Analyst skill1.
-        const teamIds = Array.from(new Set(allShortlists.map((s) => s.teamId)));
-        const analysts = await ctx.prisma.staff.findMany({
-          where: { teamId: { in: teamIds }, role: "ANALYST" },
-          select: { teamId: true, skill1: true },
-        });
-        const bestAnalystByTeam = new Map<string, number>();
-        for (const a of analysts) {
-          if (!a.teamId) continue;
-          const cur = bestAnalystByTeam.get(a.teamId) ?? 0;
-          if (a.skill1 > cur) bestAnalystByTeam.set(a.teamId, a.skill1);
-        }
-        const playersToReveal: string[] = [];
-        for (const s of allShortlists) {
-          const skill = bestAnalystByTeam.get(s.teamId) ?? 0;
-          // skill 0 → 5w, skill 50 → 3w, skill 100 → 1w. Linear.
-          const requiredWeeks = Math.max(1, Math.round(5 - (skill / 100) * 4));
-          if (absWeek - s.addedWeek >= requiredWeeks) {
-            playersToReveal.push(s.playerId);
-          }
-        }
-        if (playersToReveal.length > 0) {
-          await ctx.prisma.player.updateMany({
-            where: { id: { in: playersToReveal } },
-            data: { potentialRevealed: true },
+      const { getScoutingReveal } = await import("@/server/mercato/scoutingReveal");
+      type Transition = {
+        shortlistId: string;
+        teamId: string;
+        playerId: string;
+        playerIgn: string;
+        oldTier: number;
+        newTier: 1 | 2 | 3;
+        revealedFields: string[];
+      };
+      const transitions: Transition[] = [];
+      for (const s of allShortlists) {
+        const reveal = getScoutingReveal(s.addedDay, s.scoutingAnalystSkill, newDay);
+        if (reveal.tier > s.lastRevealedTier && reveal.tier >= 1) {
+          transitions.push({
+            shortlistId: s.id,
+            teamId: s.teamId,
+            playerId: s.player.id,
+            playerIgn: s.player.ign,
+            oldTier: s.lastRevealedTier,
+            newTier: reveal.tier as 1 | 2 | 3,
+            revealedFields: reveal.revealedFields,
           });
         }
+      }
+      if (transitions.length > 0) {
+        // Inbox messages — phrasing depends on the new tier reached.
+        const messageBody = (t: Transition): string => {
+          if (t.newTier === 3) {
+            return `Rapport complet livré sur ${t.playerIgn}. Attributs FM (Aim, Crosshair, Positioning, etc.), potential et consistencyRating disponibles.`;
+          }
+          if (t.newTier === 2) {
+            return `Stats étendues livrées sur ${t.playerIgn} : KAST et overall maintenant visibles, en plus de l'ACS / K/D / ADR.`;
+          }
+          return `Premières stats disponibles sur ${t.playerIgn} : ACS, K/D et ADR. Ton analyste continue de creuser si son tier le permet.`;
+        };
+        await ctx.prisma.message.createMany({
+          data: transitions.map((t) => ({
+            saveId: ctx.save.id,
+            teamId: t.teamId,
+            category: "MARKET" as const,
+            fromName: "Scouting",
+            fromRole: "Analyste",
+            subject: `Rapport scouting — ${t.playerIgn} (tier ${t.newTier})`,
+            body: messageBody(t),
+            eventType: "SCOUTING_REVEAL",
+            eventData: { playerId: t.playerId, tier: t.newTier, fields: t.revealedFields },
+            week: newWeek,
+            season: season.number,
+          })),
+        });
+        // Bump each row's lastRevealedTier so the same transition doesn't re-fire.
+        await Promise.all(
+          transitions.map((t) =>
+            ctx.prisma.shortlist.update({
+              where: { id: t.shortlistId },
+              data: { lastRevealedTier: t.newTier },
+            }),
+          ),
+        );
       }
     }
 

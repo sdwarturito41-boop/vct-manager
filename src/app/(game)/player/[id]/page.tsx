@@ -127,6 +127,8 @@ export default function PlayerPage() {
   const teamQuery = trpc.team.get.useQuery(undefined, { retry: false }) as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const shortlistQuery = trpc.scouting.isShortlisted.useQuery({ playerId }) as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scoutingReportQuery = trpc.scouting.report.useQuery({ playerId }) as any;
 
   const invalidate = () => {
     utils.player.detail.invalidate({ playerId });
@@ -165,11 +167,27 @@ export default function PlayerPage() {
   }
 
   const isOwnPlayer = userTeam && player.teamId === userTeam.id;
-  // Stats hidden for non-roster players until scouting complete. The shortlist
-  // entry + Player.potentialRevealed flag both need to flip before raw ACS /
-  // K/D / attributes show. Own roster players are always fully visible.
   const isOnMyShortlist = shortlistQuery.data === true;
-  const statsVisible = Boolean(isOwnPlayer) || (isOnMyShortlist && player.potentialRevealed);
+  // Scouting V2 — tiered reveal driven by analyst skill + days elapsed.
+  // Own roster bypasses everything (tier 99). For externals, the report
+  // tells us which fields are visible. Falls back gracefully when the query
+  // is still loading.
+  const report = scoutingReportQuery.data as
+    | {
+        tier: 0 | 1 | 2 | 3 | 99;
+        revealedFields: string[];
+        daysUntilNext: number;
+        analystTier: "Junior" | "Senior" | "Elite" | "Roster" | null;
+        onRoster: boolean;
+        shortlisted: boolean;
+      }
+    | undefined;
+  const revealedSet = new Set(report?.revealedFields ?? []);
+  const canSee = (field: string): boolean => {
+    if (isOwnPlayer || report?.tier === 99) return true;
+    return revealedSet.has(field) || revealedSet.has("*");
+  };
+  const statsVisible = canSee("acs"); // tier ≥ 1 unlocks the basic stats block
   const state = stateFromScore(player.happiness);
   const stateStyle = STATE_COLOR[state];
   const happinessTags: string[] = Array.isArray(player.happinessTags)
@@ -332,16 +350,17 @@ export default function PlayerPage() {
           borderBottom: `1px solid ${D.border}`,
         }}
       >
-        {statsVisible ? (
+        {canSee("attributes") ? (
           <>
-            <AttrGroup title="Technique" keys={GROUP_TECH} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
-            <AttrGroup title="Mental" keys={GROUP_MENTAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
-            <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={attrs?.attrs} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+            <AttrGroup title="Technique" keys={GROUP_TECH} values={attrs?.attrs} startValues={attrs?.startAttrs ?? undefined} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+            <AttrGroup title="Mental" keys={GROUP_MENTAL} values={attrs?.attrs} startValues={attrs?.startAttrs ?? undefined} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
+            <AttrGroup title="Physique" keys={GROUP_PHYSICAL} values={attrs?.attrs} startValues={attrs?.startAttrs ?? undefined} role={attrs?.playstyleRole as PlaystyleRoleValue | undefined} />
           </>
         ) : (
           <UnscoutedPlaceholder
             isOnShortlist={isOnMyShortlist}
-            potentialRevealed={player.potentialRevealed}
+            analystTier={report?.analystTier ?? null}
+            daysUntilNext={report?.daysUntilNext ?? -1}
           />
         )}
 
@@ -411,7 +430,7 @@ export default function PlayerPage() {
                 </span>
                 <ShortlistButton playerId={playerId} size="sm" />
               </div>
-              {player.potentialRevealed ? (
+              {canSee("potential") ? (
                 <>
                   <div className="flex items-baseline gap-2">
                     <span
@@ -706,11 +725,14 @@ function AttrGroup({
   title,
   keys,
   values,
+  startValues,
   role,
 }: {
   title: string;
   keys: AttrKey[];
   values?: Record<AttrKey, number>;
+  /** Snapshot of the same attributes at season-start, used for the ▲/▼ trend. */
+  startValues?: Record<AttrKey, number>;
   role?: PlaystyleRoleValue;
 }) {
   const weights = role ? ROLE_WEIGHTS[role] : undefined;
@@ -720,14 +742,19 @@ function AttrGroup({
         {title}
       </div>
       <div className="flex flex-col gap-1.5">
-        {keys.map((k) => (
-          <AttrRow
-            key={k}
-            label={ATTR_LABELS[k]}
-            value={values?.[k] ?? 0}
-            weight={weights?.[k as keyof typeof weights] ?? 1}
-          />
-        ))}
+        {keys.map((k) => {
+          const cur = values?.[k] ?? 0;
+          const start = startValues?.[k];
+          return (
+            <AttrRow
+              key={k}
+              label={ATTR_LABELS[k]}
+              value={cur}
+              trend={start != null ? Math.round(cur) - Math.round(start) : undefined}
+              weight={weights?.[k as keyof typeof weights] ?? 1}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -742,18 +769,36 @@ function emphasisFor(weight: number): "key" | "normal" | "muted" {
   return "normal";
 }
 
-function AttrRow({ label, value, weight }: { label: string; value: number; weight: number }) {
+function AttrRow({
+  label,
+  value,
+  weight,
+  trend,
+}: {
+  label: string;
+  value: number;
+  weight: number;
+  /** Integer delta vs season-start (rounded both sides). Threshold ≥1 to skip
+   *  jitter — attrs are 0-20, anything sub-integer is noise. */
+  trend?: number;
+}) {
   const v = Math.round(value);
   const pct = (v / 20) * 100;
   const baseColor = attrColorFor(v);
   const emph = emphasisFor(weight);
   const isKey = emph === "key";
   const isMuted = emph === "muted";
+  const arrow =
+    trend != null && Math.abs(trend) >= 1
+      ? trend > 0
+        ? { glyph: "▲", color: D.green }
+        : { glyph: "▼", color: D.red }
+      : null;
   return (
     <div
       className="grid items-center gap-2 py-1"
       style={{
-        gridTemplateColumns: "10px 1fr 28px 90px",
+        gridTemplateColumns: "10px 1fr 14px 28px 90px",
         borderBottom: `1px solid ${D.borderFaint}`,
         opacity: isMuted ? 0.55 : 1,
       }}
@@ -771,6 +816,13 @@ function AttrRow({ label, value, weight }: { label: string; value: number; weigh
         }}
       >
         {label}
+      </span>
+      <span
+        className="text-[9px] tabular-nums text-center"
+        style={{ color: arrow?.color ?? "transparent" }}
+        title={arrow ? `${trend! > 0 ? "+" : ""}${trend} depuis le début de la saison` : undefined}
+      >
+        {arrow?.glyph ?? ""}
       </span>
       <span
         className="text-[13px] font-medium tabular-nums text-right"
@@ -1232,11 +1284,26 @@ function RelationList({
 
 function UnscoutedPlaceholder({
   isOnShortlist,
-  potentialRevealed,
+  analystTier,
+  daysUntilNext,
 }: {
   isOnShortlist: boolean;
-  potentialRevealed: boolean;
+  analystTier?: "Junior" | "Senior" | "Elite" | "Roster" | null;
+  daysUntilNext?: number;
 }) {
+  // Build a per-state message reflecting analyst tier + ETA.
+  let message: string;
+  if (!isOnShortlist) {
+    message = "Ajoute ce joueur à ta shortlist pour lancer le scouting. La vitesse de révélation dépend du skill de ton Analyste.";
+  } else if (!analystTier) {
+    message = "Aucun analyste compétent dans l'effectif — embauche un Analyste (skill ≥ 40) pour démarrer le scouting.";
+  } else if (daysUntilNext != null && daysUntilNext > 0) {
+    const tierLabel = analystTier === "Elite" ? "Elite (skill 80+)" : analystTier === "Senior" ? "Senior (skill 60-79)" : "Junior (skill 40-59)";
+    message = `Analyste ${tierLabel} en cours — rapport complet dans ${daysUntilNext} jour${daysUntilNext > 1 ? "s" : ""}.`;
+  } else {
+    message = "Ton analyste a livré son rapport — recharge la page si les stats ne s'affichent pas.";
+  }
+
   return (
     <div
       className="col-span-3 flex flex-col items-center justify-center gap-3 py-12"
@@ -1258,15 +1325,13 @@ function UnscoutedPlaceholder({
       </div>
       <div className="text-center">
         <div className="text-[14px] font-medium" style={{ color: D.textPrimary }}>
-          Stats indisponibles
+          Attributs verrouillés
         </div>
         <p
           className="mt-1 max-w-md text-[11px] leading-relaxed"
           style={{ color: D.textSubtle }}
         >
-          {isOnShortlist && !potentialRevealed
-            ? "Ton analyste scoute ce joueur — les stats se révéleront bientôt."
-            : "Ajoute ce joueur à ta shortlist pour lancer le scouting. La vitesse de révélation dépend du skill de ton Analyste."}
+          {message}
         </p>
       </div>
     </div>

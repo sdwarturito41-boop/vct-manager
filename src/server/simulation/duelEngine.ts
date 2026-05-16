@@ -2941,6 +2941,214 @@ function tryMidHalfAdapt(team: TeamRuntime): void {
 }
 
 // ──────────────────────────────────────────────────────────
+// Round execution (shared between full-map sim and half-by-half sim)
+// ──────────────────────────────────────────────────────────
+
+/** Mutable per-map context threaded through round-by-round execution. */
+interface MapRoundCtx {
+  team1: TeamRuntime;
+  team2: TeamRuntime;
+  mapName: string;
+  team1Survivors: Set<string>;
+  team2Survivors: Set<string>;
+  rounds: RoundEvent[];
+  roundNum: number;
+}
+
+/**
+ * Run a single round in-place: rolls ult usage, plans buys, snapshots loadouts,
+ * resolves duels, updates hotness/momentum/economy, advances ctx.roundNum,
+ * and pushes the RoundEvent onto ctx.rounds. Mutates ctx + both team runtimes.
+ */
+function executeRound(
+  ctx: MapRoundCtx,
+  half: 1 | 2 | "OT",
+  t1Attack: boolean,
+  isPistol: boolean,
+): void {
+  const { team1, team2, mapName } = ctx;
+  const buy1 = planBuys(team1, isPistol, ctx.team1Survivors);
+  const buy2 = planBuys(team2, isPistol, ctx.team2Survivors);
+
+  // Ult usage decision — every round, each player with a ready ult has a
+  // chance to pop it. Pistol rounds: no ults. See ULT_CONFIG for effects.
+  for (const team of [team1, team2]) {
+    team.ultInfoEdge = 0;
+    team.ultZoneEdge = 0;
+    team.ultLockdownEdge = 0;
+    team.ultAbilityEdge = 0;
+    for (const p of team.players) {
+      p.isUsingUltThisRound = false;
+      p.ultMechEdgeThisRound = 0;
+      if (isPistol) continue;
+      if (p.ultPoints < p.ultMax) continue;
+      const cfg = ULT_CONFIG[p.agent];
+      if (cfg?.type === "revive") continue;
+      if (Math.random() >= 0.5) continue;
+      p.isUsingUltThisRound = true;
+      p.ultPoints = 0;
+      if (!cfg) {
+        p.ultMechEdgeThisRound = 0.12;
+        continue;
+      }
+      if (cfg.type === "duel") {
+        p.ultMechEdgeThisRound = cfg.mechEdge ?? 0.15;
+      }
+      if (cfg.infoEdge) team.ultInfoEdge = Math.max(team.ultInfoEdge, cfg.infoEdge);
+      if (cfg.positionalEdge) team.ultZoneEdge = Math.max(team.ultZoneEdge, cfg.positionalEdge);
+      if (cfg.abilityEdge) team.ultAbilityEdge = Math.max(team.ultAbilityEdge, cfg.abilityEdge);
+      if (cfg.type === "lockdown") {
+        team.ultLockdownEdge = Math.max(
+          team.ultLockdownEdge,
+          cfg.positionalEdge ?? cfg.abilityEdge ?? 0.12,
+        );
+      }
+    }
+  }
+
+  const budget1 = avgCredits(team1);
+  const budget2 = avgCredits(team2);
+
+  const loadouts: PlayerLoadoutSnapshot[] = [];
+  for (const team of [team1, team2]) {
+    for (const p of team.players) {
+      const e = team.economy.get(p.input.id)!;
+      loadouts.push({
+        playerId: p.input.id,
+        weapon: e.weapon,
+        armor: e.armor,
+        creditsAfterBuy: e.credits,
+        fromPickup: e.fromPickup,
+      });
+    }
+  }
+
+  const outcome = simulateRound(team1, team2, ctx.roundNum, t1Attack, mapName);
+  applyRoundStats(outcome, team1, team2);
+  updateHotness(team1);
+  updateHotness(team2);
+
+  if (outcome.winner === 1) team1.score += 1; else team2.score += 1;
+  updateMomentum(team1, outcome.winner === 1);
+  updateMomentum(team2, outcome.winner === 2);
+  tryMidHalfAdapt(team1);
+  tryMidHalfAdapt(team2);
+  awardCredits(team1, outcome.winner === 1, outcome.spiked && t1Attack);
+  awardCredits(team2, outcome.winner === 2, outcome.spiked && !t1Attack);
+
+  ctx.team1Survivors = new Set(
+    team1.players.filter((p) => outcome.kastContrib.get(p.input.id)?.s).map((p) => p.input.id),
+  );
+  ctx.team2Survivors = new Set(
+    team2.players.filter((p) => outcome.kastContrib.get(p.input.id)?.s).map((p) => p.input.id),
+  );
+  collectWeaponPool(team1, ctx.team1Survivors);
+  collectWeaponPool(team2, ctx.team2Survivors);
+
+  ctx.rounds.push({
+    round: ctx.roundNum,
+    winner: outcome.winner,
+    half,
+    score1: team1.score,
+    score2: team2.score,
+    team1Buy: buy1,
+    team2Buy: buy2,
+    team1Budget: budget1,
+    team2Budget: budget2,
+    event: outcome.event,
+    kills: outcome.kills.map((k) => ({
+      killerId: k.killerId,
+      victimId: k.victimId,
+      assistIds: k.assistantIds,
+      isFirstKill: k.isFirstKill,
+      timing: k.timing,
+    })),
+    loadouts,
+    plantTime: outcome.plantTime,
+    spikeDefused: outcome.spikeDefused,
+  });
+
+  ctx.roundNum++;
+}
+
+/**
+ * In-place halftime reset: economy, per-player streaks/hotness, weapon pools,
+ * team-level streaks, and the intra-half audible flag. Also rolls
+ * `tryHalftimeAdapt` for both teams. Returns fresh survivor sets (everyone alive).
+ */
+function doHalftimeReset(team1: TeamRuntime, team2: TeamRuntime): {
+  team1Survivors: Set<string>;
+  team2Survivors: Set<string>;
+} {
+  for (const t of [team1, team2]) {
+    for (const p of t.players) {
+      t.economy.set(p.input.id, {
+        credits: 800,
+        weapon: "Classic",
+        armor: "none",
+        weaponTier: 0,
+        fromPickup: false,
+      });
+      p.consecutiveDuelsWon = 0;
+      p.consecutiveDuelsLost = 0;
+      p.rollingImpact = 0;
+      p.hotness = 1.0;
+    }
+    t.weaponPool = [];
+    t.roundEntryId = null;
+    t.inSaveMode = false;
+    t.winStreak = 0;
+    t.lossStreak = 0;
+    t.lossesBonus = 0;
+    t.lossStreakAdaptedThisHalf = false;
+  }
+  tryHalftimeAdapt(team1, team2);
+  tryHalftimeAdapt(team2, team1);
+  return {
+    team1Survivors: new Set(team1.players.map((p) => p.input.id)),
+    team2Survivors: new Set(team2.players.map((p) => p.input.id)),
+  };
+}
+
+/** Build the final MapResultOut from end-of-map team runtimes + accumulated rounds. */
+function buildMapResult(
+  team1: TeamRuntime,
+  team2: TeamRuntime,
+  mapName: string,
+  rounds: RoundEvent[],
+): MapResultOut {
+  const playerStats: PlayerMapStatsOut[] = [];
+  for (const p of [...team1.players, ...team2.players]) {
+    const totalRounds = p.perRound.length;
+    const adr = totalRounds > 0 ? Math.round(p.total.damage / totalRounds) : 0;
+    const acs = totalRounds > 0 ? Math.round((p.total.k * 160 + p.total.a * 55 + adr * totalRounds * 0.8) / totalRounds) : 0;
+    playerStats.push({
+      playerId: p.input.id,
+      teamId: p.teamId,
+      ign: p.input.ign,
+      kills: p.total.k,
+      deaths: p.total.d,
+      assists: p.total.a,
+      acs,
+      fk: p.total.fk,
+      fd: p.total.fd,
+    });
+  }
+  const endOfMapHotness: EndOfMapHotness = {};
+  for (const p of [...team1.players, ...team2.players]) {
+    endOfMapHotness[p.input.id] = p.hotness;
+  }
+  return {
+    map: mapName,
+    score1: team1.score,
+    score2: team2.score,
+    rounds,
+    playerStats,
+    endOfMapHotness,
+  };
+}
+
+// ──────────────────────────────────────────────────────────
 // Main exports
 // ──────────────────────────────────────────────────────────
 
@@ -2976,187 +3184,31 @@ export function simulateMapDuel(
   applyMentalBoost(team2);
 
   const team1StartsAttack = options.team1StartsAttack ?? true;
-  const rounds: RoundEvent[] = [];
-  let roundNum = 1;
-
-  // Survivors from the prior round — drives which players keep their weapons and
-  // whose deaths feed the weaponPool. At round 1 everyone is "alive" (no prior round).
-  let team1Survivors = new Set(team1.players.map((p) => p.input.id));
-  let team2Survivors = new Set(team2.players.map((p) => p.input.id));
-
-  const runRound = (half: 1 | 2 | "OT", t1Attack: boolean, isPistol: boolean): void => {
-    const buy1 = planBuys(team1, isPistol, team1Survivors);
-    const buy2 = planBuys(team2, isPistol, team2Survivors);
-
-    // Ult usage decision — every round, each player with a ready ult has a
-    // chance to pop it. Pros don't ult every round even when ready: they save
-    // for high-impact moments. 50% chance per round if ready captures the
-    // pacing roughly (typically ult-ready 2-3 rounds before usage).
-    // Pistol rounds: no ults (insufficient orbs collected anyway).
-    //
-    // Effects are categorized per-agent (see ULT_CONFIG). Per-player buffs go
-    // on PlayerState; team-wide effects (info, zone, lockdown) propagate to
-    // the team's runtime fields so EVERY duel of that team gets the bonus.
-    for (const team of [team1, team2]) {
-      // Reset team-level ult effects from last round.
-      team.ultInfoEdge = 0;
-      team.ultZoneEdge = 0;
-      team.ultLockdownEdge = 0;
-      team.ultAbilityEdge = 0;
-      for (const p of team.players) {
-        p.isUsingUltThisRound = false;
-        p.ultMechEdgeThisRound = 0;
-        if (isPistol) continue;
-        if (p.ultPoints < p.ultMax) continue;
-        const cfg = ULT_CONFIG[p.agent];
-        // Sage holds her ult for mid-round revive (triggered by maybeSageRevive
-        // when her team falls into numeric disadvantage). Don't fire at round
-        // start.
-        if (cfg?.type === "revive") continue;
-        if (Math.random() >= 0.5) continue;
-        p.isUsingUltThisRound = true;
-        p.ultPoints = 0;
-        if (!cfg) {
-          // Unknown agent — generic small duel boost as fallback.
-          p.ultMechEdgeThisRound = 0.12;
-          continue;
-        }
-        if (cfg.type === "duel") {
-          p.ultMechEdgeThisRound = cfg.mechEdge ?? 0.15;
-        }
-        // Team-wide effects stack across multiple ulters via Math.max — two
-        // Sovas double-info doesn't double-stack the edge.
-        if (cfg.infoEdge) team.ultInfoEdge = Math.max(team.ultInfoEdge, cfg.infoEdge);
-        if (cfg.positionalEdge) team.ultZoneEdge = Math.max(team.ultZoneEdge, cfg.positionalEdge);
-        if (cfg.abilityEdge) team.ultAbilityEdge = Math.max(team.ultAbilityEdge, cfg.abilityEdge);
-        if (cfg.type === "lockdown") {
-          team.ultLockdownEdge = Math.max(
-            team.ultLockdownEdge,
-            cfg.positionalEdge ?? cfg.abilityEdge ?? 0.12,
-          );
-        }
-      }
-    }
-
-    const budget1 = avgCredits(team1);
-    const budget2 = avgCredits(team2);
-
-    // Snapshot post-buy loadouts BEFORE the round plays
-    const loadouts: PlayerLoadoutSnapshot[] = [];
-    for (const team of [team1, team2]) {
-      for (const p of team.players) {
-        const e = team.economy.get(p.input.id)!;
-        loadouts.push({
-          playerId: p.input.id,
-          weapon: e.weapon,
-          armor: e.armor,
-          creditsAfterBuy: e.credits,
-          fromPickup: e.fromPickup,
-        });
-      }
-    }
-
-    const outcome = simulateRound(team1, team2, roundNum, t1Attack, mapName);
-    applyRoundStats(outcome, team1, team2);
-    updateHotness(team1);
-    updateHotness(team2);
-
-    if (outcome.winner === 1) team1.score += 1; else team2.score += 1;
-    updateMomentum(team1, outcome.winner === 1);
-    updateMomentum(team2, outcome.winner === 2);
-    // Tier 2 — intra-half audible. After 3+ rounds lost in a row, the losing
-    // team rolls adaptation. Capped at one trigger per half.
-    tryMidHalfAdapt(team1);
-    tryMidHalfAdapt(team2);
-    awardCredits(team1, outcome.winner === 1, outcome.spiked && t1Attack);
-    awardCredits(team2, outcome.winner === 2, outcome.spiked && !t1Attack);
-
-    // Snapshot survivors from the round's KAST contribution — these keep their
-    // weapons next round. The dead feed the weaponPool for pickup.
-    team1Survivors = new Set(
-      team1.players.filter((p) => outcome.kastContrib.get(p.input.id)?.s).map((p) => p.input.id),
-    );
-    team2Survivors = new Set(
-      team2.players.filter((p) => outcome.kastContrib.get(p.input.id)?.s).map((p) => p.input.id),
-    );
-    collectWeaponPool(team1, team1Survivors);
-    collectWeaponPool(team2, team2Survivors);
-
-    rounds.push({
-      round: roundNum,
-      winner: outcome.winner,
-      half,
-      score1: team1.score,
-      score2: team2.score,
-      team1Buy: buy1,
-      team2Buy: buy2,
-      team1Budget: budget1,
-      team2Budget: budget2,
-      event: outcome.event,
-      kills: outcome.kills.map((k) => ({
-        killerId: k.killerId,
-        victimId: k.victimId,
-        assistIds: k.assistantIds,
-        isFirstKill: k.isFirstKill,
-        timing: k.timing,
-      })),
-      loadouts,
-      plantTime: outcome.plantTime,
-      spikeDefused: outcome.spikeDefused,
-    });
-
-    roundNum++;
+  const ctx: MapRoundCtx = {
+    team1,
+    team2,
+    mapName,
+    rounds: [],
+    roundNum: 1,
+    // Survivors from the prior round — drives which players keep their weapons.
+    // At round 1 everyone is "alive" (no prior round).
+    team1Survivors: new Set(team1.players.map((p) => p.input.id)),
+    team2Survivors: new Set(team2.players.map((p) => p.input.id)),
   };
 
   // ── First half: 12 rounds ──
   for (let i = 0; i < 12; i++) {
-    runRound(1, team1StartsAttack, i === 0);
+    executeRound(ctx, 1, team1StartsAttack, i === 0);
     if (team1.score >= 13 || team2.score >= 13) break;
   }
 
   // ── Second half ──
   if (team1.score < 13 && team2.score < 13) {
-    // Halftime reset — economy AND mental momentum. Without resetting
-    // hotness / streaks, the team that dominated H1 carried a huge "hot
-    // hand" buff into the H2 pistol round, which in real Valorant is much
-    // closer to a coin flip. Without this reset 10-2 first halves were
-    // turning into 11-round losing streaks because the cold side could
-    // never break out of the snowball.
-    for (const t of [team1, team2]) {
-      for (const p of t.players) {
-        t.economy.set(p.input.id, {
-          credits: 800,
-          weapon: "Classic",
-          armor: "none",
-          weaponTier: 0,
-          fromPickup: false,
-        });
-        // Reset per-player streaks/hotness so H2 starts fresh-headed.
-        p.consecutiveDuelsWon = 0;
-        p.consecutiveDuelsLost = 0;
-        p.rollingImpact = 0;
-        p.hotness = 1.0;
-      }
-      t.weaponPool = [];
-      t.roundEntryId = null;
-      t.inSaveMode = false;
-      // Team-level streaks too (drives tilt and loss-bonus escalation).
-      t.winStreak = 0;
-      t.lossStreak = 0;
-      t.lossesBonus = 0;
-      // Reset intra-half audible flag — both sides get one fresh chance in H2.
-      t.lossStreakAdaptedThisHalf = false;
-    }
-    // Tier 2 — halftime adaptation roll. The trailing side checks if their
-    // coaching staff found something. Applies before any H2 round so the
-    // H2 pistol already feels the shift.
-    tryHalftimeAdapt(team1, team2);
-    tryHalftimeAdapt(team2, team1);
-    team1Survivors = new Set(team1.players.map((p) => p.input.id));
-    team2Survivors = new Set(team2.players.map((p) => p.input.id));
-
+    const fresh = doHalftimeReset(team1, team2);
+    ctx.team1Survivors = fresh.team1Survivors;
+    ctx.team2Survivors = fresh.team2Survivors;
     for (let i = 0; i < 12; i++) {
-      runRound(2, !team1StartsAttack, i === 0);
+      executeRound(ctx, 2, !team1StartsAttack, i === 0);
       if (team1.score >= 13 || team2.score >= 13) break;
     }
   }
@@ -3164,49 +3216,227 @@ export function simulateMapDuel(
   // ── Overtime (MR2: always play both rounds) ──
   while (team1.score === team2.score && team1.score >= 12) {
     for (let otPair = 0; otPair < 2; otPair++) {
-      runRound("OT", otPair === 0, false);
+      executeRound(ctx, "OT", otPair === 0, false);
     }
   }
-
-  // ── Build player stats ──
-  const playerStats: PlayerMapStatsOut[] = [];
-  for (const p of [...team1.players, ...team2.players]) {
-    const totalRounds = p.perRound.length;
-    const adr = totalRounds > 0 ? Math.round(p.total.damage / totalRounds) : 0;
-    const acs = totalRounds > 0 ? Math.round((p.total.k * 160 + p.total.a * 55 + adr * totalRounds * 0.8) / totalRounds) : 0;
-    playerStats.push({
-      playerId: p.input.id,
-      teamId: p.teamId,
-      ign: p.input.ign,
-      kills: p.total.k,
-      deaths: p.total.d,
-      assists: p.total.a,
-      acs,
-      fk: p.total.fk,
-      fd: p.total.fd,
-    });
-  }
-
-  // Ensure kills_A ≈ deaths_B via slight rebalance if needed (should be tight already)
-  // Our duel system naturally enforces this: each kill = 1 death.
 
   // Ignore unused var warning
   void gauss;
 
-  // End-of-map hotness for series continuity
-  const endOfMapHotness: EndOfMapHotness = {};
-  for (const p of [...team1.players, ...team2.players]) {
-    endOfMapHotness[p.input.id] = p.hotness;
+  return buildMapResult(team1, team2, mapName, ctx.rounds);
+}
+
+// ──────────────────────────────────────────────────────────
+// Split-by-half exports — used by the cinematic half-time pause UI
+// ──────────────────────────────────────────────────────────
+
+/**
+ * Per-player state that persists across the half-time boundary. Hotness,
+ * streaks, rolling impact and economy are intentionally RESET at halftime
+ * (see doHalftimeReset). Ult points + cumulative kills/deaths/per-round
+ * history carry across because they represent map-long progression.
+ */
+export interface HalftimePlayerState {
+  playerId: string;
+  ultPoints: number;
+  total: RoundStats;
+  perRound: RoundStats[];
+}
+
+/**
+ * Serializable state at the half-time boundary. Returned by
+ * simulateMapDuelHalf1, consumed by simulateMapDuelHalf2 to resume the map.
+ *
+ * NOTE: this state is shipped over the wire (tRPC), so it must remain JSON-
+ * serializable. Sets/Maps stored in TeamRuntime are NOT in here — they get
+ * rebuilt cleanly via doHalftimeReset() on resume.
+ */
+export interface HalftimeState {
+  /** Map name being simulated — sanity check on resume. */
+  mapName: string;
+  team1StartsAttack: boolean;
+  team1: {
+    score: number;
+    adaptationEdge: number;
+    players: HalftimePlayerState[];
+  };
+  team2: {
+    score: number;
+    adaptationEdge: number;
+    players: HalftimePlayerState[];
+  };
+  rounds: RoundEvent[];
+}
+
+/** Result of simulateMapDuelHalf1 — partial scores + halftime handoff. */
+export interface MapFirstHalfResultOut {
+  map: string;
+  score1: number;
+  score2: number;
+  rounds: RoundEvent[];
+  /** Partial per-player stats through H1 only — drives the halftime scoreboard. */
+  playerStats: PlayerMapStatsOut[];
+  halftimeState: HalftimeState;
+}
+
+/** Build a freshly-constructed pair of TeamRuntimes from inputs + options. */
+function buildBothRuntimes(
+  team1Input: SimTeamInput,
+  team2Input: SimTeamInput,
+  mapName: string,
+  options: DuelMapOptions,
+): { team1: TeamRuntime; team2: TeamRuntime } {
+  const team1 = buildTeamRuntime(team1Input, options.team1Agents, mapName, options.agentMastery, options.priorHotness, options.team1AwperId);
+  const team2 = buildTeamRuntime(team2Input, options.team2Agents, mapName, options.agentMastery, options.priorHotness, options.team2AwperId);
+  team1.pairs = options.team1Pairs;
+  team2.pairs = options.team2Pairs;
+
+  if (options.team1CoachBoost) team1.input.skillUtility += options.team1CoachBoost * 0.05;
+  if (options.team2CoachBoost) team2.input.skillUtility += options.team2CoachBoost * 0.05;
+
+  team1.coachAdaptation = options.team1CoachAdaptation ?? 50;
+  team2.coachAdaptation = options.team2CoachAdaptation ?? 50;
+  team1.coachMental = options.team1CoachMental ?? 50;
+  team2.coachMental = options.team2CoachMental ?? 50;
+
+  const applyMentalBoost = (team: TeamRuntime) => {
+    const bonus = (team.coachMental - 50) / 500;
+    for (const p of team.players) {
+      p.tiltResistance = clamp(p.tiltResistance + bonus, 0.35, 0.95);
+    }
+  };
+  applyMentalBoost(team1);
+  applyMentalBoost(team2);
+
+  return { team1, team2 };
+}
+
+/** Snapshot the carryover state for ONE team at halftime. */
+function snapshotHalftimeTeam(team: TeamRuntime): HalftimeState["team1"] {
+  return {
+    score: team.score,
+    adaptationEdge: team.adaptationEdge,
+    players: team.players.map((p) => ({
+      playerId: p.input.id,
+      ultPoints: p.ultPoints,
+      total: { ...p.total },
+      perRound: p.perRound.map((r) => ({ ...r })),
+    })),
+  };
+}
+
+/** Restore the carryover state onto a freshly-built team for H2 resume. */
+function restoreHalftimeTeam(team: TeamRuntime, snap: HalftimeState["team1"]): void {
+  team.score = snap.score;
+  team.adaptationEdge = snap.adaptationEdge;
+  for (const p of team.players) {
+    const ps = snap.players.find((sp) => sp.playerId === p.input.id);
+    if (!ps) continue;
+    p.ultPoints = ps.ultPoints;
+    p.total = { ...ps.total };
+    p.perRound = ps.perRound.map((r) => ({ ...r }));
   }
+}
+
+/**
+ * Simulate the first half (up to 12 rounds, or until one side hits 13).
+ * Returns a JSON-serializable HalftimeState so the caller can resume mid-map.
+ */
+export function simulateMapDuelHalf1(
+  team1Input: SimTeamInput,
+  team2Input: SimTeamInput,
+  mapName: string,
+  options: DuelMapOptions = {},
+): MapFirstHalfResultOut {
+  const { team1, team2 } = buildBothRuntimes(team1Input, team2Input, mapName, options);
+  const team1StartsAttack = options.team1StartsAttack ?? true;
+  const ctx: MapRoundCtx = {
+    team1,
+    team2,
+    mapName,
+    rounds: [],
+    roundNum: 1,
+    team1Survivors: new Set(team1.players.map((p) => p.input.id)),
+    team2Survivors: new Set(team2.players.map((p) => p.input.id)),
+  };
+
+  for (let i = 0; i < 12; i++) {
+    executeRound(ctx, 1, team1StartsAttack, i === 0);
+    if (team1.score >= 13 || team2.score >= 13) break;
+  }
+
+  void gauss;
+
+  // Build partial stats off the post-H1 runtimes so the halftime scoreboard
+  // matches what the UI will show.
+  const partial = buildMapResult(team1, team2, mapName, ctx.rounds);
 
   return {
     map: mapName,
     score1: team1.score,
     score2: team2.score,
-    rounds,
-    playerStats,
-    endOfMapHotness,
+    rounds: ctx.rounds,
+    playerStats: partial.playerStats,
+    halftimeState: {
+      mapName,
+      team1StartsAttack,
+      team1: snapshotHalftimeTeam(team1),
+      team2: snapshotHalftimeTeam(team2),
+      rounds: ctx.rounds,
+    },
   };
+}
+
+/**
+ * Simulate the second half + overtime, resuming from a HalftimeState produced
+ * by simulateMapDuelHalf1. Rebuilds fresh team runtimes from inputs, restores
+ * cumulative carryover, applies the half-time reset (with adaptation roll),
+ * then runs H2 + OT. Returns the full final MapResultOut including H1+H2 rounds.
+ */
+export function simulateMapDuelHalf2(
+  state: HalftimeState,
+  team1Input: SimTeamInput,
+  team2Input: SimTeamInput,
+  options: DuelMapOptions = {},
+): MapResultOut {
+  const { team1, team2 } = buildBothRuntimes(team1Input, team2Input, state.mapName, options);
+  restoreHalftimeTeam(team1, state.team1);
+  restoreHalftimeTeam(team2, state.team2);
+
+  const ctx: MapRoundCtx = {
+    team1,
+    team2,
+    mapName: state.mapName,
+    // We accumulate ALL rounds (H1 from state + H2/OT we're about to play).
+    rounds: state.rounds.map((r) => ({ ...r, kills: r.kills.map((k) => ({ ...k })), loadouts: r.loadouts.map((l) => ({ ...l })) })),
+    // H2 starts at round 13 (or whatever's after H1's last round; preserves
+    // numbering when H1 ended early on a 13-X half).
+    roundNum: state.rounds.length + 1,
+    team1Survivors: new Set(team1.players.map((p) => p.input.id)),
+    team2Survivors: new Set(team2.players.map((p) => p.input.id)),
+  };
+
+  // Only run H2 if neither side already won on a comeback in H1 (defensive —
+  // a 13-X half ends the map before half-time).
+  if (team1.score < 13 && team2.score < 13) {
+    const fresh = doHalftimeReset(team1, team2);
+    ctx.team1Survivors = fresh.team1Survivors;
+    ctx.team2Survivors = fresh.team2Survivors;
+    for (let i = 0; i < 12; i++) {
+      executeRound(ctx, 2, !state.team1StartsAttack, i === 0);
+      if (team1.score >= 13 || team2.score >= 13) break;
+    }
+  }
+
+  while (team1.score === team2.score && team1.score >= 12) {
+    for (let otPair = 0; otPair < 2; otPair++) {
+      executeRound(ctx, "OT", otPair === 0, false);
+    }
+  }
+
+  void gauss;
+
+  return buildMapResult(team1, team2, state.mapName, ctx.rounds);
 }
 
 function avgCredits(team: TeamRuntime): number {

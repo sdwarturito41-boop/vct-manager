@@ -45,6 +45,7 @@ model Save {
   playerStatSnapshots PlayerStatSnapshot[]
   shortlists      Shortlist[]
   staff           Staff[]
+  recruitmentRequirements RecruitmentRequirement[]
 }
 
 model Team {
@@ -142,6 +143,7 @@ model Team {
   outgoingTransferOffers TransferOffer[] @relation("OffersFromTeam")
   trainingSessions       TrainingSession[]
   shortlist              Shortlist[]
+  recruitmentRequirements RecruitmentRequirement[]
   messages        Message[]
   createdAt       DateTime  @default(now())
   matchesAsTeam1  Match[]   @relation("Team1")
@@ -794,9 +796,40 @@ model Shortlist {
   playerId    String
   player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
   addedWeek   Int      // absolute week index (season * 52 + week)
+  // Scouting V2 — snapshot the game day + analyst skill at scout-start so
+  // the tier-based reveal stays valid even if the analyst is later sold or
+  // fired. Once a tier unlocks it stays unlocked. Default 0 for legacy rows
+  // (will fall through tier-0 = no reveal until a refresh).
+  addedDay              Int      @default(0)
+  scoutingAnalystSkill  Int      @default(0)
+  // Highest tier we've already notified the user about — daily reveal scan
+  // fires an inbox message whenever the current tier > this, then bumps it.
+  lastRevealedTier      Int      @default(0)
   createdAt   DateTime @default(now())
 
   @@unique([teamId, playerId])
   @@index([saveId, teamId])
   @@index([saveId, playerId])
+}
+
+/// FM-style recruitment requirement — the manager declares what they need
+/// ("Senior Sentinel under $20k/wk, EMEA, OVR ≥ 12") and the system surfaces
+/// matching candidates on demand. Status flips to FULFILLED when the team
+/// signs a player satisfying all filters (manual or auto), or CANCELLED on
+/// user delete. Open requirements stay visible in the Recruitment Hub.
+model RecruitmentRequirement {
+  id          String   @id @default(cuid())
+  saveId      String
+  save        Save     @relation(fields: [saveId], references: [id], onDelete: Cascade)
+  teamId      String
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  label       String   // free-form, manager-typed ("Replace marteen", "depth Duelist")
+  role        Role?    // null = any role
+  region      Region?  // null = any region
+  minOverall  Int?     // null = any
+  maxSalary   Int?     // weekly, null = any
+  status      String   @default("OPEN") // OPEN | FULFILLED | CANCELLED
+  createdAt   DateTime @default(now())
+
+  @@index([saveId, teamId])
 }

@@ -166,6 +166,32 @@ export interface SimMapOptions {
   /** Mercato V3 — pre-fetched pair maps (DUO/CLASH strengths) for each side. */
   team1Pairs?: Map<string, number>;
   team2Pairs?: Map<string, number>;
+  /** Tactical-timeout bonus chosen by the user between maps. Applied only to
+   *  the user's side (the caller decides which is team1/team2). */
+  team1TimeoutBonus?: TimeoutBonus;
+  team2TimeoutBonus?: TimeoutBonus;
+}
+
+/** Effective per-map bonus deltas produced by a Tactical Timeout choice. */
+export interface TimeoutBonus {
+  /** Adds to coachAdaptation (mid-round adaptations stronger). 0-1 scale. */
+  adaptationDelta?: number;
+  /** Adds to coachMental (tilt resistance). 0-1 scale (0.10 = +10%). */
+  mentalDelta?: number;
+  /** Reset hotness/momentum for one specific player (medical timeout). */
+  resetHotnessPlayerId?: string;
+}
+
+/** Maps the user-facing timeout choice to the sim's delta knobs. */
+export function timeoutTypeToBonus(
+  type: "tactical" | "motivational" | "medical" | "skip" | undefined,
+  resetHotnessPlayerId?: string,
+): TimeoutBonus | undefined {
+  if (!type || type === "skip") return undefined;
+  if (type === "tactical") return { adaptationDelta: 0.02 };
+  if (type === "motivational") return { mentalDelta: 0.10 };
+  if (type === "medical") return { resetHotnessPlayerId };
+  return undefined;
 }
 
 // ── Helpers ──
@@ -777,7 +803,13 @@ function simulateRounds(
 
 // ── Simulate a single map (delegates to duel engine) ──
 
-import { simulateMapDuel } from "./duelEngine";
+import {
+  simulateMapDuel,
+  simulateMapDuelHalf1,
+  simulateMapDuelHalf2,
+  type HalftimeState,
+} from "./duelEngine";
+export type { HalftimeState } from "./duelEngine";
 
 export function simulateMap(
   team1: SimTeam,
@@ -785,6 +817,26 @@ export function simulateMap(
   mapName: string,
   options?: SimMapOptions & { priorHotness?: Record<string, number> },
 ): MapResult & { endOfMapHotness?: Record<string, number> } {
+  // Fold timeout deltas onto the existing coach values — same knob, just
+  // temporarily boosted. Tactical → adaptation, Motivational → mental.
+  // Medical resets a specific player's hotness, handled inside duelEngine.
+  const t1Bonus = options?.team1TimeoutBonus;
+  const t2Bonus = options?.team2TimeoutBonus;
+  const adapt1 = (options?.team1CoachAdaptation ?? 50) + (t1Bonus?.adaptationDelta ?? 0) * 100;
+  const adapt2 = (options?.team2CoachAdaptation ?? 50) + (t2Bonus?.adaptationDelta ?? 0) * 100;
+  const mental1 = (options?.team1CoachMental ?? 50) + (t1Bonus?.mentalDelta ?? 0) * 100;
+  const mental2 = (options?.team2CoachMental ?? 50) + (t2Bonus?.mentalDelta ?? 0) * 100;
+
+  // Medical timeout — wipe the prior hotness for the targeted player so they
+  // start the map at 1.0 (resets a cold streak from previous map).
+  let priorHotness = options?.priorHotness;
+  for (const b of [t1Bonus, t2Bonus]) {
+    if (b?.resetHotnessPlayerId && priorHotness) {
+      priorHotness = { ...priorHotness };
+      delete priorHotness[b.resetHotnessPlayerId];
+    }
+  }
+
   const result = simulateMapDuel(team1, team2, mapName, {
     team1Agents: options?.team1Agents?.map((a) => ({ playerId: a.playerId, agentName: a.agentName })),
     team2Agents: options?.team2Agents?.map((a) => ({ playerId: a.playerId, agentName: a.agentName })),
@@ -793,11 +845,11 @@ export function simulateMap(
     agentMastery: options?.agentMastery,
     team1CoachBoost: options?.team1CoachBoost,
     team2CoachBoost: options?.team2CoachBoost,
-    team1CoachAdaptation: options?.team1CoachAdaptation,
-    team2CoachAdaptation: options?.team2CoachAdaptation,
-    team1CoachMental: options?.team1CoachMental,
-    team2CoachMental: options?.team2CoachMental,
-    priorHotness: options?.priorHotness,
+    team1CoachAdaptation: adapt1,
+    team2CoachAdaptation: adapt2,
+    team1CoachMental: mental1,
+    team2CoachMental: mental2,
+    priorHotness,
     team1Pairs: options?.team1Pairs,
     team2Pairs: options?.team2Pairs,
   });
@@ -806,6 +858,120 @@ export function simulateMap(
 
   return {
     map: mapName,
+    score1: result.score1,
+    score2: result.score2,
+    rounds: result.rounds,
+    playerStats: result.playerStats,
+    highlights,
+    endOfMapHotness: result.endOfMapHotness,
+  };
+}
+
+// ── Split-by-half wrappers: cinematic half-time pause UI ──
+
+/** Folds TimeoutBonus deltas + priorHotness into DuelMapOptions. Shared by H1/H2 wrappers. */
+function buildDuelOptionsForHalf(
+  options: (SimMapOptions & { priorHotness?: Record<string, number> }) | undefined,
+): Parameters<typeof simulateMapDuel>[3] {
+  const t1Bonus = options?.team1TimeoutBonus;
+  const t2Bonus = options?.team2TimeoutBonus;
+  const adapt1 = (options?.team1CoachAdaptation ?? 50) + (t1Bonus?.adaptationDelta ?? 0) * 100;
+  const adapt2 = (options?.team2CoachAdaptation ?? 50) + (t2Bonus?.adaptationDelta ?? 0) * 100;
+  const mental1 = (options?.team1CoachMental ?? 50) + (t1Bonus?.mentalDelta ?? 0) * 100;
+  const mental2 = (options?.team2CoachMental ?? 50) + (t2Bonus?.mentalDelta ?? 0) * 100;
+
+  let priorHotness = options?.priorHotness;
+  for (const b of [t1Bonus, t2Bonus]) {
+    if (b?.resetHotnessPlayerId && priorHotness) {
+      priorHotness = { ...priorHotness };
+      delete priorHotness[b.resetHotnessPlayerId];
+    }
+  }
+
+  return {
+    team1Agents: options?.team1Agents?.map((a) => ({ playerId: a.playerId, agentName: a.agentName })),
+    team2Agents: options?.team2Agents?.map((a) => ({ playerId: a.playerId, agentName: a.agentName })),
+    team1StartsAttack: options?.team1StartsAttack,
+    currentWeek: options?.currentWeek,
+    agentMastery: options?.agentMastery,
+    team1CoachBoost: options?.team1CoachBoost,
+    team2CoachBoost: options?.team2CoachBoost,
+    team1CoachAdaptation: adapt1,
+    team2CoachAdaptation: adapt2,
+    team1CoachMental: mental1,
+    team2CoachMental: mental2,
+    priorHotness,
+    team1Pairs: options?.team1Pairs,
+    team2Pairs: options?.team2Pairs,
+  };
+}
+
+export interface MapHalf1Result {
+  map: string;
+  score1: number;
+  score2: number;
+  rounds: MapResult["rounds"];
+  playerStats: MapResult["playerStats"];
+  highlights: MapResult["highlights"];
+  halftimeState: HalftimeState;
+}
+
+/** Simulate H1 only, return halftime handoff for the cinematic pause UI. */
+export function simulateMapHalf1(
+  team1: SimTeam,
+  team2: SimTeam,
+  mapName: string,
+  options?: SimMapOptions & { priorHotness?: Record<string, number> },
+): MapHalf1Result {
+  const duelOptions = buildDuelOptionsForHalf(options);
+  const result = simulateMapDuelHalf1(team1, team2, mapName, duelOptions);
+
+  // Partial highlights at half-time — gives the UI something punchy to render
+  // for the scoreboard pause (top fragger, eco wins, etc. so far).
+  const highlights = generateHighlights(
+    mapName,
+    team1.name,
+    team2.name,
+    result.score1,
+    result.score2,
+    result.playerStats,
+  );
+
+  return {
+    map: mapName,
+    score1: result.score1,
+    score2: result.score2,
+    rounds: result.rounds,
+    playerStats: result.playerStats,
+    highlights,
+    halftimeState: result.halftimeState,
+  };
+}
+
+/**
+ * Resume from H1 handoff. Pass NEW TimeoutBonuses here to inject the
+ * half-time TO choice — those modify coach values for the rebuilt H2 runtimes.
+ */
+export function simulateMapHalf2(
+  state: HalftimeState,
+  team1: SimTeam,
+  team2: SimTeam,
+  options?: SimMapOptions & { priorHotness?: Record<string, number> },
+): MapResult & { endOfMapHotness?: Record<string, number> } {
+  const duelOptions = buildDuelOptionsForHalf(options);
+  const result = simulateMapDuelHalf2(state, team1, team2, duelOptions);
+
+  const highlights = generateHighlights(
+    state.mapName,
+    team1.name,
+    team2.name,
+    result.score1,
+    result.score2,
+    result.playerStats,
+  );
+
+  return {
+    map: state.mapName,
     score1: result.score1,
     score2: result.score2,
     rounds: result.rounds,

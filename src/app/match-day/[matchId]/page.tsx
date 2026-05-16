@@ -111,6 +111,7 @@ type Phase =
   | "SIDE_SELECT"
   | "AGENTS"
   | "SIMULATING"
+  | "HALFTIME"
   | "LIVE"
   | "RESULT"
   | "TIMEOUT"
@@ -307,6 +308,8 @@ export default function MatchDayPage() {
   );
 
   const simulateMapMut = trpc.match.simulateMap.useMutation();
+  const simulateMapHalf1Mut = trpc.match.simulateMapHalf1.useMutation();
+  const simulateMapHalf2Mut = trpc.match.simulateMapHalf2.useMutation();
   const finalizeMatchMut = trpc.match.finalizeMatch.useMutation();
   const executeVetoMut = trpc.veto.executeVeto.useMutation();
 
@@ -343,6 +346,16 @@ export default function MatchDayPage() {
   const [liveOverlay, setLiveOverlay] = useState<string | null>(null);
   const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [timeoutUsedThisHalf, setTimeoutUsedThisHalf] = useState(false);
+
+  // ── HALFTIME phase state (cinematic mid-map pause between H1 sim and H2 sim) ──
+  const halftimeStateRef = useRef<unknown>(null);
+  const [halftimePartial, setHalftimePartial] = useState<{
+    score1: number;
+    score2: number;
+    playerStats: PlayerStat[];
+  } | null>(null);
+  const [halftimeBonus, setHalftimeBonus] = useState<TimeoutBonus | null>(null);
+  const [halftimeApplied, setHalftimeApplied] = useState(false);
 
   // ── Derived data ──
   const format = vetoState && !vetoState.done ? vetoState.format : "BO3";
@@ -681,11 +694,54 @@ export default function MatchDayPage() {
     }));
 
     try {
-      const result = await simulateMapMut.mutateAsync({
+      // ── Phase 1: simulate H1 only, pause at half-time ──
+      const h1 = await simulateMapHalf1Mut.mutateAsync({
         matchId,
         mapName: currentMap.mapName,
         side: currentMap.playerSide,
         playerAgents: playerAgentArr,
+        timeoutType: timeoutBonus?.type,
+        timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
+      });
+
+      halftimeStateRef.current = h1.halftimeState;
+      setHalftimePartial({
+        score1: h1.score1,
+        score2: h1.score2,
+        playerStats: h1.playerStats,
+      });
+      setHalftimeBonus(null);
+      setHalftimeApplied(false);
+
+      await new Promise((r) => setTimeout(r, 600));
+      transitionTo("HALFTIME");
+    } catch {
+      transitionTo("AGENTS");
+    }
+  }
+
+  // ── Halftime → resume H2 with the user's mid-map TO choice ──
+  async function handleHalftimeContinue() {
+    const currentMap = mapLineup[currentMapIndex];
+    if (!currentMap || !halftimeStateRef.current) return;
+
+    const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
+      playerId: p.id,
+      agentName: agentPicks[p.id]!,
+    }));
+
+    setHalftimeApplied(true);
+    transitionTo("SIMULATING");
+
+    try {
+      const result = await simulateMapHalf2Mut.mutateAsync({
+        matchId,
+        mapName: currentMap.mapName,
+        side: currentMap.playerSide,
+        playerAgents: playerAgentArr,
+        halftimeState: halftimeStateRef.current,
+        halftimeTimeoutType: halftimeBonus?.type,
+        halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
       });
 
       const mapResult: MapResultData = {
@@ -695,18 +751,14 @@ export default function MatchDayPage() {
         playerStats: result.playerStats,
         highlights: result.highlights,
       };
-
-      const newResults = [...mapResults, mapResult];
-      setMapResults(newResults);
+      setMapResults((prev) => [...prev, mapResult]);
 
       const team1Won = result.score1 > result.score2;
-      const newSeriesScore = {
-        team1: seriesScore.team1 + (team1Won ? 1 : 0),
-        team2: seriesScore.team2 + (team1Won ? 0 : 1),
-      };
-      setSeriesScore(newSeriesScore);
+      setSeriesScore((prev) => ({
+        team1: prev.team1 + (team1Won ? 1 : 0),
+        team2: prev.team2 + (team1Won ? 0 : 1),
+      }));
 
-      // Store rounds for LIVE phase and transition
       const rounds = (result as { rounds?: RoundEvent[] }).rounds ?? [];
       setLiveRounds(rounds);
       setDisplayedRoundCount(0);
@@ -715,7 +767,8 @@ export default function MatchDayPage() {
       await new Promise((r) => setTimeout(r, 600));
       transitionTo("LIVE");
     } catch {
-      transitionTo("AGENTS");
+      transitionTo("HALFTIME");
+      setHalftimeApplied(false);
     }
   }
 
@@ -2376,6 +2429,224 @@ export default function MatchDayPage() {
       })()}
 
       {/* ================================================================ */}
+      {/* ─── HALFTIME PHASE ─── (mid-map: between H1 and H2)              */}
+      {/* ================================================================ */}
+      {phase === "HALFTIME" && halftimePartial && currentMap && (() => {
+        const playerTeamId = isTeam1 ? team1Id : team2Id;
+        const myScore = isTeam1 ? halftimePartial.score1 : halftimePartial.score2;
+        const oppScore = isTeam1 ? halftimePartial.score2 : halftimePartial.score1;
+        const myStats = halftimePartial.playerStats
+          .filter((p) => p.teamId === playerTeamId)
+          .sort((a, b) => b.acs - a.acs);
+        const oppStats = halftimePartial.playerStats
+          .filter((p) => p.teamId !== playerTeamId)
+          .sort((a, b) => b.acs - a.acs);
+
+        const halftimeOptions: {
+          id: TimeoutBonus["type"];
+          title: string;
+          description: string;
+          effect: string;
+          icon: React.ReactNode;
+          bonus: TimeoutBonus;
+        }[] = [
+          {
+            id: "tactical",
+            title: "Pause tactique",
+            description: "Briefing tactique pour la 2e mi-temps",
+            effect: "+2% adaptation pour H2",
+            icon: <span className="text-xl">🧠</span>,
+            bonus: { type: "tactical", counterBonusDelta: 0.02 },
+          },
+          {
+            id: "motivational",
+            title: "Discours motivation",
+            description: "Le coach remonte le moral du roster",
+            effect: "+10% résistance au tilt H2",
+            icon: <span className="text-xl">🔥</span>,
+            bonus: { type: "motivational", teamplayDelta: 0.1 },
+          },
+          {
+            id: "medical",
+            title: "Pause médicale",
+            description: "Reset hotness du joueur le moins en forme",
+            effect: "Reset variance joueur",
+            icon: <span className="text-xl">⚕️</span>,
+            bonus: {
+              type: "medical",
+              resetVariancePlayerId: myStats[myStats.length - 1]?.playerId,
+            },
+          },
+        ];
+
+        return (
+          <div className="relative flex min-h-screen items-center justify-center px-6 py-10">
+            <div
+              className="fixed inset-0 bg-cover bg-center"
+              style={{
+                backgroundImage: `url(${getMapImage(currentMap.mapName)})`,
+                filter: "blur(14px) brightness(0.18) saturate(0.6)",
+              }}
+            />
+            <div
+              className="fixed inset-0"
+              style={{
+                background:
+                  "radial-gradient(ellipse at center, rgba(198,155,58,0.05) 0%, rgba(10,10,15,0.92) 70%)",
+              }}
+            />
+
+            <div className="relative z-10 mx-auto w-full max-w-5xl">
+              {/* Banner */}
+              <div className="text-center">
+                <div
+                  className="text-[10px] font-bold uppercase tracking-[0.4em]"
+                  style={{ color: "rgba(236,232,225,0.25)" }}
+                >
+                  Mi-temps · Map {currentMapIndex + 1} · {currentMap.mapName}
+                </div>
+                <div className="mt-3 flex items-center justify-center gap-8 text-6xl font-black tabular-nums">
+                  <span
+                    style={{
+                      color: myScore > oppScore ? C.green : C.white,
+                      textShadow: "0 4px 20px rgba(0,0,0,0.4)",
+                    }}
+                  >
+                    {myScore}
+                  </span>
+                  <span
+                    className="text-3xl"
+                    style={{ color: "rgba(236,232,225,0.2)" }}
+                  >
+                    ·
+                  </span>
+                  <span
+                    style={{
+                      color: oppScore > myScore ? C.red : C.white,
+                      textShadow: "0 4px 20px rgba(0,0,0,0.4)",
+                    }}
+                  >
+                    {oppScore}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-center gap-12 text-xs font-bold uppercase tracking-[0.2em]">
+                  <span style={{ color: "rgba(236,232,225,0.5)" }}>
+                    {playerTeamTag}
+                  </span>
+                  <span style={{ color: "rgba(236,232,225,0.5)" }}>
+                    {enemyTeamTag}
+                  </span>
+                </div>
+              </div>
+
+              {/* Mini scoreboard */}
+              <div className="mt-8 grid grid-cols-2 gap-3">
+                <HalftimeStatList title="Votre équipe" players={myStats} accent={C.gold} />
+                <HalftimeStatList title="Adversaire" players={oppStats} accent="#555" />
+              </div>
+
+              {/* TO picker */}
+              <div className="mt-8">
+                <div
+                  className="mb-3 text-center text-[10px] font-bold uppercase tracking-[0.3em]"
+                  style={{ color: "rgba(236,232,225,0.35)" }}
+                >
+                  Briefing mi-temps · Choisissez votre approche
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  {halftimeOptions.map((opt) => {
+                    const selected = halftimeBonus?.type === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        disabled={halftimeApplied}
+                        onClick={() => setHalftimeBonus(opt.bonus)}
+                        className="rounded-md p-4 text-left transition-all"
+                        style={{
+                          background: selected
+                            ? "rgba(74,230,138,0.06)"
+                            : "rgba(18,18,26,0.8)",
+                          border: selected
+                            ? "1px solid rgba(74,230,138,0.3)"
+                            : "1px solid rgba(255,255,255,0.06)",
+                          opacity: halftimeApplied ? 0.6 : 1,
+                          cursor: halftimeApplied ? "default" : "pointer",
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          {opt.icon}
+                          <div
+                            className="text-xs font-black uppercase tracking-[0.15em]"
+                            style={{ color: C.white }}
+                          >
+                            {opt.title}
+                          </div>
+                        </div>
+                        <div
+                          className="mt-1 text-[11px]"
+                          style={{ color: "rgba(236,232,225,0.55)" }}
+                        >
+                          {opt.description}
+                        </div>
+                        <div
+                          className="mt-2 text-[10px] font-bold uppercase tracking-[0.1em]"
+                          style={{ color: C.gold }}
+                        >
+                          {opt.effect}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* Skip option */}
+                <button
+                  type="button"
+                  disabled={halftimeApplied}
+                  onClick={() => setHalftimeBonus({ type: "skip" })}
+                  className="mt-3 w-full rounded-md py-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all"
+                  style={{
+                    background:
+                      halftimeBonus?.type === "skip"
+                        ? "rgba(74,230,138,0.06)"
+                        : "rgba(18,18,26,0.4)",
+                    border:
+                      halftimeBonus?.type === "skip"
+                        ? "1px solid rgba(74,230,138,0.25)"
+                        : "1px solid rgba(255,255,255,0.04)",
+                    color: "rgba(236,232,225,0.5)",
+                    opacity: halftimeApplied ? 0.6 : 1,
+                    cursor: halftimeApplied ? "default" : "pointer",
+                  }}
+                >
+                  Pas de timeout
+                </button>
+              </div>
+
+              {/* Continue CTA */}
+              <div className="mt-8 flex justify-center">
+                <button
+                  type="button"
+                  disabled={!halftimeBonus || halftimeApplied}
+                  onClick={handleHalftimeContinue}
+                  className="rounded-md px-12 py-4 text-sm font-black uppercase tracking-[0.2em] text-white transition-all disabled:opacity-30"
+                  style={{
+                    background: C.red,
+                    boxShadow: halftimeBonus && !halftimeApplied
+                      ? "0 0 40px rgba(255,70,85,0.35)"
+                      : "none",
+                    cursor: !halftimeBonus || halftimeApplied ? "default" : "pointer",
+                  }}
+                >
+                  {halftimeApplied ? "Chargement…" : "Démarrer la 2e mi-temps →"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ================================================================ */}
       {/* ─── TIMEOUT PHASE ─── (between maps)                            */}
       {/* ================================================================ */}
       {phase === "TIMEOUT" && (() => {
@@ -2667,6 +2938,65 @@ export default function MatchDayPage() {
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ── Helper component: mini-scoreboard for the HALFTIME pause ──
+
+function HalftimeStatList({
+  title,
+  players,
+  accent,
+}: {
+  title: string;
+  players: PlayerStat[];
+  accent: string;
+}) {
+  return (
+    <div
+      className="rounded-md p-3"
+      style={{
+        background: "rgba(18,18,26,0.7)",
+        border: "1px solid rgba(255,255,255,0.04)",
+      }}
+    >
+      <div
+        className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em]"
+        style={{ color: "rgba(236,232,225,0.45)" }}
+      >
+        <span
+          className="h-2 w-1 rounded-sm"
+          style={{ background: accent }}
+        />
+        {title}
+      </div>
+      <div className="space-y-1">
+        {players.map((p) => {
+          const kd = p.deaths > 0 ? p.kills / p.deaths : p.kills;
+          return (
+            <div
+              key={p.playerId}
+              className="flex items-center justify-between rounded-sm px-2 py-1.5 text-xs"
+              style={{
+                background: "rgba(255,255,255,0.02)",
+                color: "#ECE8E1",
+              }}
+            >
+              <span className="font-bold truncate">{p.ign}</span>
+              <span className="flex items-center gap-3 tabular-nums">
+                <span style={{ color: "rgba(236,232,225,0.5)" }}>
+                  {p.kills}/{p.deaths}/{p.assists}
+                </span>
+                <span style={{ color: kd >= 1 ? "#4AE68A" : "#FF8888" }}>
+                  {kd.toFixed(2)}
+                </span>
+                <span style={{ color: "#C69B3A" }}>{p.acs.toFixed(0)}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
