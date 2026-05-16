@@ -363,6 +363,10 @@ export default function MatchDayPage() {
   // Round index from which RoundByRoundScreen should start playback. 0 for H1,
   // h1.rounds.length for H2 (skips the H1 rounds we already showed).
   const [liveStartFromRound, setLiveStartFromRound] = useState(0);
+  // Monotonic counter — bumped on every new playback (new map, new replay, halftime
+  // resume). Passed as `key` to RoundByRoundScreen so React remounts it cleanly
+  // and its internal currentRound + isEnded state resets.
+  const [liveKey, setLiveKey] = useState(0);
 
   // ── HALFTIME phase state (cinematic mid-map pause between H1 sim and H2 sim) ──
   const halftimeStateRef = useRef<unknown>(null);
@@ -824,6 +828,7 @@ export default function MatchDayPage() {
       setLiveRounds(h1Rounds);
       setLiveHalf(1);
       setLiveStartFromRound(0);
+      setLiveKey((k) => k + 1);
       setDisplayedRoundCount(0);
       setLiveOverlay(null);
       // If H1 already closed the map (13-X sweep), skip halftime and finalize.
@@ -918,8 +923,10 @@ export default function MatchDayPage() {
     // Pick an animation for the overlay.
     setToAnimating(bonusType ?? "tactical");
 
-    // Hold the TIMEOUT animation 2.4s, then replay.
-    await new Promise((r) => setTimeout(r, 2400));
+    // Hold the TIMEOUT animation ~1s, then replay.
+    // Real Valorant TO = 30s, round = ~90s, so the cinematic TO is 1/3 of a
+    // round duration. With RBR rounds at ~2.8s, 30s × (2.8/90) ≈ 0.9s.
+    await new Promise((r) => setTimeout(r, 1000));
     setToAnimating(null);
     setReplaying(true);
 
@@ -1010,6 +1017,7 @@ export default function MatchDayPage() {
         setLiveHalf(2);
         setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
       }
+      setLiveKey((k) => k + 1);
       setDisplayedRoundCount(0);
       setLiveOverlay(null);
     } catch (err) {
@@ -1128,6 +1136,7 @@ export default function MatchDayPage() {
         setLiveHalf(2);
         setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
       }
+      setLiveKey((k) => k + 1);
       setDisplayedRoundCount(0);
       setLiveOverlay(null);
     } catch (err) {
@@ -1188,6 +1197,7 @@ export default function MatchDayPage() {
       setLiveRounds(rounds);
       setLiveHalf(2);
       setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
+      setLiveKey((k) => k + 1);
       setDisplayedRoundCount(0);
       setLiveOverlay(null);
 
@@ -2462,6 +2472,7 @@ export default function MatchDayPage() {
               getStatsAtRound={getStatsAtRound}
               onMapEnd={handleMapEnd}
               myFirstHalfSide={currentMap.playerSide}
+              key={liveKey}
               onRoundChange={setCurrentLiveRound}
               startFromRound={liveStartFromRound}
             />
