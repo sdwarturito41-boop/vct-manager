@@ -3694,6 +3694,257 @@ export function simulateMapDuelHalf2(
   return buildMapResult(team1, team2, state.mapName, ctx.rounds);
 }
 
+// ──────────────────────────────────────────────────────────
+// LIVE round-by-round simulation — one round per server call
+// ──────────────────────────────────────────────────────────
+
+/** Full TeamRuntime snapshot — captures every mutable field between rounds.
+ *  JSON-safe (Map → Record, Set → array). Heavier than HalftimeState but
+ *  necessary for true round-by-round live sim. */
+export interface SerializedTeamRuntime {
+  score: number;
+  lossStreak: number;
+  winStreak: number;
+  lossesBonus: number;
+  sitePreference: Record<string, number>;
+  economy: Record<string, Economy>;
+  weaponPool: Array<{ weapon: string }>;
+  roundEntryId: string | null;
+  awperId: string | null;
+  inSaveMode: boolean;
+  adaptationEdge: number;
+  lossStreakAdaptedThisHalf: boolean;
+  overrides: TacticalOverrideRuntime[];
+  streakDampener: number;
+  antiStarTargetId: string | null;
+  antiStarAssignedPlayerId: string | null;
+  consecutiveForcedRounds: number;
+  lastForcedSite: string | null;
+  players: Array<{
+    playerId: string;
+    hotness: number;
+    rollingImpact: number;
+    consecutiveDuelsWon: number;
+    consecutiveDuelsLost: number;
+    ultPoints: number;
+    aggression: number;
+    total: RoundStats;
+    perRound: RoundStats[];
+  }>;
+}
+
+/** Live-sim state passed back-and-forth between client and server. JSON. */
+export interface LiveRoundState {
+  mapName: string;
+  team1StartsAttack: boolean;
+  roundNum: number;
+  team1Survivors: string[];
+  team2Survivors: string[];
+  rounds: RoundEvent[];
+  team1: SerializedTeamRuntime;
+  team2: SerializedTeamRuntime;
+}
+
+/** Snapshot every mutable field of a TeamRuntime into a JSON-safe record. */
+function snapshotFullTeam(team: TeamRuntime): SerializedTeamRuntime {
+  return {
+    score: team.score,
+    lossStreak: team.lossStreak,
+    winStreak: team.winStreak,
+    lossesBonus: team.lossesBonus,
+    sitePreference: { ...team.sitePreference },
+    economy: Object.fromEntries(team.economy.entries()),
+    weaponPool: team.weaponPool.map((w) => ({ weapon: String(w.weapon) })),
+    roundEntryId: team.roundEntryId,
+    awperId: team.awperId,
+    inSaveMode: team.inSaveMode,
+    adaptationEdge: team.adaptationEdge,
+    lossStreakAdaptedThisHalf: team.lossStreakAdaptedThisHalf,
+    overrides: team.overrides.map((ov) => ({ ...ov })),
+    streakDampener: team.streakDampener,
+    antiStarTargetId: team.antiStarTargetId,
+    antiStarAssignedPlayerId: team.antiStarAssignedPlayerId,
+    consecutiveForcedRounds: team.consecutiveForcedRounds,
+    lastForcedSite: team.lastForcedSite,
+    players: team.players.map((p) => ({
+      playerId: p.input.id,
+      hotness: p.hotness,
+      rollingImpact: p.rollingImpact,
+      consecutiveDuelsWon: p.consecutiveDuelsWon,
+      consecutiveDuelsLost: p.consecutiveDuelsLost,
+      ultPoints: p.ultPoints,
+      aggression: p.aggression,
+      total: { ...p.total },
+      perRound: p.perRound.map((r) => ({ ...r })),
+    })),
+  };
+}
+
+/** Restore a serialized snapshot onto a freshly-built TeamRuntime. */
+function restoreFullTeam(team: TeamRuntime, snap: SerializedTeamRuntime): void {
+  team.score = snap.score;
+  team.lossStreak = snap.lossStreak;
+  team.winStreak = snap.winStreak;
+  team.lossesBonus = snap.lossesBonus;
+  team.sitePreference = { ...snap.sitePreference };
+  team.economy = new Map(Object.entries(snap.economy));
+  team.weaponPool = snap.weaponPool.map((w) => ({ weapon: w.weapon as WeaponName }));
+  team.roundEntryId = snap.roundEntryId;
+  team.awperId = snap.awperId;
+  team.inSaveMode = snap.inSaveMode;
+  team.adaptationEdge = snap.adaptationEdge;
+  team.lossStreakAdaptedThisHalf = snap.lossStreakAdaptedThisHalf;
+  team.overrides = snap.overrides.map((ov) => ({ ...ov }));
+  team.streakDampener = snap.streakDampener;
+  team.antiStarTargetId = snap.antiStarTargetId;
+  team.antiStarAssignedPlayerId = snap.antiStarAssignedPlayerId;
+  team.consecutiveForcedRounds = snap.consecutiveForcedRounds;
+  team.lastForcedSite = snap.lastForcedSite;
+  for (const p of team.players) {
+    const sp = snap.players.find((s) => s.playerId === p.input.id);
+    if (!sp) continue;
+    p.hotness = sp.hotness;
+    p.rollingImpact = sp.rollingImpact;
+    p.consecutiveDuelsWon = sp.consecutiveDuelsWon;
+    p.consecutiveDuelsLost = sp.consecutiveDuelsLost;
+    p.ultPoints = sp.ultPoints;
+    p.aggression = sp.aggression;
+    p.total = { ...sp.total };
+    p.perRound = sp.perRound.map((r) => ({ ...r }));
+  }
+}
+
+/** Result of one live-sim round. */
+export interface OneRoundResult {
+  round: RoundEvent;
+  newState: LiveRoundState;
+  /** True if the next call should pause for the HALFTIME UI (round 12 just finished). */
+  isHalftime: boolean;
+  /** True if the map is over (someone hit 13 or OT resolved). */
+  mapComplete: boolean;
+  /** When mapComplete, the final stats for finalize. */
+  finalPlayerStats?: PlayerMapStatsOut[];
+  finalScore1?: number;
+  finalScore2?: number;
+}
+
+/**
+ * Run EXACTLY ONE round and return the new state. Called repeatedly by the
+ * client during LIVE phase to drive cinematic round-by-round playback.
+ *
+ *  - state === null  → build runtimes fresh, run round 1
+ *  - state.roundNum === 13 → apply halftime reset (eco/streaks/hotness) then run
+ *  - state.roundNum > 24 + tied → continue OT
+ *  - mapComplete true → caller stops looping
+ *
+ * Mid-round actions: pass updated `options.team1TimeoutBonus` / `team*Overrides`
+ * BEFORE the round to be played to make the TO/override take effect from
+ * that round onwards (no replay).
+ */
+export function simulateOneRoundLive(
+  state: LiveRoundState | null,
+  team1Input: SimTeamInput,
+  team2Input: SimTeamInput,
+  mapName: string,
+  options: DuelMapOptions = {},
+): OneRoundResult {
+  // Build fresh runtimes from inputs.
+  const { team1, team2 } = buildBothRuntimes(team1Input, team2Input, mapName, options);
+  const team1StartsAttack = state?.team1StartsAttack ?? options.team1StartsAttack ?? true;
+
+  // Restore prior state if we're resuming.
+  if (state) {
+    restoreFullTeam(team1, state.team1);
+    restoreFullTeam(team2, state.team2);
+  }
+
+  const ctx: MapRoundCtx = {
+    team1,
+    team2,
+    mapName,
+    rounds: state
+      ? state.rounds.map((r) => ({
+          ...r,
+          kills: r.kills.map((k) => ({ ...k })),
+          loadouts: r.loadouts.map((l) => ({ ...l })),
+        }))
+      : [],
+    roundNum: state?.roundNum ?? 1,
+    team1Survivors: state
+      ? new Set(state.team1Survivors)
+      : new Set(team1.players.map((p) => p.input.id)),
+    team2Survivors: state
+      ? new Set(state.team2Survivors)
+      : new Set(team2.players.map((p) => p.input.id)),
+  };
+
+  // If we're at the start of H2 (roundNum just incremented past H1, score < 13
+  // on both sides), apply the halftime reset before running this round.
+  const justEnteredH2 =
+    ctx.roundNum === 13 && team1.score < 13 && team2.score < 13;
+  if (justEnteredH2) {
+    const fresh = doHalftimeReset(team1, team2);
+    ctx.team1Survivors = fresh.team1Survivors;
+    ctx.team2Survivors = fresh.team2Survivors;
+  }
+
+  // Determine the half + attacker side for this round.
+  let half: 1 | 2 | "OT";
+  let t1Attack: boolean;
+  if (ctx.roundNum <= 12) {
+    half = 1;
+    t1Attack = team1StartsAttack;
+  } else if (ctx.roundNum <= 24) {
+    half = 2;
+    t1Attack = !team1StartsAttack;
+  } else {
+    half = "OT";
+    // OT pairs alternate who attacks: even = team1 attacks, odd = team2.
+    const otIndex = ctx.roundNum - 25;
+    t1Attack = otIndex % 2 === 0;
+  }
+  const isPistol = ctx.roundNum === 1 || ctx.roundNum === 13;
+
+  executeRound(ctx, half, t1Attack, isPistol);
+
+  // Did this round close the map?
+  const someoneHit13 = team1.score >= 13 || team2.score >= 13;
+  const otTied = ctx.roundNum > 24 && team1.score === team2.score;
+  const mapComplete = someoneHit13 || (ctx.roundNum > 24 && !otTied);
+
+  // Is the NEXT round a halftime pause? (We just finished round 12 with
+  // neither side at 13.)
+  const isHalftime = ctx.roundNum - 1 === 12 && team1.score < 13 && team2.score < 13;
+
+  // Build result.
+  const playedRound = ctx.rounds[ctx.rounds.length - 1];
+  const result: OneRoundResult = {
+    round: playedRound,
+    isHalftime,
+    mapComplete,
+    newState: {
+      mapName,
+      team1StartsAttack,
+      roundNum: ctx.roundNum,
+      team1Survivors: [...ctx.team1Survivors],
+      team2Survivors: [...ctx.team2Survivors],
+      rounds: ctx.rounds,
+      team1: snapshotFullTeam(team1),
+      team2: snapshotFullTeam(team2),
+    },
+  };
+
+  if (mapComplete) {
+    const final = buildMapResult(team1, team2, mapName, ctx.rounds);
+    result.finalPlayerStats = final.playerStats;
+    result.finalScore1 = final.score1;
+    result.finalScore2 = final.score2;
+  }
+
+  void gauss;
+  return result;
+}
+
 function avgCredits(team: TeamRuntime): number {
   return Math.round([...team.economy.values()].reduce((s, e) => s + e.credits, 0) / team.players.length);
 }

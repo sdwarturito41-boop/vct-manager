@@ -15,6 +15,28 @@ interface TacticalOverrideInput {
   instruction?: "safe" | "aggressive";
   playstyle?: "Aggressive" | "Tactical" | "Defensive";
 }
+
+// Loose mirror of the server's LiveRoundState — opaque blob the client echoes.
+type LiveStateLooseShape = Record<string, unknown>;
+interface SimulateOneRoundOutput {
+  round: RoundEvent;
+  newState: LiveStateLooseShape;
+  isHalftime: boolean;
+  mapComplete: boolean;
+  finalScore1?: number;
+  finalScore2?: number;
+  finalPlayerStats?: Array<{
+    playerId: string;
+    teamId: string;
+    ign: string;
+    kills: number;
+    deaths: number;
+    assists: number;
+    acs: number;
+    fk?: number;
+    fd?: number;
+  }>;
+}
 import { VALORANT_AGENTS } from "@/constants/agents";
 import type { ValorantAgent } from "@/constants/agents";
 import { formatStat } from "@/lib/format";
@@ -320,6 +342,7 @@ export default function MatchDayPage() {
   const simulateMapMut = trpc.match.simulateMap.useMutation();
   const simulateMapHalf1Mut = trpc.match.simulateMapHalf1.useMutation();
   const simulateMapHalf2Mut = trpc.match.simulateMapHalf2.useMutation();
+  const simulateOneRoundMut = trpc.match.simulateOneRound.useMutation();
   const finalizeMatchMut = trpc.match.finalizeMatch.useMutation();
   const finalizeMapStatsMut = trpc.match.finalizeMapStats.useMutation();
   const executeVetoMut = trpc.veto.executeVeto.useMutation();
@@ -367,6 +390,16 @@ export default function MatchDayPage() {
   // resume). Passed as `key` to RoundByRoundScreen so React remounts it cleanly
   // and its internal currentRound + isEnded state resets.
   const [liveKey, setLiveKey] = useState(0);
+  // Live round-by-round state: server returns it after each round, we echo it
+  // back on the next call. null = round 1.
+  const liveStateRef = useRef<unknown>(null);
+  const isFetchingNextRef = useRef(false);
+  const [isAwaitingNextRound, setIsAwaitingNextRound] = useState(false);
+  const [liveMapComplete, setLiveMapComplete] = useState(false);
+  // Single-round bonus the user JUST pressed — consumed on the next fetch
+  // then cleared (so it only applies to one round, not the whole half).
+  const pendingMidRoundTORef = useRef<TimeoutBonus | null>(null);
+  const pendingAIMidRoundTORef = useRef<"tactical" | "motivational" | "medical" | null>(null);
 
   // ── HALFTIME phase state (cinematic mid-map pause between H1 sim and H2 sim) ──
   const halftimeStateRef = useRef<unknown>(null);
@@ -583,6 +616,120 @@ export default function MatchDayPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, pendingSideForMap?.mapName]);
 
+  // ── LIVE round-by-round fetch loop ──
+  // Pulls one round at a time from the server, appending to liveRounds. The
+  // RBR component animates each round; we pre-fetch the next one while the
+  // current one is being shown so the user never sees a "loading" between
+  // rounds (latency hidden behind animation time).
+  useEffect(() => {
+    if (phase !== "LIVE") return;
+    if (liveMapComplete) return;
+    if (toModalOpen || toAnimating || aiTOEvent || halftimeApplied) return;
+    if (isFetchingNextRef.current) return;
+    // Throttle: only fetch when displayed round is close to the end of the
+    // current liveRounds, OR when we haven't fetched any yet.
+    const needsFetch =
+      liveRounds.length === 0 ||
+      currentLiveRound >= liveRounds.length - 1;
+    if (!needsFetch) return;
+
+    const currentMap = mapLineup[currentMapIndex];
+    if (!currentMap) return;
+
+    isFetchingNextRef.current = true;
+    setIsAwaitingNextRound(true);
+
+    const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
+      playerId: p.id,
+      agentName: agentPicks[p.id]!,
+    }));
+
+    // Consume any pending single-round bonuses (mid-round TO, AI TO).
+    const midRoundTO = pendingMidRoundTORef.current;
+    pendingMidRoundTORef.current = null;
+    const aiMidRoundTO = pendingAIMidRoundTORef.current;
+    pendingAIMidRoundTORef.current = null;
+
+    simulateOneRoundMut
+      .mutateAsync({
+        matchId,
+        mapName: currentMap.mapName,
+        side: currentMap.playerSide,
+        playerAgents: playerAgentArr,
+        state: liveStateRef.current as LiveStateLooseShape | null,
+        timeoutType: timeoutBonus?.type,
+        timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
+        halftimeTimeoutType: halftimeBonus?.type,
+        halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
+        midRoundTOType: midRoundTO?.type,
+        midRoundTOPlayerId: midRoundTO?.resetVariancePlayerId,
+        overrides: tacticalOverrides,
+        aiMidRoundTOType: aiMidRoundTO ?? undefined,
+      })
+      .then((result: SimulateOneRoundOutput) => {
+        liveStateRef.current = result.newState;
+        setLiveRounds((prev) => [...prev, result.round]);
+        // Halftime trigger: server flags isHalftime when the just-played round
+        // was the last of H1 (12 with neither side at 13).
+        if (result.isHalftime) {
+          // Show the halftime cinematic + TO picker. The fetch loop pauses
+          // (halftimeApplied gates it) until handleHalftimeContinue resumes.
+          setHalftimePartial({
+            score1: result.round.score1,
+            score2: result.round.score2,
+            playerStats: [],
+          });
+          setLiveHalf(2); // next round will be H2
+          // Slight delay so the H1 last-round animation fully plays before pause.
+          setTimeout(() => transitionTo("HALFTIME"), 1500);
+        }
+        if (result.mapComplete) {
+          const s1 = result.finalScore1 ?? result.round.score1;
+          const s2 = result.finalScore2 ?? result.round.score2;
+          const mapResult: MapResultData = {
+            map: currentMap.mapName,
+            score1: s1,
+            score2: s2,
+            playerStats: (result.finalPlayerStats ?? []) as PlayerStat[],
+            highlights: [],
+          };
+          setMapResults((prev) => [...prev, mapResult]);
+          const team1Won = s1 > s2;
+          setSeriesScore((prev) => ({
+            team1: prev.team1 + (team1Won ? 1 : 0),
+            team2: prev.team2 + (team1Won ? 0 : 1),
+          }));
+          setLiveMapComplete(true);
+        }
+      })
+      .catch((err: unknown) => {
+        console.error("[simulateOneRound] failed:", err);
+      })
+      .finally(() => {
+        isFetchingNextRef.current = false;
+        setIsAwaitingNextRound(false);
+      });
+  }, [
+    phase,
+    currentLiveRound,
+    liveRounds.length,
+    liveMapComplete,
+    toModalOpen,
+    toAnimating,
+    aiTOEvent,
+    halftimeApplied,
+    currentMapIndex,
+    matchId,
+    mapLineup,
+    activePlayers,
+    agentPicks,
+    timeoutBonus,
+    halftimeBonus,
+    tacticalOverrides,
+    simulateOneRoundMut,
+    transitionTo,
+  ]);
+
   // ── AI opponent TO detection during LIVE playback ──
   // Fires at most once per half. Triggers when AI is on a 3+ round streak
   // (win or loss). On fire: pauses the playback via the AIReactionModal —
@@ -793,69 +940,28 @@ export default function MatchDayPage() {
     await new Promise((r) => setTimeout(r, 2500));
     setShowLockedComp(false);
 
-    transitionTo("SIMULATING");
+    // ── Round-by-round LIVE flow ──
+    // No pre-sim: the fetch loop (useEffect on liveRounds / phase) will pull
+    // round 1, animate it, pull round 2, etc. handleHalftimeContinue / mid-round
+    // TOs feed into subsequent fetches without any re-sim.
+    liveStateRef.current = null;
+    isFetchingNextRef.current = false;
+    pendingMidRoundTORef.current = null;
+    pendingAIMidRoundTORef.current = null;
+    setLiveRounds([]);
+    setLiveHalf(1);
+    setLiveStartFromRound(0);
+    setLiveKey((k) => k + 1);
+    setDisplayedRoundCount(0);
+    setLiveOverlay(null);
+    setLiveMapComplete(false);
+    setIsAwaitingNextRound(true);
+    setHalftimePartial(null);
+    setHalftimeBonus(null);
+    setHalftimeApplied(false);
 
-    const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
-      playerId: p.id,
-      agentName: agentPicks[p.id]!,
-    }));
-
-    try {
-      // ── Phase 1: simulate H1 only, pause at half-time ──
-      const h1 = await simulateMapHalf1Mut.mutateAsync({
-        matchId,
-        mapName: currentMap.mapName,
-        side: currentMap.playerSide,
-        playerAgents: playerAgentArr,
-        timeoutType: timeoutBonus?.type,
-        timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
-        overrides: tacticalOverrides,
-        aiH1TOType: aiH1TOType ?? undefined,
-      });
-
-      halftimeStateRef.current = h1.halftimeState;
-      setHalftimePartial({
-        score1: h1.score1,
-        score2: h1.score2,
-        playerStats: h1.playerStats,
-      });
-      setHalftimeBonus(null);
-      setHalftimeApplied(false);
-
-      // Show the H1 round-by-round playback FIRST. The HALFTIME pause fires
-      // when RoundByRoundScreen reaches the end of H1 (via onMapEnd).
-      const h1Rounds = (h1 as { rounds?: RoundEvent[] }).rounds ?? [];
-      setLiveRounds(h1Rounds);
-      setLiveHalf(1);
-      setLiveStartFromRound(0);
-      setLiveKey((k) => k + 1);
-      setDisplayedRoundCount(0);
-      setLiveOverlay(null);
-      // If H1 already closed the map (13-X sweep), skip halftime and finalize.
-      const mapClosedInH1 = h1.score1 >= 13 || h1.score2 >= 13;
-      if (mapClosedInH1) {
-        // Treat H1 alone as the full map result.
-        const mapResult: MapResultData = {
-          map: h1.map,
-          score1: h1.score1,
-          score2: h1.score2,
-          playerStats: h1.playerStats,
-          highlights: h1.highlights,
-        };
-        setMapResults((prev) => [...prev, mapResult]);
-        const team1Won = h1.score1 > h1.score2;
-        setSeriesScore((prev) => ({
-          team1: prev.team1 + (team1Won ? 1 : 0),
-          team2: prev.team2 + (team1Won ? 0 : 1),
-        }));
-        setLiveHalf(2); // so onMapEnd will finalize
-      }
-
-      await new Promise((r) => setTimeout(r, 600));
-      transitionTo("LIVE");
-    } catch {
-      transitionTo("AGENTS");
-    }
+    await new Promise((r) => setTimeout(r, 600));
+    transitionTo("LIVE");
   }
 
   // ── Mid-round TO: user pressed TIMEOUT during LIVE playback ──
@@ -871,160 +977,58 @@ export default function MatchDayPage() {
 
     setToModalOpen(false);
 
-    // Build the override list addition (if applicable) — applied IN ADDITION to
-    // anything that's already on tacticalOverrides (e.g. a playstyle carry).
-    let appliedOverrides = tacticalOverrides;
+    // Add overrides (site / instruction) — applied from the next round onwards.
     if (action.kind === "site") {
-      appliedOverrides = [
-        ...tacticalOverrides.filter((ov) => ov.kind !== "site"),
+      setTacticalOverrides((prev) => [
+        ...prev.filter((ov) => ov.kind !== "site"),
         { kind: "site", forcedSite: action.site },
-      ];
-      setTacticalOverrides(appliedOverrides);
+      ]);
     } else if (action.kind === "instruction") {
-      appliedOverrides = [
-        ...tacticalOverrides.filter(
+      setTacticalOverrides((prev) => [
+        ...prev.filter(
           (ov) => !(ov.kind === "instruction" && ov.playerId === action.playerId),
         ),
         { kind: "instruction", playerId: action.playerId, instruction: action.instruction },
-      ];
-      setTacticalOverrides(appliedOverrides);
+      ]);
     }
 
-    // For bonuses, build the TimeoutBonus (same as before).
+    // Bonus TOs (tactical/motivational/medical) → queued as a SINGLE-ROUND bonus
+    // for the next fetch. The fetch loop consumes pendingMidRoundTORef and clears.
     const bonusType: "tactical" | "motivational" | "medical" | null =
       action.kind === "bonus" ? action.type : null;
-    const myStats = mapResults[currentMapIndex]?.playerStats?.filter((p) => {
-      const playerTeamId = isTeam1 ? team1Id : team2Id;
-      return p.teamId === playerTeamId;
-    });
-    const worst = myStats?.reduce<PlayerStat | null>((acc, p) => {
-      const kd = p.deaths > 0 ? p.kills / p.deaths : p.kills;
-      if (kd < 0.5) {
-        if (!acc) return p;
-        const accKd = acc.deaths > 0 ? acc.kills / acc.deaths : acc.kills;
-        return kd < accKd ? p : acc;
-      }
-      return acc;
-    }, null) ?? null;
-    const bonus: TimeoutBonus | null = bonusType
-      ? {
-          type: bonusType,
-          ...(bonusType === "tactical" ? { counterBonusDelta: 0.02 } : {}),
-          ...(bonusType === "motivational" ? { teamplayDelta: 0.1 } : {}),
-          ...(bonusType === "medical" && worst ? { resetVariancePlayerId: worst.playerId } : {}),
+    if (bonusType) {
+      const myStats = mapResults[currentMapIndex]?.playerStats?.filter((p) => {
+        const playerTeamId = isTeam1 ? team1Id : team2Id;
+        return p.teamId === playerTeamId;
+      });
+      const worst = myStats?.reduce<PlayerStat | null>((acc, p) => {
+        const kd = p.deaths > 0 ? p.kills / p.deaths : p.kills;
+        if (kd < 0.5) {
+          if (!acc) return p;
+          const accKd = acc.deaths > 0 ? acc.kills / acc.deaths : acc.kills;
+          return kd < accKd ? p : acc;
         }
-      : null;
-    // Mark TO consumed — bonuses use TimeoutBonus shape, overrides use a
-    // sentinel "skip" type just to flag the slot as taken for this half.
-    const slotMarker: TimeoutBonus = bonus ?? { type: "skip" };
+        return acc;
+      }, null) ?? null;
+      pendingMidRoundTORef.current = {
+        type: bonusType,
+        ...(bonusType === "tactical" ? { counterBonusDelta: 0.02 } : {}),
+        ...(bonusType === "motivational" ? { teamplayDelta: 0.1 } : {}),
+        ...(bonusType === "medical" && worst
+          ? { resetVariancePlayerId: worst.playerId }
+          : {}),
+      };
+    }
+    // Slot marker: prevents the user from calling another TO in this half.
+    const slotMarker: TimeoutBonus = { type: bonusType ?? "skip" };
     if (isH1) setMidRoundH1TO(slotMarker);
     else setMidRoundH2TO(slotMarker);
 
-    // Pick an animation for the overlay.
+    // Play the cinematic overlay (~1s) — no replay, just the visual beat.
     setToAnimating(bonusType ?? "tactical");
-
-    // Hold the TIMEOUT animation ~1s, then replay.
-    // Real Valorant TO = 30s, round = ~90s, so the cinematic TO is 1/3 of a
-    // round duration. With RBR rounds at ~2.8s, 30s × (2.8/90) ≈ 0.9s.
     await new Promise((r) => setTimeout(r, 1000));
     setToAnimating(null);
-    setReplaying(true);
-
-    const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
-      playerId: p.id,
-      agentName: agentPicks[p.id]!,
-    }));
-
-    try {
-      // Re-sim H1 (with combined preMap + midRoundH1) → fresh halftimeState.
-      // Then re-sim H2 with combined halftime + midRoundH2.
-      // Only "bonus" actions feed midRoundTOType; site/instruction overrides
-      // travel via the `overrides` field instead.
-      const h1MidRoundType = isH1 ? bonus?.type : midRoundH1TO?.type;
-      const h1MidRoundPid = isH1 ? bonus?.resetVariancePlayerId : midRoundH1TO?.resetVariancePlayerId;
-      const h2MidRoundType = !isH1 ? bonus?.type : midRoundH2TO?.type;
-      const h2MidRoundPid = !isH1 ? bonus?.resetVariancePlayerId : midRoundH2TO?.resetVariancePlayerId;
-
-      const h1 = await simulateMapHalf1Mut.mutateAsync({
-        matchId,
-        mapName: currentMap.mapName,
-        side: currentMap.playerSide,
-        playerAgents: playerAgentArr,
-        timeoutType: timeoutBonus?.type,
-        timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
-        midRoundTOType: h1MidRoundType,
-        midRoundTOPlayerId: h1MidRoundPid,
-        overrides: appliedOverrides,
-        aiH1TOType: aiH1TOType ?? undefined,
-      });
-      halftimeStateRef.current = h1.halftimeState;
-
-      const h2 = await simulateMapHalf2Mut.mutateAsync({
-        matchId,
-        mapName: currentMap.mapName,
-        side: currentMap.playerSide,
-        playerAgents: playerAgentArr,
-        halftimeState: h1.halftimeState,
-        halftimeTimeoutType: halftimeBonus?.type,
-        halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
-        midRoundTOType: h2MidRoundType,
-        midRoundTOPlayerId: h2MidRoundPid,
-        overrides: appliedOverrides,
-        aiH1TOType: aiH1TOType ?? undefined,
-        aiH2TOType: aiH2TOType ?? undefined,
-      });
-
-      const newMapResult: MapResultData = {
-        map: h2.map,
-        score1: h2.score1,
-        score2: h2.score2,
-        playerStats: h2.playerStats,
-        highlights: h2.highlights,
-      };
-      // Replace this map's result with the replayed one.
-      setMapResults((prev) => prev.map((r, i) => (i === currentMapIndex ? newMapResult : r)));
-
-      const team1Won = h2.score1 > h2.score2;
-      // Recompute series score: revert the old result then apply the new.
-      const oldResult = mapResults[currentMapIndex];
-      setSeriesScore((prev) => {
-        const oldT1Won = oldResult ? oldResult.score1 > oldResult.score2 : false;
-        return {
-          team1: prev.team1 - (oldT1Won ? 1 : 0) + (team1Won ? 1 : 0),
-          team2: prev.team2 - (oldT1Won ? 0 : 1) + (team1Won ? 0 : 1),
-        };
-      });
-
-      // Drop the cinematic flow back into the appropriate half. If the TO was
-      // called in H1, we want the user to re-watch the H1 (now with the bonus),
-      // then HALFTIME, then H2. If called in H2, we resume H2 playback.
-      const fullRounds = (h2 as { rounds?: RoundEvent[] }).rounds ?? [];
-      if (isH1) {
-        // Show new H1 rounds only — H2 will be played after the HALFTIME pause.
-        const newH1Rounds = (h1 as { rounds?: RoundEvent[] }).rounds ?? fullRounds.slice(0, 12);
-        setLiveRounds(newH1Rounds);
-        setLiveHalf(1);
-        setLiveStartFromRound(0);
-        setHalftimePartial({
-          score1: h1.score1,
-          score2: h1.score2,
-          playerStats: h1.playerStats,
-        });
-      } else {
-        // H2 replay — start the cinematic at the first H2 round.
-        const h1Length = fullRounds.findIndex((r) => r.half === 2);
-        setLiveRounds(fullRounds);
-        setLiveHalf(2);
-        setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
-      }
-      setLiveKey((k) => k + 1);
-      setDisplayedRoundCount(0);
-      setLiveOverlay(null);
-    } catch (err) {
-      console.error("[mid-round TO replay] failed:", err);
-    } finally {
-      setReplaying(false);
-    }
+    // Loop resumes automatically — the next round will pick up the queued TO.
   }
 
   // ── AI TO reaction: user gives instructions during opponent's pause ──
@@ -1038,175 +1042,38 @@ export default function MatchDayPage() {
       | { kind: "instruction"; playerId: string; instruction: "safe" | "aggressive" },
   ) {
     if (!aiTOEvent) return;
-    const currentMap = mapLineup[currentMapIndex];
-    if (!currentMap) return;
-    setAiTOEvent(null);
+    // Queue the AI's TO type to apply on the NEXT round (server side). The
+    // fetch loop consumes pendingAIMidRoundTORef and clears it after.
+    pendingAIMidRoundTORef.current = aiTOEvent.type;
 
-    let appliedOverrides = tacticalOverrides;
+    // User's reaction: add their override (if any) — applies from next round.
     if (action.kind === "site") {
-      appliedOverrides = [
-        ...tacticalOverrides.filter((ov) => ov.kind !== "site"),
+      setTacticalOverrides((prev) => [
+        ...prev.filter((ov) => ov.kind !== "site"),
         { kind: "site", forcedSite: action.site },
-      ];
-      setTacticalOverrides(appliedOverrides);
+      ]);
     } else if (action.kind === "instruction") {
-      appliedOverrides = [
-        ...tacticalOverrides.filter(
+      setTacticalOverrides((prev) => [
+        ...prev.filter(
           (ov) => !(ov.kind === "instruction" && ov.playerId === action.playerId),
         ),
         { kind: "instruction", playerId: action.playerId, instruction: action.instruction },
-      ];
-      setTacticalOverrides(appliedOverrides);
+      ]);
     }
-    // action.kind === "skip" → no override change, but we still replay below.
-
-    setReplaying(true);
-    const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
-      playerId: p.id,
-      agentName: agentPicks[p.id]!,
-    }));
-    try {
-      // Reading the in-flight AI TO type from state (which the detection effect
-      // just set before opening the modal) — AND its sibling-half if any. The
-      // useState setters are async, so we resolve via the event's `half`+`type`.
-      const aiH1ForReplay = aiTOEvent.half === 1 ? aiTOEvent.type : aiH1TOType ?? undefined;
-      const aiH2ForReplay = aiTOEvent.half === 2 ? aiTOEvent.type : aiH2TOType ?? undefined;
-      const h1 = await simulateMapHalf1Mut.mutateAsync({
-        matchId,
-        mapName: currentMap.mapName,
-        side: currentMap.playerSide,
-        playerAgents: playerAgentArr,
-        timeoutType: timeoutBonus?.type,
-        timeoutPlayerId: timeoutBonus?.resetVariancePlayerId,
-        midRoundTOType: midRoundH1TO?.type,
-        midRoundTOPlayerId: midRoundH1TO?.resetVariancePlayerId,
-        overrides: appliedOverrides,
-        aiH1TOType: aiH1ForReplay,
-      });
-      halftimeStateRef.current = h1.halftimeState;
-      const h2 = await simulateMapHalf2Mut.mutateAsync({
-        matchId,
-        mapName: currentMap.mapName,
-        side: currentMap.playerSide,
-        playerAgents: playerAgentArr,
-        halftimeState: h1.halftimeState,
-        halftimeTimeoutType: halftimeBonus?.type,
-        halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
-        midRoundTOType: midRoundH2TO?.type,
-        midRoundTOPlayerId: midRoundH2TO?.resetVariancePlayerId,
-        overrides: appliedOverrides,
-        aiH1TOType: aiH1ForReplay,
-        aiH2TOType: aiH2ForReplay,
-      });
-      const newMapResult: MapResultData = {
-        map: h2.map,
-        score1: h2.score1,
-        score2: h2.score2,
-        playerStats: h2.playerStats,
-        highlights: h2.highlights,
-      };
-      setMapResults((prev) =>
-        prev.map((r, i) => (i === currentMapIndex ? newMapResult : r)),
-      );
-      const team1Won = h2.score1 > h2.score2;
-      const oldResult = mapResults[currentMapIndex];
-      setSeriesScore((prev) => {
-        const oldT1Won = oldResult ? oldResult.score1 > oldResult.score2 : false;
-        return {
-          team1: prev.team1 - (oldT1Won ? 1 : 0) + (team1Won ? 1 : 0),
-          team2: prev.team2 - (oldT1Won ? 0 : 1) + (team1Won ? 0 : 1),
-        };
-      });
-      // Resume in the SAME half the AI TO fired in (mirror mid-round TO logic).
-      const fullRounds = (h2 as { rounds?: RoundEvent[] }).rounds ?? [];
-      const wasH1 = aiTOEvent?.half === 1;
-      if (wasH1) {
-        const newH1Rounds = (h1 as { rounds?: RoundEvent[] }).rounds ?? fullRounds.slice(0, 12);
-        setLiveRounds(newH1Rounds);
-        setLiveHalf(1);
-        setLiveStartFromRound(0);
-        setHalftimePartial({
-          score1: h1.score1,
-          score2: h1.score2,
-          playerStats: h1.playerStats,
-        });
-      } else {
-        const h1Length = fullRounds.findIndex((r) => r.half === 2);
-        setLiveRounds(fullRounds);
-        setLiveHalf(2);
-        setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
-      }
-      setLiveKey((k) => k + 1);
-      setDisplayedRoundCount(0);
-      setLiveOverlay(null);
-    } catch (err) {
-      console.error("[AI TO reaction] replay failed:", err);
-    } finally {
-      setReplaying(false);
-    }
+    // "skip" → no override change.
+    setAiTOEvent(null);
+    // The fetch loop will pick up the queued AI TO + new overrides automatically.
   }
 
   // ── Halftime → resume H2 with the user's mid-map TO choice ──
   async function handleHalftimeContinue() {
-    const currentMap = mapLineup[currentMapIndex];
-    if (!currentMap || !halftimeStateRef.current) return;
-
-    const playerAgentArr: PlayerAgentPick[] = activePlayers.map((p) => ({
-      playerId: p.id,
-      agentName: agentPicks[p.id]!,
-    }));
-
-    setHalftimeApplied(true);
-    transitionTo("SIMULATING");
-
-    try {
-      const result = await simulateMapHalf2Mut.mutateAsync({
-        matchId,
-        mapName: currentMap.mapName,
-        side: currentMap.playerSide,
-        playerAgents: playerAgentArr,
-        halftimeState: halftimeStateRef.current,
-        halftimeTimeoutType: halftimeBonus?.type,
-        halftimeTimeoutPlayerId: halftimeBonus?.resetVariancePlayerId,
-        overrides: tacticalOverrides,
-        aiH1TOType: aiH1TOType ?? undefined,
-        aiH2TOType: aiH2TOType ?? undefined,
-      });
-
-      const mapResult: MapResultData = {
-        map: result.map,
-        score1: result.score1,
-        score2: result.score2,
-        playerStats: result.playerStats,
-        highlights: result.highlights,
-      };
-      setMapResults((prev) => [...prev, mapResult]);
-
-      const team1Won = result.score1 > result.score2;
-      setSeriesScore((prev) => ({
-        team1: prev.team1 + (team1Won ? 1 : 0),
-        team2: prev.team2 + (team1Won ? 0 : 1),
-      }));
-
-      const rounds = (result as { rounds?: RoundEvent[] }).rounds ?? [];
-      // H2 sim returns FULL map rounds (H1+H2+OT). Resume RBR from where H1
-      // ended so the user doesn't re-watch H1.
-      const h1Length = halftimePartial?.score1 != null
-        ? rounds.findIndex((r) => r.half === 2)
-        : 12;
-      setLiveRounds(rounds);
-      setLiveHalf(2);
-      setLiveStartFromRound(h1Length >= 0 ? h1Length : 12);
-      setLiveKey((k) => k + 1);
-      setDisplayedRoundCount(0);
-      setLiveOverlay(null);
-
-      await new Promise((r) => setTimeout(r, 600));
-      transitionTo("LIVE");
-    } catch {
-      transitionTo("HALFTIME");
-      setHalftimeApplied(false);
-    }
+    // In the round-by-round flow, halftime is just a pause point. The user's
+    // halftimeBonus is already in state — the next fetch will pick it up via
+    // the `halftimeTimeoutType` input. We just unfreeze the loop + go LIVE.
+    setHalftimeApplied(false);
+    transitionTo("LIVE");
+    // Bump key so RBR remounts and resumes from the new round set.
+    setLiveKey((k) => k + 1);
   }
 
   // ── Next map / match complete ──
@@ -2161,6 +2028,25 @@ export default function MatchDayPage() {
       {/* ================================================================ */}
       {/* ─── LIVE PHASE ─── New RoundByRoundScreen component            */}
       {/* ================================================================ */}
+      {/* LIVE phase but waiting for round 1 to arrive — show a brief intro splash. */}
+      {phase === "LIVE" && currentMap && liveRounds.length === 0 && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center" style={{ background: "rgba(10,10,15,0.9)" }}>
+          <div className="text-center">
+            <div className="text-[10px] font-bold uppercase tracking-[0.4em]" style={{ color: "rgba(236,232,225,0.3)" }}>
+              {currentMap.mapName}
+            </div>
+            <div className="mt-3 text-3xl font-black uppercase tracking-[0.2em]" style={{ color: C.gold, textShadow: "0 0 30px rgba(198,155,58,0.4)" }}>
+              Match en cours
+            </div>
+            <div className="mt-3 flex items-center justify-center gap-2">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-2 w-2 rounded-full" style={{ background: C.gold, animation: `vct-dot-bounce 1.4s ${i * 0.2}s infinite both` }} />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {phase === "LIVE" && currentMap && liveRounds.length > 0 && (() => {
         const mapResult = mapResults[currentMapIndex];
         // Map buy types to eco labels
@@ -2404,16 +2290,14 @@ export default function MatchDayPage() {
         };
 
         const handleMapEnd = (_result: "win" | "loss", _finalScore: { my: number; opp: number }) => {
-          // H1 just finished → pause for the HALFTIME phase (cinematic score
-          // pause + TO picker). Don't finalize yet — H2 is still to come.
-          if (liveHalf === 1) {
-            transitionTo("HALFTIME");
+          // In the round-by-round flow, RBR fires onMapEnd when it runs out of
+          // rounds. If the map isn't actually complete yet (more rounds are
+          // being fetched), this is just RBR getting ahead of the data — do
+          // nothing, the next fetch will append the next round.
+          if (!liveMapComplete) {
             return;
           }
-          // H2 / OT just finished → finalize stats and go to RESULT.
-          // Finalize stats once per map (mastery + EMA) against the LATEST
-          // sim's playerStats — i.e. whatever the cinematic actually showed,
-          // including mid-round TO replays.
+          // Map is genuinely complete — finalize stats + go to RESULT.
           if (!statsFinalizedRef.current[currentMapIndex]) {
             statsFinalizedRef.current[currentMapIndex] = true;
             const lastResult = mapResults[currentMapIndex];
@@ -2475,6 +2359,14 @@ export default function MatchDayPage() {
               key={liveKey}
               onRoundChange={setCurrentLiveRound}
               startFromRound={liveStartFromRound}
+              pausedExternal={
+                toModalOpen ||
+                toAnimating !== null ||
+                aiTOEvent !== null ||
+                // Pause when waiting for the next round to arrive — prevents
+                // RBR from prematurely firing onMapEnd at currentRound === length.
+                (isAwaitingNextRound && !liveMapComplete)
+              }
             />
             <MidRoundTOButton
               currentRound={currentLiveRound}
@@ -2502,27 +2394,6 @@ export default function MatchDayPage() {
                 opponentName={enemyTeamName}
                 onPick={(action) => handleAIReactionPick(action)}
               />
-            )}
-            {replaying && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center"
-                style={{ background: "rgba(10,10,15,0.85)" }}
-              >
-                <div className="text-center">
-                  <div
-                    className="text-5xl font-black uppercase tracking-[0.2em]"
-                    style={{ color: C.gold, textShadow: "0 0 30px rgba(198,155,58,0.4)" }}
-                  >
-                    Replay
-                  </div>
-                  <div
-                    className="mt-3 text-xs font-bold uppercase tracking-[0.3em]"
-                    style={{ color: "rgba(236,232,225,0.5)" }}
-                  >
-                    Mi-temps relancée avec timeout…
-                  </div>
-                </div>
-              </div>
             )}
           </>
         );

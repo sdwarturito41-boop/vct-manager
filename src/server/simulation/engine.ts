@@ -841,9 +841,13 @@ import {
   simulateMapDuel,
   simulateMapDuelHalf1,
   simulateMapDuelHalf2,
+  simulateOneRoundLive as simulateOneRoundLiveEngine,
   type HalftimeState,
+  type LiveRoundState,
+  type OneRoundResult,
   type TacticalOverrideRuntime,
 } from "./duelEngine";
+export type { LiveRoundState, OneRoundResult } from "./duelEngine";
 export type { HalftimeState } from "./duelEngine";
 
 export function simulateMap(
@@ -1076,6 +1080,25 @@ export function simulateMapHalf2(
     highlights,
     endOfMapHotness: result.endOfMapHotness,
   };
+}
+
+// ── Live round-by-round wrapper ──
+
+/**
+ * One-round sim wrapper: takes a (possibly null) live state + the user's
+ * current TO/override inputs and runs ONE more round. Returns the new state
+ * and the round event. Used by the LIVE phase to drive cinematic round-by-round
+ * playback without pre-simming the whole map.
+ */
+export function simulateOneRound(
+  state: LiveRoundState | null,
+  team1: SimTeam,
+  team2: SimTeam,
+  mapName: string,
+  options?: SimMapOptions & { priorHotness?: Record<string, number> },
+): OneRoundResult {
+  const duelOptions = buildDuelOptionsForHalf(options);
+  return simulateOneRoundLiveEngine(state, team1, team2, mapName, duelOptions);
 }
 
 // ── Main export ──

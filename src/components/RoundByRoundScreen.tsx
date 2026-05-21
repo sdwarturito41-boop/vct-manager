@@ -96,6 +96,9 @@ export interface RoundByRoundScreenProps {
    * scores at this point are derived from the rounds array, so passing the
    * full H1+H2+OT array still yields the correct half-time score. */
   startFromRound?: number;
+  /** External pause — when true, freezes the auto-advance timer. Used by the
+   * parent to halt playback while a TO modal / animation / replay is in flight. */
+  pausedExternal?: boolean;
 }
 
 // ── Constants ──
@@ -867,6 +870,7 @@ export default function RoundByRoundScreen({
   myFirstHalfSide = "attack",
   onRoundChange,
   startFromRound,
+  pausedExternal,
 }: RoundByRoundScreenProps) {
   const [currentRound, setCurrentRound] = useState(startFromRound ?? 0);
   useEffect(() => {
@@ -954,7 +958,7 @@ export default function RoundByRoundScreen({
 
   // ── Auto-advance through rounds ──
   useEffect(() => {
-    if (isEnded || isPaused) return;
+    if (isEnded || isPaused || pausedExternal) return;
     const intervalMs = 2800 / speed;
     if (currentRound >= rounds.length) {
       // Pause briefly on last round then end
@@ -968,7 +972,7 @@ export default function RoundByRoundScreen({
     const t = setTimeout(() => setCurrentRound((prev) => prev + 1), intervalMs);
     return () => clearTimeout(t);
     // deps: only the bits that actually change the cadence
-  }, [currentRound, isEnded, isPaused, speed, rounds.length]);
+  }, [currentRound, isEnded, isPaused, pausedExternal, speed, rounds.length]);
 
   // Pips row
   const totalPips = Math.max(26, rounds.length);

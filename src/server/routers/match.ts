@@ -6,9 +6,10 @@ import {
   simulateMap as simulateMapEngine,
   simulateMapHalf1 as simulateMapHalf1Engine,
   simulateMapHalf2 as simulateMapHalf2Engine,
+  simulateOneRound as simulateOneRoundEngine,
   timeoutTypeToBonus,
 } from "@/server/simulation/engine";
-import type { TimeoutBonus, TacticalOverrideInput } from "@/server/simulation/engine";
+import type { TimeoutBonus, TacticalOverrideInput, LiveRoundState } from "@/server/simulation/engine";
 
 /** Zod schema for the public-facing tactical override input. */
 const tacticalOverrideSchema = z.object({
@@ -1151,6 +1152,114 @@ export const matchRouter = router({
         };
       }
       return mapResult;
+    }),
+
+  /**
+   * Live round-by-round sim: runs ONE round and returns the new state. Called
+   * repeatedly by the client during LIVE playback. TO/override actions taken
+   * by the user since the last round are passed in the inputs — they take
+   * effect IMMEDIATELY for this round (no replay).
+   *
+   * The client loops: state=null for round 1 → server returns { round, newState,
+   * isHalftime, mapComplete } → animate round → if !mapComplete, call again
+   * with the new state.
+   */
+  simulateOneRound: saveProcedure
+    .input(
+      z.object({
+        matchId: z.string(),
+        mapName: z.string(),
+        side: z.enum(["attack", "defense"]),
+        playerAgents: z
+          .array(z.object({ playerId: z.string(), agentName: z.string() }))
+          .length(5),
+        /** Null for round 1, echoed back from previous call afterwards. */
+        state: z.any().nullable(),
+        /** Pre-map TO (still in effect for the duration of the map). */
+        timeoutType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
+        timeoutPlayerId: z.string().optional(),
+        /** Half-time TO (set during HALFTIME phase, in effect for H2+). */
+        halftimeTimeoutType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
+        halftimeTimeoutPlayerId: z.string().optional(),
+        /** Mid-round TO called THIS round (single-round bonus). */
+        midRoundTOType: z.enum(["tactical", "motivational", "medical", "skip"]).optional(),
+        midRoundTOPlayerId: z.string().optional(),
+        /** Active tactical overrides — site / instruction / playstyle. */
+        overrides: z.array(tacticalOverrideSchema).optional(),
+        /** AI TO type called by the opponent THIS round (mid-round). */
+        aiMidRoundTOType: z.enum(["tactical", "motivational", "medical"]).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const ts = await buildMapSimSetup(ctx, input);
+      const { simTeam1, simTeam2, t1Agents, t2Agents, swapped, userIsSimTeam1, planOverrides, userPlanMods, aiOverrides, aiPlanMods } = ts;
+
+      const preMap = timeoutTypeToBonus(input.timeoutType, input.timeoutPlayerId);
+      const halftimeBonus = timeoutTypeToBonus(input.halftimeTimeoutType, input.halftimeTimeoutPlayerId);
+      const midRound = timeoutTypeToBonus(input.midRoundTOType, input.midRoundTOPlayerId);
+      const userTimeoutBonus = combineTimeoutBonuses(combineTimeoutBonuses(preMap, halftimeBonus), midRound);
+      const aiMidRoundBonus = timeoutTypeToBonus(input.aiMidRoundTOType);
+      const userOverrides = mergeOverrides(
+        (input.overrides ?? []) as TacticalOverrideInput[],
+        planOverrides,
+      );
+
+      let result;
+      try {
+        await applyActivePatch(ctx.prisma, ctx.save.id);
+        result = simulateOneRoundEngine(
+          (input.state ?? null) as LiveRoundState | null,
+          simTeam1,
+          simTeam2,
+          input.mapName,
+          {
+            team1Agents: swapped ? t2Agents : t1Agents,
+            team2Agents: swapped ? t1Agents : t2Agents,
+            team1StartsAttack: true,
+            team1TimeoutBonus: userIsSimTeam1 ? userTimeoutBonus : aiMidRoundBonus,
+            team2TimeoutBonus: userIsSimTeam1 ? aiMidRoundBonus : userTimeoutBonus,
+            team1Overrides: userIsSimTeam1 ? userOverrides : aiOverrides,
+            team2Overrides: userIsSimTeam1 ? aiOverrides : userOverrides,
+            team1Plan: userIsSimTeam1 ? userPlanMods : aiPlanMods,
+            team2Plan: userIsSimTeam1 ? aiPlanMods : userPlanMods,
+          },
+        );
+      } catch (err) {
+        console.error("[simulateOneRound] engine error:", err);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: err instanceof Error ? `Engine: ${err.message}` : "Engine error",
+        });
+      }
+
+      // Orient the round + scores to the user's side.
+      const orientRound = (r: typeof result.round) =>
+        swapped
+          ? {
+              ...r,
+              winner: (r.winner === 1 ? 2 : 1) as 1 | 2,
+              score1: r.score2,
+              score2: r.score1,
+            }
+          : r;
+
+      return {
+        round: orientRound(result.round),
+        newState: result.newState,
+        isHalftime: result.isHalftime,
+        mapComplete: result.mapComplete,
+        finalScore1: result.mapComplete
+          ? swapped
+            ? result.finalScore2
+            : result.finalScore1
+          : undefined,
+        finalScore2: result.mapComplete
+          ? swapped
+            ? result.finalScore1
+            : result.finalScore2
+          : undefined,
+        finalPlayerStats: result.finalPlayerStats,
+      };
     }),
 
   /**
